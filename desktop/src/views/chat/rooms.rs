@@ -1,35 +1,36 @@
 mod create;
 mod list;
 
-use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
+use std::ops::Range;
 
 use api::graph::chat::{ChatEntry, ChatRoom, ChatRoomKind};
+use api::ids::NodeId;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, App, AppContext, ClickEvent, Context, Div, ElementId, Entity, FocusHandle,
-    FontWeight, InteractiveElement, IntoElement, ParentElement, Render, Rgba,
-    StatefulInteractiveElement, Styled, Window, div,
+    App, AppContext, ClickEvent, Context, Div, ElementId, Entity, FocusHandle, FontWeight,
+    InteractiveElement, IntoElement, ParentElement, Render, Rgba, Stateful,
+    StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, div, uniform_list,
 };
 
 use crate::scale::px;
 use crate::views::field::{self, Field, FieldEvent};
 use crate::views::icons::{Lucide, icon};
+use crate::views::scrollbar::Bar;
 use crate::views::ui::{clock, colors};
 use crate::views::widgets::btn;
 
 use super::data::ChatData;
 use create::CreateRoom;
-use list::{Filter, Index};
+use list::{Filter, Index, Row, working};
 
-const WIDTH: f32 = 280.0;
+const ROW_HEIGHT: f32 = 48.0;
 const SMALL: f32 = 12.0;
 
-#[derive(Clone, Default, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 enum Group {
     Custom,
     Work(String),
-    #[default]
     Unassigned,
 }
 
@@ -43,6 +44,7 @@ pub struct Rooms {
     folded: HashSet<Group>,
     sessions: HashMap<Group, bool>,
     shown_room: Option<String>,
+    bar: Bar<UniformListScrollHandle>,
 }
 
 impl Rooms {
@@ -75,6 +77,7 @@ impl Rooms {
             folded: HashSet::new(),
             sessions: HashMap::new(),
             shown_room: None,
+            bar: Bar::over(UniformListScrollHandle::new()),
         }
     }
 
@@ -131,7 +134,7 @@ impl Rooms {
                 .items_center()
                 .gap(px(3.0))
                 .h(px(24.0))
-                .px(px(5.0))
+                .px(px(4.0))
                 .rounded_full()
                 .border_1()
                 .border_color(if current { c.accent } else { c.line_strong })
@@ -184,72 +187,10 @@ impl Rooms {
             )
     }
 
-    fn groups(
-        &self,
-        rooms: &[&ChatRoom],
-        index: &Index<'_>,
-        query: &str,
-        cx: &Context<Self>,
-    ) -> Vec<AnyElement> {
-        let mut work_rooms = HashMap::new();
-        let mut custom = Vec::new();
-        let mut sessions = HashMap::<Option<&str>, Vec<&ChatRoom>>::new();
-        for &room in rooms {
-            match &room.kind {
-                ChatRoomKind::Pinned => {}
-                ChatRoomKind::Custom => custom.push(room),
-                ChatRoomKind::Work { .. } => {
-                    work_rooms.insert(room.id.as_str(), room);
-                }
-                ChatRoomKind::Agent { node } => {
-                    sessions.entry(index.work(*node)).or_default().push(room);
-                }
-            }
-        }
-        let auto_expand = self.filter != Filter::All || !query.is_empty();
-        let mut groups = Vec::new();
-        if !custom.is_empty() {
-            let body = custom
-                .into_iter()
-                .map(|room| self.row(room, index, cx).into_any_element())
-                .collect::<Vec<_>>();
-            groups.push(self.group(Group::Custom, "내가 만든 방", body, cx));
-        }
-        for work in index
-            .rooms
-            .iter()
-            .filter(|room| matches!(room.kind, ChatRoomKind::Work { .. }))
-        {
-            let matching_work = work_rooms.get(work.id.as_str()).copied();
-            let group = Group::Work(work.id.clone());
-            let agents = sessions.remove(&Some(work.id.as_str())).unwrap_or_default();
-            if matching_work.is_none() && agents.is_empty() {
-                continue;
-            }
-            let mut body = Vec::new();
-            if let Some(room) = matching_work {
-                body.push(self.row(room, index, cx).into_any_element());
-            }
-            body.extend(self.session_list(&group, &agents, index, auto_expand, cx));
-            groups.push(self.group(group, &work.name, body, cx));
-        }
-        if let Some(agents) = sessions.remove(&None) {
-            let group = Group::Unassigned;
-            let body = self.session_list(&group, &agents, index, auto_expand, cx);
-            groups.push(self.group(group, "작업 없는 세션", body.into_iter().collect(), cx));
-        }
-        groups
-    }
-
-    fn group(
-        &self,
-        group: Group,
-        title: &str,
-        body: Vec<AnyElement>,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let open = !self.folded.contains(&group);
-        let suffix = group_id(&group);
+    fn group_heading(&self, group: &Group, title: &str, cx: &Context<Self>) -> Div {
+        let open = !self.folded.contains(group);
+        let suffix = group_id(group);
+        let group = group.clone();
         let c = colors(cx);
         let button = btn::tabbable(div().id((ElementId::from("room-group"), suffix)), cx)
             .flex()
@@ -271,25 +212,10 @@ impl Rooms {
                 }
                 cx.notify();
             }));
-        div()
-            .pt(px(4.0))
-            .child(button)
-            .when(open, |group| group.children(body))
-            .into_any_element()
+        div().flex().flex_col().justify_center().child(button)
     }
 
-    fn session_list(
-        &self,
-        group: &Group,
-        rooms: &[&ChatRoom],
-        index: &Index<'_>,
-        auto_expand: bool,
-        cx: &Context<Self>,
-    ) -> Option<AnyElement> {
-        if rooms.is_empty() {
-            return None;
-        }
-        let open = self.sessions.get(group).copied().unwrap_or(auto_expand);
+    fn session_heading(&self, group: &Group, count: usize, open: bool, cx: &Context<Self>) -> Div {
         let group = group.clone();
         let c = colors(cx);
         let button = btn::tabbable(
@@ -305,30 +231,33 @@ impl Rooms {
         .text_size(px(SMALL))
         .text_color(c.ink_2)
         .child(chevron(open, c.ink_2))
-        .child(format!("1:1 세션 {}개", rooms.len()))
+        .child(format!("1:1 세션 {count}개"))
         .cursor_pointer()
         .hover(move |style| style.bg(c.surface_hover))
         .on_click(cx.listener(move |this, _, _, cx| {
             this.sessions.insert(group.clone(), !open);
             cx.notify();
         }));
-        Some(
-            div()
-                .pl(px(14.0))
-                .child(button)
-                .when(open, |body| {
-                    body.children(rooms.iter().map(|room| self.row(room, index, cx)))
-                })
-                .into_any_element(),
-        )
+        div()
+            .pl(px(14.0))
+            .flex()
+            .flex_col()
+            .justify_center()
+            .child(button)
     }
 
-    fn row(&self, room: &ChatRoom, index: &Index<'_>, cx: &Context<Self>) -> Div {
+    fn row(
+        &self,
+        room: &ChatRoom,
+        selection: Option<&str>,
+        working_agents: &HashSet<NodeId>,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
         let c = colors(cx);
         let data = self.data.read(cx);
-        let selected = index.selected.is_some_and(|active| active.id == room.id);
+        let selected = selection == Some(room.id.as_str());
         let pinned = matches!(room.kind, ChatRoomKind::Pinned);
-        let working = index.working(room);
+        let working = working(room, working_agents);
         let (glyph, color) = match room.kind {
             ChatRoomKind::Pinned => (Lucide::Mail, c.accent),
             ChatRoomKind::Agent { .. } => (Lucide::Terminal, c.ink_2),
@@ -412,9 +341,10 @@ impl Rooms {
             badges
         };
         let id = room.id.clone();
-        let row = btn::tabbable(div().id((ElementId::from("chat-room"), id.clone())), cx)
+        btn::tabbable(div().id((ElementId::from("chat-room"), id.clone())), cx)
             .w_full()
             .min_h(px(30.0))
+            .when(!pinned, |row| row.h_full())
             .px(px(7.0))
             .py(px(4.0))
             .rounded(px(6.0))
@@ -440,7 +370,7 @@ impl Rooms {
                 let sub = div()
                     .flex()
                     .items_center()
-                    .flex_wrap()
+                    .when_else(pinned, |sub| sub.flex_wrap(), |sub| sub.whitespace_nowrap())
                     .gap(px(4.0))
                     .pl(px(if pinned { 19.0 } else { 12.0 }))
                     .min_h(px(19.0))
@@ -455,8 +385,59 @@ impl Rooms {
             })
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.data.update(cx, |data, cx| data.select(id.clone(), cx));
-            }));
-        div().child(row)
+            }))
+    }
+
+    fn room_list(
+        &self,
+        rows: Vec<Row>,
+        selection: Option<String>,
+        working_agents: HashSet<NodeId>,
+        cx: &Context<Self>,
+    ) -> Div {
+        let list = uniform_list(
+            "chat-room-list",
+            rows.len(),
+            cx.processor(move |this, range: Range<usize>, _, cx| {
+                let data = this.data.read(cx);
+                range
+                    .map(|index| &rows[index])
+                    .map(|row| {
+                        let body = match row {
+                            Row::Room(index) | Row::Session(index) => div()
+                                .when(matches!(row, Row::Session(_)), |row| row.pl(px(14.0)))
+                                .child(this.row(
+                                    &data.rooms()[*index],
+                                    selection.as_deref(),
+                                    &working_agents,
+                                    cx,
+                                )),
+                            Row::Group { group, title } => this.group_heading(group, title, cx),
+                            Row::Sessions { group, count, open } => {
+                                this.session_heading(group, *count, *open, cx)
+                            }
+                            Row::Hidden(count) => div()
+                                .flex()
+                                .items_center()
+                                .justify_between()
+                                .gap(px(3.0))
+                                .child(note(format!("다른 방 {count}개는 숨겼습니다"), cx))
+                                .child(
+                                    btn::ghost("restore-room-list", cx)
+                                        .child("전체 보기")
+                                        .on_click(cx.listener(|this, _, _, cx| this.restore(cx))),
+                                ),
+                        };
+                        body.h(px(ROW_HEIGHT)).w_full()
+                    })
+                    .collect::<Vec<_>>()
+            }),
+        )
+        .size_full()
+        .px(px(8.0))
+        .pb(px(8.0))
+        .track_scroll(self.bar.handle());
+        self.bar.on_overflow(list).flex_1().min_h_0()
     }
 }
 
@@ -472,33 +453,18 @@ impl Render for Rooms {
             .find(|room| matches!(room.kind, ChatRoomKind::Pinned));
         self.reveal_selection(index.selected, &index);
         let query = self.search.read(cx).text().trim().to_lowercase();
-        let mut rooms = Vec::new();
-        let mut hidden = 0;
-        for room in index
-            .rooms
-            .iter()
-            .filter(|room| !matches!(room.kind, ChatRoomKind::Pinned))
-        {
-            if self.filter.shows(room, &index) && index.matches(room, &query) {
-                rooms.push(room);
-            } else {
-                hidden += 1;
-            }
+        let (mut rows, hidden) = self.list_rows(&index, &query);
+        let empty = rows.is_empty();
+        if hidden > 0 {
+            rows.push(Row::Hidden(hidden));
         }
-        let empty = rooms.is_empty();
-        let rows = if self.flat {
-            rooms.sort_by_key(|room| (Reverse(room.last_activity), &room.name, &room.id));
-            rooms
-                .into_iter()
-                .map(|room| self.row(room, &index, cx).into_any_element())
-                .collect()
-        } else {
-            self.groups(&rooms, &index, &query, cx)
-        };
         let error = data.error().map(str::to_owned);
         let loading = data.loading();
-        let pin_row = pinned.map(|room| self.row(room, &index, cx));
+        let selection = index.selected.map(|room| room.id.clone());
+        let pin_row =
+            pinned.map(|room| self.row(room, selection.as_deref(), &index.working_agents, cx));
         let controls = self.controls(&index, cx);
+        let list = self.room_list(rows, selection, index.working_agents, cx);
         let new_room = btn::button("new-chat-room", cx)
             .track_focus(&self.new_room)
             .child(icon(Lucide::Plus, px(13.0), c.ink))
@@ -509,12 +475,10 @@ impl Render for Rooms {
             .flex()
             .flex_col()
             .flex_none()
-            .w(px(WIDTH))
+            .w_full()
             .h_full()
             .min_h_0()
             .bg(c.panel)
-            .border_r_1()
-            .border_color(c.line)
             .text_color(c.ink)
             .text_size(px(13.0))
             .child(
@@ -549,16 +513,16 @@ impl Render for Rooms {
             .children(pinned.map(|_| controls))
             .child(
                 div()
-                    .id("chat-room-list")
+                    .flex()
+                    .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scroll()
-                    .px(px(8.0))
-                    .pb(px(8.0))
+                    .overflow_hidden()
                     .children(error.map(|error| {
                         div()
-                            .px(px(6.0))
-                            .py(px(6.0))
+                            .mx(px(8.0))
+                            .flex_none()
+                            .p(px(6.0))
                             .text_size(px(SMALL))
                             .text_color(c.err)
                             .child(error)
@@ -573,7 +537,7 @@ impl Render for Rooms {
                             )
                     }))
                     .when(loading && pinned.is_none(), |body| {
-                        body.child(note("방 목록을 불러옵니다.", cx))
+                        body.child(note("방 목록을 불러옵니다.", cx).mx(px(8.0)).flex_none())
                     })
                     .when(!loading && pinned.is_some() && empty, |body| {
                         let label = if hidden == 0 {
@@ -581,27 +545,9 @@ impl Render for Rooms {
                         } else {
                             "조건에 맞는 방이 없습니다."
                         };
-                        body.child(note(label, cx))
+                        body.child(note(label, cx).mx(px(8.0)).flex_none())
                     })
-                    .children(rows)
-                    .when(hidden > 0, |body| {
-                        body.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .flex_wrap()
-                                .justify_between()
-                                .gap(px(3.0))
-                                .px(px(6.0))
-                                .pt(px(6.0))
-                                .child(note(format!("다른 방 {hidden}개는 숨겼습니다"), cx))
-                                .child(
-                                    btn::ghost("restore-room-list", cx)
-                                        .child("전체 보기")
-                                        .on_click(cx.listener(|this, _, _, cx| this.restore(cx))),
-                                ),
-                        )
-                    }),
+                    .child(list),
             )
             .child(self.create.clone())
     }

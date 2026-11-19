@@ -1,6 +1,7 @@
 #![allow(clippy::disallowed_macros)]
 
 use std::collections::HashMap;
+use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -22,6 +23,7 @@ use api::graph::messages::{Kind, MessageKind};
 use api::graph::waits::PromptKey;
 
 const CALL_LIMIT: Duration = Duration::from_secs(5);
+const HUMAN_INPUT_PREVIEW_BYTES: usize = 128;
 
 pub fn hook(entry: HookEntry) -> Result<(), String> {
     match crate::profile::hook(entry) {
@@ -333,18 +335,33 @@ fn spill_human_input(handed: &mut Handed) {
     else {
         return;
     };
+    let logs = dir.join(crate::task::LOGS);
     let messages = match handed {
         Handed::Taken { messages, .. } | Handed::Mail(messages) => messages,
         Handed::Nudge(_) | Handed::Interrupted => return,
     };
     for delivery in messages.iter_mut().filter(|delivery| {
         matches!(delivery.what, Some(MessageKind::HumanInput { .. }))
+            && delivery.body.len() > HUMAN_INPUT_PREVIEW_BYTES
             && delivery.text().len() > BATCH_LIMIT_BYTES
     }) {
-        let file = dir.join(format!("logs/human-input-{}.txt", delivery.id.0));
-        if crate::distro::replace(&file, delivery.body.as_bytes()).is_ok() {
-            delivery.body = format!("file: {}", crate::wsl::for_caller(&file));
+        let file = logs.join(format!("human-input-{}.txt", delivery.id.0));
+        let Ok(mut output) = std::fs::create_dir_all(&logs).and_then(|()| File::create_new(&file))
+        else {
+            continue;
+        };
+        let written = output.write_all(delivery.body.as_bytes());
+        drop(output);
+        if written.is_err() {
+            let _ = std::fs::remove_file(&file);
+            continue;
         }
+        let end = delivery.body.floor_char_boundary(HUMAN_INPUT_PREVIEW_BYTES);
+        delivery.body = format!(
+            "{}…\n\nRead the full text in {}",
+            &delivery.body[..end],
+            crate::wsl::for_caller(&file)
+        );
     }
 }
 

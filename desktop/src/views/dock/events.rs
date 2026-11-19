@@ -1,10 +1,10 @@
-use api::graph::GraphEvent;
 use api::graph::events::{Entry, EventRecord};
+use api::graph::{GraphEvent, NodeView};
 use api::profile::AgentView;
 use gpui::{
-    AnyElement, App, Context, Div, Entity, FocusHandle, FontWeight, InteractiveElement,
-    IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState, ParentElement,
-    StatefulInteractiveElement, Styled, div, list,
+    AnyElement, App, ClickEvent, Context, Div, Entity, FocusHandle, FontWeight, InteractiveElement,
+    IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState, ParentElement, Role,
+    StatefulInteractiveElement, Styled, Window, div, list,
 };
 
 use super::Dock;
@@ -16,7 +16,12 @@ use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::theme::Colors;
 use crate::views::scrollbar::Bar;
+use crate::views::widgets::btn;
 use what::{Category, Ctx, Family, Seg, Tone};
+
+pub(crate) use super::body::Target as EventLink;
+pub(crate) use super::body::open as open_link;
+pub(crate) use what::{hidden, who_of};
 
 pub mod refusal;
 mod what;
@@ -297,7 +302,6 @@ impl Dock {
     }
 
     fn event_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let c = ui::colors(cx);
         let Some(record) = self
             .events
             .shown
@@ -306,21 +310,59 @@ impl Dock {
         else {
             return div().into_any_element();
         };
-        let nodes: Vec<(u32, String)> = self
-            .store
-            .read(cx)
-            .snapshot()
-            .map(|s| s.nodes.iter().map(|n| (n.id.0, n.name.clone())).collect())
-            .unwrap_or_default();
-        let by_name = |name: &str| nodes.iter().find(|(_, n)| n == name).map(|(id, _)| *id);
-        let known = |id: u32| nodes.iter().any(|(n, _)| *n == id);
+        let id = record.id;
+        let dock = cx.entity().downgrade();
+        let follow = dock.clone();
+        let row = EventRow {
+            record,
+            current: self.events.open == Some(id),
+            agents: &self.events.agents,
+            nodes: self.store.read(cx).snapshot().map_or(&[], |s| &s.nodes),
+        };
+        row.render(
+            cx,
+            move |_, window, cx| {
+                let _ = dock.update(cx, |dock, cx| {
+                    window.focus(&dock.events.focus, cx);
+                    dock.pick_event(id, cx);
+                });
+            },
+            move |target, cx| {
+                let _ = follow.update(cx, |dock, cx| dock.follow(target, cx));
+            },
+        )
+    }
+}
+
+pub(crate) struct EventRow<'a> {
+    pub record: &'a EventRecord,
+    pub current: bool,
+    pub agents: &'a [AgentView],
+    pub nodes: &'a [NodeView],
+}
+
+impl EventRow<'_> {
+    pub(crate) fn render(
+        &self,
+        cx: &App,
+        pick: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+        follow: impl Fn(body::Target, &mut App) + Clone + 'static,
+    ) -> AnyElement {
+        let c = ui::colors(cx);
+        let by_name = |name: &str| {
+            self.nodes
+                .iter()
+                .find(|node| node.name == name)
+                .map(|node| node.id.0)
+        };
+        let known = |id: u32| self.nodes.iter().any(|node| node.id.0 == id);
         let ctx = Ctx {
             lang: *cx.global::<Lang>(),
-            agents: &self.events.agents,
+            agents: self.agents,
             by_name: &by_name,
         };
-        let id = record.id;
-        let current = self.events.open == Some(id);
+        let record = self.record;
+        let current = self.current;
         let segs = what::what(record, &ctx);
         let body_parts = what::body_of(record, &ctx);
         let (message_kind, doc) = match &record.entry {
@@ -338,7 +380,7 @@ impl Dock {
             (None, None) => None,
         }
         .filter(|text| !text.is_empty());
-        let key = id as usize;
+        let key = record.id as usize;
 
         let line = div()
             .flex()
@@ -346,8 +388,9 @@ impl Dock {
             .items_baseline()
             .gap_x(px(GAP))
             .children(segs.into_iter().map(|seg| seg_element(seg, &known, &c)));
-        let head = div()
-            .id(("event-head", key))
+        let head = btn::tabbable(div().id(("event-head", key)), cx)
+            .role(Role::Button)
+            .aria_expanded(current)
             .flex()
             .gap(px(10.0))
             .px(px(PAD))
@@ -381,10 +424,7 @@ impl Dock {
                             .child(text)
                     })),
             )
-            .on_click(cx.listener(move |dock, _, window, cx| {
-                window.focus(&dock.events.focus, cx);
-                dock.pick_event(id, cx)
-            }));
+            .on_click(pick);
 
         let mut row = div()
             .id(("event", key))
@@ -409,23 +449,24 @@ impl Dock {
             );
         }
         if current {
-            row = row.child(self.event_details(record, facts, body_parts, doc, key, cx));
+            row = row.child(self.details(facts, body_parts, doc, cx, follow));
         }
         row.into_any_element()
     }
 
-    fn event_details(
+    fn details(
         &self,
-        record: &EventRecord,
         facts: Option<(
             &api::graph::messages::MessageKind,
             &api::graph::events::MessageFacts,
         )>,
         body_parts: Option<Vec<api::graph::text::TextPart>>,
         doc: Option<&api::graph::waits::WaitDoc>,
-        key: usize,
-        cx: &mut Context<Self>,
+        cx: &App,
+        follow: impl Fn(body::Target, &mut App) + Clone + 'static,
     ) -> Div {
+        let record = self.record;
+        let key = record.id as usize;
         let c = ui::colors(cx);
         let link = if what::family_of(&record.entry) == Some(Family::Done) {
             c.ok
@@ -455,7 +496,7 @@ impl Dock {
         };
         let Some((kind, facts)) = facts else {
             if body_parts.is_some() || doc.is_some() {
-                let text = body::text(
+                let text = body::render(
                     ("event-body", key),
                     body_parts.as_deref().unwrap_or_default(),
                     "",
@@ -463,13 +504,14 @@ impl Dock {
                     link,
                     None,
                     cx,
+                    follow,
                 );
                 details = details.child(div().text_color(c.ink_2).child(text));
             }
             return details;
         };
         for (at, field) in facts.fields.iter().enumerate() {
-            let text = body::text(
+            let text = body::render(
                 ("event-field", key * 32 + at),
                 &field.parts,
                 "",
@@ -477,6 +519,7 @@ impl Dock {
                 link,
                 None,
                 cx,
+                follow.clone(),
             );
             details = details.child(line(
                 ui::say(cx, what::field_name(field.name)),
@@ -484,7 +527,16 @@ impl Dock {
             ));
         }
         if let Some(parts) = body_parts {
-            let text = body::text(("event-body", key), &parts, "", None, link, None, cx);
+            let text = body::render(
+                ("event-body", key),
+                &parts,
+                "",
+                None,
+                link,
+                None,
+                cx,
+                follow,
+            );
             let mut value = div()
                 .flex()
                 .flex_col()

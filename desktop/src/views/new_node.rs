@@ -481,10 +481,11 @@ impl Render for NewNodeView {
                                     .whitespace_nowrap()
                                     .text_ellipsis()
                                     .text_size(px(12.0))
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .font_family(fonts::TERMINAL_FAMILY)
-                                    .text_color(colors.ink_3)
-                                    .child(self.branch.clone()),
+                                    .child(fonts::latin_mono(
+                                        &self.branch,
+                                        colors.ink_3,
+                                        FontWeight::MEDIUM,
+                                    )),
                             ),
                     )
                     .child(div().ml_auto().flex_none().child(close)),

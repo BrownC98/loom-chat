@@ -331,12 +331,6 @@ fn inline_marks(limits: &Limits, c: &Colors, cx: &App) -> Vec<Div> {
 }
 
 fn segment(name: String, limits: &Limits, c: &Colors, cx: &App) -> Vec<Div> {
-    if matches!(limits, Limits::NeedsLogin) {
-        return vec![text(say(cx, Str::StatusBarLoginToSee))];
-    }
-    if usage::cli_missing(limits) {
-        return vec![text(say(cx, Str::AccountsNotInstalled))];
-    }
     let mut parts = vec![name_cell(name)];
     parts.extend(inline_marks(limits, c, cx));
     if matches!(limits, Limits::Failed { .. }) {
@@ -385,39 +379,57 @@ impl Render for Usage {
         let place = distro.as_deref();
         let this = cx.entity();
 
-        let mut summary: Vec<AnyElement> = Vec::new();
-        for (index, provider) in PROVIDERS.into_iter().enumerate() {
-            if index > 0 {
-                summary.push(separator(&c).into_any_element());
-            }
-            summary.push(provider_mark(provider, &c));
-            match self.active(provider, place, cx) {
-                None => summary.push(text(say(cx, Str::StatusBarLoading)).into_any_element()),
-                Some(account) => summary.extend(
-                    segment(account_name(account, cx), &account.usage.limits, &c, cx)
-                        .into_iter()
-                        .map(IntoElement::into_any_element),
-                ),
-            }
-        }
+        let signed = PROVIDERS.into_iter().filter_map(|provider| {
+            let account = self.active(provider, place, cx)?;
+            Some((
+                provider_mark(provider, &c),
+                account_name(account, cx),
+                &account.usage.limits,
+            ))
+        });
         let cursor = self
             .cursor
             .iter()
             .flatten()
-            .find(|entry| entry.distro.as_deref() == place);
-        if let Some(entry) = cursor {
-            summary.push(separator(&c).into_any_element());
-            summary.push(cursor_mark(&c));
-            let name = entry
-                .usage
-                .email
-                .clone()
-                .unwrap_or_else(|| usage::unnamed(true, cx));
+            .find(|entry| entry.distro.as_deref() == place)
+            .map(|entry| {
+                (
+                    cursor_mark(&c),
+                    entry
+                        .usage
+                        .email
+                        .clone()
+                        .unwrap_or_else(|| usage::unnamed(true, cx)),
+                    &entry.usage.limits,
+                )
+            });
+        let mut summary: Vec<AnyElement> = Vec::new();
+        let mut needs_login = false;
+        for (mark, name, limits) in signed.chain(cursor) {
+            if matches!(limits, Limits::NeedsLogin) || usage::cli_missing(limits) {
+                needs_login = true;
+                continue;
+            }
+            if !summary.is_empty() {
+                summary.push(separator(&c).into_any_element());
+            }
+            summary.push(mark);
             summary.extend(
-                segment(name, &entry.usage.limits, &c, cx)
+                segment(name, limits, &c, cx)
                     .into_iter()
                     .map(IntoElement::into_any_element),
             );
+        }
+        if needs_login || summary.is_empty() {
+            if !summary.is_empty() {
+                summary.push(separator(&c).into_any_element());
+            }
+            let label = if self.accounts.is_none() {
+                Str::StatusBarLoading
+            } else {
+                Str::StatusBarConnectAccount
+            };
+            summary.push(text(say(cx, label)).into_any_element());
         }
 
         let open = self.open;

@@ -174,6 +174,18 @@ impl Drop for Db<'_> {
 }
 
 impl Graph {
+    pub fn end_turn(&self, node: NodeId) -> rusqlite::Result<Option<Nudge>> {
+        let mut db = self.lock();
+        let tx = db.transaction()?;
+        let read = mailbox::read(&tx, node)?;
+        let (check, reported) = turns::end_turn(&tx, node)?;
+        tx.commit()?;
+        if read > 0 || reported {
+            self.publish_nodes();
+        }
+        Ok(check)
+    }
+
     pub fn open(db: Database, linked: fn(&AgentId) -> bool) -> rusqlite::Result<Self> {
         let published = events::last_id(&db.lock())?;
         chat::ensure_key(&db.lock())?;

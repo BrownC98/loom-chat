@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::events;
 use super::images::SentImage;
 use super::token::{NodeLaunch, current_in};
-use super::turns::TYPED;
+use super::turns::{TYPED, heard_chat};
 use super::{Db, hosts, waits};
 use super::{
     Graph, Hold, REACHABLE, Work, ambiguous, finish_work, from_json, optional_json, parent_of,
@@ -704,15 +704,18 @@ pub(super) fn read(db: &Connection, node: NodeId) -> rusqlite::Result<usize> {
         .prepare(
             "UPDATE messages SET delivered = 1
              WHERE recipient = ?1 AND delivered = 0 AND printed = 1
-             RETURNING id, kind, sender, sender_name, what",
+             RETURNING id, kind, sender, sender_name, what,
+                CASE WHEN chat_group IS NOT NULL AND sender_node_id IS NULL
+                     AND sender_name = ?2 THEN body END",
         )?
-        .query_map([node.0], |row| {
+        .query_map(params![node.0, HUMAN], |row| {
             Ok((
                 MessageId(row.get(0)?),
                 from_json::<Kind>(row, 1)?,
                 row.get::<_, Option<u32>>(2)?.map(NodeId),
                 row.get::<_, String>(3)?,
                 optional_json::<MessageKind>(row, 4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -720,7 +723,14 @@ pub(super) fn read(db: &Connection, node: NodeId) -> rusqlite::Result<usize> {
         return Ok(0);
     }
     let to = events::who(db, node)?;
-    for (id, how, sender, name, what) in read.iter().cloned() {
+    let count = read.len();
+    let mut last = None;
+    for (id, how, sender, name, what, prompt) in read {
+        if let Some(prompt) = prompt
+            && last.as_ref().is_none_or(|(previous, _)| id.0 > *previous)
+        {
+            last = Some((id.0, prompt));
+        }
         let entry = Entry::Message {
             how,
             what,
@@ -732,7 +742,10 @@ pub(super) fn read(db: &Connection, node: NodeId) -> rusqlite::Result<usize> {
         };
         events::write(db, &entry, Some(id))?;
     }
-    Ok(read.len())
+    if let Some((_, prompt)) = last {
+        heard_chat(db, node, &prompt)?;
+    }
+    Ok(count)
 }
 
 fn id_list(ids: &[MessageId]) -> String {

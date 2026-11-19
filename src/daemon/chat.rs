@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::Duration;
 
 use axum::http::StatusCode;
+use tokio::sync::Semaphore;
+use tokio::time::{Instant, timeout_at};
 
 use api::graph::chat::*;
 use api::graph::docs::PostOutside;
@@ -13,6 +16,12 @@ use crate::transcript::{self, Fallback};
 
 const DEFAULT_PAGE: usize = 60;
 const MAX_PAGE: usize = 200;
+const MAX_TRANSCRIPT_BYTES: u64 = 64 * 1024 * 1024;
+const MAX_TRANSCRIPT_LINES: u64 = 65_536;
+const TRANSCRIPT_TIMEOUT: Duration = Duration::from_secs(3);
+const TRANSCRIPT_TIMED_OUT: &str = "세션 기록을 3초 안에 읽지 못했습니다.";
+const TRANSCRIPT_TASK_FAILED: &str = "세션 기록 읽기 작업이 끝나지 않았습니다.";
+static TRANSCRIPT_READS: Semaphore = Semaphore::const_new(2);
 
 pub(super) fn routes() -> Router<Arc<App>> {
     Router::new()
@@ -180,11 +189,11 @@ async fn session(
             page: app.graph.chat_stream(&room, before, limit)?,
         }));
     };
-    let (launch, transcript) = transcript_page(&app, launch, before, limit).await?;
+    let transcript = transcript_page(&app, &launch, before, limit).await;
     let (mut page, same) = app.graph.chat_session_page(&room, before, limit, &launch)?;
     let transcript = match transcript {
         _ if !same => fallback("세션 기록을 읽는 동안 실행이 바뀌었습니다."),
-        Err(reason) => fallback(reason.reason()),
+        Err(reason) => fallback(reason),
         Ok(mut items) => {
             for item in page.items {
                 items.insert(item.cursor, item.entry);
@@ -207,36 +216,51 @@ async fn session(
 type TranscriptPage = BTreeMap<ChatCursor, ChatEntry>;
 
 async fn transcript_page(
-    app: &App,
-    launch: ChatLaunch,
+    app: &Arc<App>,
+    launch: &ChatLaunch,
     before: Option<ChatCursor>,
     limit: usize,
-) -> Result<(ChatLaunch, Result<TranscriptPage, Fallback>), Problem> {
+) -> Result<TranscriptPage, &'static str> {
     let Some(profile) = launch.agent.as_ref().and_then(profile::profile_of) else {
-        return Ok((launch, Err(Fallback::Unsupported)));
+        return Err(Fallback::Unsupported.reason());
     };
-    let cwd = std::path::Path::new(&launch.worktree);
-    let site = match place::of(cwd) {
-        Machine::Pc => app.pc_site(),
-        Machine::Wsl(_) => match app.site_at(cwd).await {
-            Ok(site) => site,
-            Err(_) => return Ok((launch, Err(Fallback::Unreadable))),
-        },
-        Machine::Ssh(_) => return Ok((launch, Err(Fallback::Unsupported))),
+    let wsl_path = match place::parse(&launch.worktree) {
+        Machine::Pc => None,
+        Machine::Wsl(_) => Some(launch.worktree.clone()),
+        Machine::Ssh(_) => return Err(Fallback::Unsupported.reason()),
     };
-    let graph = app.graph.clone();
-    tokio::task::spawn_blocking(move || {
-        let result = profile::transcript_source(
-            profile,
-            &site,
-            launch.session.as_ref(),
-            launch.account.as_ref(),
-        )
-        .and_then(|source| read_transcript(&graph, launch.node, &source, before, limit));
-        (launch, result)
-    })
-    .await
-    .map_err(internal)
+    let permit = TRANSCRIPT_READS
+        .try_acquire()
+        .map_err(|_| "다른 요청이 세션 기록을 읽고 있습니다.")?;
+    let deadline = Instant::now() + TRANSCRIPT_TIMEOUT;
+    let app = app.clone();
+    let (node, session, account) = (launch.node, launch.session.clone(), launch.account.clone());
+    let worker = tokio::spawn(async move {
+        let _permit = permit;
+        let site = match wsl_path {
+            None => app.pc_site(),
+            Some(path) => app
+                .site_at(std::path::Path::new(&path))
+                .await
+                .map_err(|_| "세션 기록이 있는 WSL 환경을 열지 못했습니다.")?,
+        };
+        if Instant::now() >= deadline {
+            return Err(TRANSCRIPT_TIMED_OUT);
+        }
+        let graph = app.graph.clone();
+        tokio::task::spawn_blocking(move || {
+            let source =
+                profile::transcript_source(profile, &site, session.as_ref(), account.as_ref())
+                    .map_err(|error| error.reason())?;
+            read_transcript(&graph, node, &source, before, limit, deadline)
+        })
+        .await
+        .map_err(|_| TRANSCRIPT_TASK_FAILED)?
+    });
+    timeout_at(deadline, worker)
+        .await
+        .map_err(|_| TRANSCRIPT_TIMED_OUT)?
+        .map_err(|_| TRANSCRIPT_TASK_FAILED)?
 }
 
 fn read_transcript(
@@ -245,21 +269,33 @@ fn read_transcript(
     source: &transcript::Source,
     before: Option<ChatCursor>,
     limit: usize,
-) -> Result<TranscriptPage, Fallback> {
+    deadline: Instant,
+) -> Result<TranscriptPage, &'static str> {
     let mut found = BTreeMap::new();
     let mut after = None;
     let mut at_ms = 0;
     let mut previous_line = 0;
     let mut part = 0;
     loop {
+        if Instant::now() >= deadline {
+            return Err(TRANSCRIPT_TIMED_OUT);
+        }
         let transcript::Batch {
             items,
             cursor,
             more,
             reset,
-        } = source.read(after.as_ref())?;
+        } = source
+            .read(after.as_ref())
+            .map_err(|error| error.reason())?;
         if reset {
-            return Err(Fallback::Unreadable);
+            return Err("세션 기록을 읽는 동안 파일이 바뀌었습니다.");
+        }
+        if cursor.byte() > MAX_TRANSCRIPT_BYTES || (more && cursor.byte() == MAX_TRANSCRIPT_BYTES) {
+            return Err("세션 기록이 64 MiB 읽기 한도를 넘었습니다.");
+        }
+        if cursor.line() > MAX_TRANSCRIPT_LINES || (more && cursor.line() == MAX_TRANSCRIPT_LINES) {
+            return Err("세션 기록이 65,536줄 읽기 한도를 넘었습니다.");
         }
         let messages: BTreeSet<_> = items
             .iter()
@@ -274,7 +310,7 @@ fn read_transcript(
         } else {
             graph
                 .chat_delivery_texts(node, &messages)
-                .map_err(|_| Fallback::Unreadable)?
+                .map_err(|_| "세션 기록과 받은 메시지를 맞추지 못했습니다.")?
         };
         for item in items {
             if item.line == previous_line {

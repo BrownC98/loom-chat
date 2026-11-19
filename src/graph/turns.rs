@@ -22,6 +22,7 @@ enum Bit {
     Typed,
     HumanReply,
     Background,
+    ChatPrompt,
 }
 
 impl Bit {
@@ -30,7 +31,7 @@ impl Bit {
     }
 }
 
-const _: () = match Bit::Background {
+const _: () = match Bit::ChatPrompt {
     Bit::Human
     | Bit::Called
     | Bit::KindNudged
@@ -42,8 +43,9 @@ const _: () = match Bit::Background {
     | Bit::UnjudgedNudged
     | Bit::Status
     | Bit::Typed
-    | Bit::HumanReply => {}
-    last @ Bit::Background => assert!((last as u32) < u16::BITS),
+    | Bit::HumanReply
+    | Bit::Background => {}
+    last @ Bit::ChatPrompt => assert!((last as u32) < u16::BITS),
 };
 
 const NUDGED: u16 = Bit::KindNudged.mask() | Bit::UnjudgedNudged.mask();
@@ -97,6 +99,7 @@ pub(super) const TYPED: u16 = Bit::Typed.mask();
 pub(super) const BACKGROUND: u16 = Bit::Background.mask();
 pub(super) const SUBMITTED_INPUT: u16 = Bit::SubmittedInput.mask();
 const FIRST_INPUT: u16 = Bit::FirstInput.mask();
+const CHAT_PROMPT: u16 = Bit::ChatPrompt.mask();
 
 fn set_flags(db: &Connection, node: NodeId, set: u16, clear: u16) -> rusqlite::Result<()> {
     db.execute(
@@ -104,6 +107,23 @@ fn set_flags(db: &Connection, node: NodeId, set: u16, clear: u16) -> rusqlite::R
         params![node.0, set, clear],
     )
     .map(drop)
+}
+
+fn record_heard(
+    db: &Connection,
+    node: NodeId,
+    said: Option<&str>,
+    prompt_flags: u16,
+) -> rusqlite::Result<()> {
+    db.execute(
+        "UPDATE nodes SET turn_flags = (turn_flags & ~?4) | ?2, heard = ?3 WHERE id = ?1",
+        params![node.0, Bit::Human.mask() | prompt_flags, said, CHAT_PROMPT],
+    )
+    .map(drop)
+}
+
+pub(super) fn heard_chat(db: &Connection, node: NodeId, said: &str) -> rusqlite::Result<()> {
+    record_heard(db, node, Some(said), CHAT_PROMPT)
 }
 
 fn keep_reply(db: &Connection, node: NodeId, text: &str) -> rusqlite::Result<bool> {
@@ -124,6 +144,71 @@ fn late(db: &Connection, node: NodeId, turn: &str) -> rusqlite::Result<bool> {
     )
     .optional()
     .map(|late| late.unwrap_or(true))
+}
+
+pub(super) fn end_turn(db: &Connection, node: NodeId) -> rusqlite::Result<(Option<Nudge>, bool)> {
+    let (flags, reply, heard): (u16, Option<String>, Option<String>) = db
+        .query_row(
+            "SELECT turn_flags, reply, heard FROM nodes WHERE id = ?1",
+            [node.0],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .optional()?
+        .unwrap_or_default();
+    let has = |bit: Bit| flags & bit.mask() != 0;
+    let reply = reply.filter(|_| has(Bit::Replied));
+    let check = if has(Bit::QuestionBox) && !has(Bit::Asked) {
+        Some(Nudge::QuestionBox)
+    } else if !has(Bit::Called)
+        && !has(Bit::KindNudged)
+        && reply
+            .as_deref()
+            .is_some_and(|text| kind_line(text).is_some())
+    {
+        Some(Nudge::KindLine)
+    } else if !has(Bit::UnjudgedNudged) {
+        unjudged(db, node)?.map(Nudge::Unjudged)
+    } else {
+        None
+    };
+    let reported = match reply.as_deref() {
+        Some(reply)
+            if check.is_none()
+                && has(Bit::Human)
+                && !has(Bit::Called)
+                && unreported_root(db, node)? =>
+        {
+            put_reply(db, node, heard.as_deref().unwrap_or_default(), reply)?;
+            true
+        }
+        _ => false,
+    };
+    db.execute(
+        "INSERT OR IGNORE INTO ended_turns (node, turn)
+         SELECT id, turn FROM nodes WHERE id = ?1 AND turn IS NOT NULL",
+        [node.0],
+    )?;
+    let kept = check
+        .as_ref()
+        .map_or(0, |nudge| (flags & NUDGED) | nudge.kept());
+    let open = if has(Bit::Status) && !has(Bit::Called) {
+        Bit::Human.mask()
+    } else {
+        0
+    };
+    let human_reply = if has(Bit::Typed) && !has(Bit::Status) && !has(Bit::Background) {
+        HUMAN_REPLY
+    } else {
+        0
+    };
+    db.execute(
+        "UPDATE nodes SET turn_flags = ?2, turn = NULL WHERE id = ?1",
+        params![
+            node.0,
+            kept | human_reply | (flags & (SUBMITTED_INPUT | STATUS | BACKGROUND | open))
+        ],
+    )?;
+    Ok((check, reported))
 }
 
 impl Graph {
@@ -159,12 +244,7 @@ impl Graph {
     }
 
     pub fn heard(&self, node: NodeId, said: Option<&str>) -> rusqlite::Result<()> {
-        self.lock()
-            .execute(
-                "UPDATE nodes SET turn_flags = turn_flags | ?2, heard = ?3 WHERE id = ?1",
-                params![node.0, Bit::Human.mask(), said],
-            )
-            .map(drop)
+        record_heard(&self.lock(), node, said, 0)
     }
 
     pub fn said(&self, node: NodeId, text: &str, turn: Option<&str>) -> rusqlite::Result<()> {
@@ -227,77 +307,6 @@ impl Graph {
         )
     }
 
-    pub fn end_turn(&self, node: NodeId) -> rusqlite::Result<Option<Nudge>> {
-        let mut db = self.lock();
-        let tx = db.transaction()?;
-        let (flags, reply, heard): (u16, Option<String>, Option<String>) = tx
-            .query_row(
-                "SELECT turn_flags, reply, heard FROM nodes WHERE id = ?1",
-                [node.0],
-                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
-            )
-            .optional()?
-            .unwrap_or_default();
-        let has = |bit: Bit| flags & bit.mask() != 0;
-        let reply = reply.filter(|_| has(Bit::Replied));
-        let check = if has(Bit::QuestionBox) && !has(Bit::Asked) {
-            Some(Nudge::QuestionBox)
-        } else if !has(Bit::Called)
-            && !has(Bit::KindNudged)
-            && reply
-                .as_deref()
-                .is_some_and(|text| kind_line(text).is_some())
-        {
-            Some(Nudge::KindLine)
-        } else if !has(Bit::UnjudgedNudged) {
-            unjudged(&tx, node)?.map(Nudge::Unjudged)
-        } else {
-            None
-        };
-        let reported = match reply.as_deref() {
-            Some(reply)
-                if check.is_none()
-                    && has(Bit::Human)
-                    && !has(Bit::Called)
-                    && unreported_root(&tx, node)? =>
-            {
-                put_reply(&tx, node, heard.as_deref().unwrap_or_default(), reply)?;
-                true
-            }
-            _ => false,
-        };
-        tx.execute(
-            "INSERT OR IGNORE INTO ended_turns (node, turn)
-             SELECT id, turn FROM nodes WHERE id = ?1 AND turn IS NOT NULL",
-            [node.0],
-        )?;
-        let kept = check
-            .as_ref()
-            .map_or(0, |nudge| (flags & NUDGED) | nudge.kept());
-        let open = if has(Bit::Status) && !has(Bit::Called) {
-            Bit::Human.mask()
-        } else {
-            0
-        };
-        let human_reply = if has(Bit::Typed) && !has(Bit::Status) && !has(Bit::Background) {
-            HUMAN_REPLY
-        } else {
-            0
-        };
-        tx.execute(
-            "UPDATE nodes SET turn_flags = ?2, turn = NULL WHERE id = ?1",
-            params![
-                node.0,
-                kept | human_reply | (flags & (SUBMITTED_INPUT | STATUS | BACKGROUND | open))
-            ],
-        )?;
-        tx.commit()?;
-        if reported {
-            self.publish_nodes();
-        }
-        Ok(check)
-    }
-
     pub fn turn_launched(&self, node: NodeId) -> rusqlite::Result<()> {
         let mut db = self.lock();
         let tx = db.transaction()?;
@@ -314,7 +323,8 @@ impl Graph {
                 | HUMAN_REPLY
                 | TYPED
                 | BACKGROUND
-                | FIRST_INPUT,
+                | FIRST_INPUT
+                | CHAT_PROMPT,
         )?;
         tx.commit()
     }
@@ -343,10 +353,19 @@ impl Graph {
             .map(|pending| pending.unwrap_or(false))
     }
 
-    pub fn first_input_taken(&self, node: NodeId) -> rusqlite::Result<bool> {
-        Ok(self.lock().execute(
-            "UPDATE nodes SET turn_flags = turn_flags & ~?2 WHERE id = ?1 AND (turn_flags & ?2) != 0",
-            params![node.0, FIRST_INPUT],
-        )? > 0)
+    pub fn first_input_taken(&self, node: NodeId, prompt: Option<&str>) -> rusqlite::Result<bool> {
+        let mut db = self.lock();
+        let tx = db.transaction()?;
+        let keep: Option<bool> = tx.query_row(
+            "UPDATE nodes SET turn_flags = turn_flags & ~?2 WHERE id = ?1 AND (turn_flags & ?2) != 0
+             RETURNING (turn_flags & ?3) != 0",
+            params![node.0, FIRST_INPUT, CHAT_PROMPT],
+            |row| row.get(0),
+        ).optional()?;
+        if keep == Some(false) {
+            record_heard(&tx, node, prompt, 0)?;
+        }
+        tx.commit()?;
+        Ok(keep.is_some())
     }
 }

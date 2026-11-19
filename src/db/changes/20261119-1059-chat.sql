@@ -58,6 +58,7 @@ ALTER TABLE messages ADD COLUMN chat_exposed INTEGER NOT NULL DEFAULT 0;
 CREATE INDEX chat_group ON messages(chat_group) WHERE chat_group IS NOT NULL;
 CREATE INDEX chat_recipient ON messages(recipient_node_id, created_at, id);
 CREATE INDEX chat_sender ON messages(sender_node_id, created_at, id);
+CREATE INDEX chat_event_node ON events((CASE WHEN json_valid(entry) THEN entry ->> '$.node.id' END), at);
 
 CREATE TRIGGER chat_expose_message AFTER UPDATE OF sent_at, delivered, printed ON messages
 WHEN new.chat_group IS NOT NULL AND new.chat_exposed = 0

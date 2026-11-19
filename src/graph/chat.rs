@@ -2,19 +2,21 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use ring::hmac;
+use rusqlite::types::Value;
 use rusqlite::{Connection, OptionalExtension, Row, params};
 
+use api::graph::Place;
 use api::graph::chat::*;
 use api::graph::docs::PostOutside;
 use api::graph::errors::{BRIEF_LIMIT_BYTES, Refusal};
 use api::graph::events::Who;
 use api::graph::messages::{Kind, MessageKind, Question};
 use api::graph::waits::{Closed, HumanWait};
-use api::graph::{Place, ProcessState};
 use api::ids::{AccountId, AgentId, NodeId, RepoId};
 
 use super::{
-    Graph, doc_talk, folder_name, from_json, hosts, mailbox, optional_json, status, to_json, waits,
+    Graph, REACHABLE, doc_talk, folder_name, from_json, hosts, mailbox, optional_json, status,
+    to_json, waits,
 };
 use crate::process_tree::Identity;
 use crate::protocol::{Delivery, HUMAN, LOOM, MessageId, Session};
@@ -22,6 +24,7 @@ use crate::protocol::{Delivery, HUMAN, LOOM, MessageId, Session};
 const PINNED: &str = "all";
 const OUTSIDE_SUFFIX: &str = " (outside agent)";
 const NOTICE_KINDS: &str = "('batch', 'accountSwitched', 'noAccountLeft', 'relaunched', 'endpointFailed', 'created', 'removed', 'tidied')";
+const EVENT_NODE: &str = "(CASE WHEN json_valid(entry) THEN entry ->> '$.node.id' END)";
 const ROOM_COLUMNS: &str = "SELECT id, name, archived FROM chat_rooms";
 
 struct Room {
@@ -80,23 +83,25 @@ impl Graph {
             .collect::<Result<Vec<_>, _>>()
             .map(ordered_rooms)?;
         let mut agents = Vec::new();
-        let mut metadata = db.prepare_cached(
+        let mut metadata = db.prepare_cached(&format!(
             "SELECT n.heard, (SELECT max(at) FROM (
-                SELECT max(at) AS at FROM events WHERE CASE WHEN json_valid(entry) THEN entry ->> '$.node.id' = n.id END
+                SELECT max(at) AS at FROM events WHERE {EVENT_NODE} = n.id
                 UNION ALL SELECT max(created_at) FROM messages WHERE recipient_node_id = n.id
                 UNION ALL SELECT max(created_at) FROM messages WHERE sender_node_id = n.id
-             )) FROM nodes n WHERE n.id = ?1",
-        )?;
+             )) FROM nodes n WHERE n.id = ?1 AND {REACHABLE}"
+        ))?;
         for node in status::views(&db, self.linked, &tool)? {
-            if matches!(node.process, ProcessState::Stopped { .. }) {
+            let Some((assignment, activity)) = metadata
+                .query_row([node.id.0], |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                    ))
+                })
+                .optional()?
+            else {
                 continue;
-            }
-            let (assignment, activity) = metadata.query_row([node.id.0], |row| {
-                Ok((
-                    row.get::<_, Option<String>>(0)?,
-                    row.get::<_, Option<i64>>(1)?,
-                ))
-            })?;
+            };
             let modes = if node.agent.as_ref().is_some_and(self.linked) {
                 Kind::ALL.to_vec()
             } else {
@@ -193,7 +198,7 @@ impl Graph {
     ) -> Result<ChatPage, Refusal> {
         let db = self.lock();
         let room = take_room(&mut rooms(&db)?, room)?;
-        stream(&db, &room, before, limit)
+        stream(&db, &room, Audience::Human, before, limit)
     }
 
     pub fn outside_chat_stream(
@@ -207,7 +212,7 @@ impl Graph {
         verify(&db, room, token)?;
         let tx = db.transaction()?;
         let room = take_room(&mut rooms(&tx)?, room)?;
-        let mut page = stream(&tx, &room, before, limit)?;
+        let mut page = stream(&tx, &room, Audience::Outside, before, limit)?;
         let mut picked = 0;
         for item in &mut page.items {
             if let ChatEntry::Message { message } = &mut item.entry {
@@ -365,7 +370,7 @@ impl Graph {
                 && now.worktree == launch.worktree
                 && now.session.as_ref().map(|s| &s.0) == launch.session.as_ref().map(|s| &s.0)
         });
-        Ok((stream(&db, &room, before, limit)?, same))
+        Ok((stream(&db, &room, Audience::Human, before, limit)?, same))
     }
 }
 
@@ -457,21 +462,15 @@ fn rooms(db: &Connection) -> rusqlite::Result<BTreeMap<String, Room>> {
         archived: false,
         members: Vec::new(),
     };
-    let mut stmt = db.prepare_cached(
-        "SELECT id, name, repo, worktree, 0, process FROM nodes
-         UNION ALL SELECT id, name, repo, worktree, 1, NULL FROM chat_archived_nodes ORDER BY id",
-    )?;
+    let mut stmt = db.prepare_cached(&format!(
+        "SELECT id, name, repo, worktree, NOT {REACHABLE} FROM nodes
+         UNION ALL SELECT id, name, repo, worktree, 1 FROM chat_archived_nodes ORDER BY id"
+    ))?;
     let mut nodes = stmt.query([])?;
     while let Some(row) = nodes.next()? {
         let node = NodeId(row.get(0)?);
         let name = row.get(1)?;
-        let removed: bool = row.get(4)?;
-        let process = optional_json::<super::ProcessOutcome>(row, 5)?;
-        let archived = removed
-            || matches!(
-                super::process_state(process, None),
-                ProcessState::Stopped { .. }
-            );
+        let archived = row.get(4)?;
         let id = agent_room(node);
         rooms.insert(
             id.clone(),
@@ -628,10 +627,9 @@ impl Targets {
     fn add_room(&mut self, db: &Connection, room: &Room) -> Result<(), Refusal> {
         room.writable()?;
         let mut live = false;
-        let mut stmt = db.prepare_cached(
-            "SELECT EXISTS (SELECT 1 FROM nodes WHERE id = ?1
-             AND (process IS NULL OR process ->> 'kind' = 'asleep'))",
-        )?;
+        let mut stmt = db.prepare_cached(&format!(
+            "SELECT EXISTS (SELECT 1 FROM nodes WHERE id = ?1 AND {REACHABLE})"
+        ))?;
         for node in &room.members {
             if stmt.query_row([node.0], |row| row.get::<_, bool>(0))? {
                 self.nodes
@@ -712,26 +710,28 @@ fn check_editable(db: &Connection, group: u32) -> Result<(), Refusal> {
 
 fn editable(db: &Connection, group: u32) -> rusqlite::Result<Option<bool>> {
     db.query_row(
-        "SELECT min(m.sender_name = ?2 AND m.chat_exposed = 0 AND m.kind != ?3
+        &format!(
+            "SELECT min(m.sender_name = ?2 AND m.chat_exposed = 0 AND m.kind != ?3
              AND (m.recipient_node_id IS NULL OR EXISTS (SELECT 1 FROM nodes n
-                 WHERE n.id = m.recipient AND (n.process IS NULL OR n.process ->> 'kind' = 'asleep')))
+                 WHERE n.id = m.recipient AND {REACHABLE}))
              AND NOT EXISTS (SELECT 1 FROM chat_room_messages rm LEFT JOIN chat_rooms r
                  ON rm.room = format('custom-%d', r.id)
                  WHERE rm.message = m.id AND (rm.outside_read = 1 OR r.archived = 1)))
-         FROM messages m WHERE m.chat_group = ?1",
+         FROM messages m WHERE m.chat_group = ?1"
+        ),
         params![group, HUMAN, to_json(&Kind::Interrupt)],
         |row| row.get(0),
     )
 }
 
 fn room_view(db: &Connection, key: &hmac::Key, room: Room) -> Result<ChatRoom, Refusal> {
-    let sql = timeline_sql(&room);
+    let sql = timeline_sql(&room, Audience::Human);
     let (at, unread, questions, done) = db.query_row(
         &format!(
             "{sql} SELECT max(at), coalesce(sum(unread), 0),
             coalesce(sum(question), 0), coalesce(sum(done), 0) FROM timeline"
         ),
-        params![room.id, room_node(&room).map(|node| node.0)],
+        params![room.id, timeline_scope(&room)],
         |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
     )?;
     let token = URL_SAFE_NO_PAD.encode(hmac::sign(key, room.id.as_bytes()).as_ref());
@@ -749,39 +749,44 @@ fn room_view(db: &Connection, key: &hmac::Key, room: Room) -> Result<ChatRoom, R
     })
 }
 
-fn room_node(room: &Room) -> Option<NodeId> {
+fn timeline_scope(room: &Room) -> Value {
     match room.kind {
-        ChatRoomKind::Agent { node } => Some(node),
-        _ => None,
+        ChatRoomKind::Agent { node } => Value::Integer(i64::from(node.0)),
+        ChatRoomKind::Work { .. } => Value::Text(to_json(&room.members)),
+        _ => Value::Null,
     }
 }
 
-fn timeline_sql(room: &Room) -> String {
-    let in_work = |node| {
-        format!(
-            "EXISTS (SELECT 1 FROM chat_node_rooms nr
-        WHERE nr.room = ?1 AND nr.node = {node})"
-        )
-    };
-    let linked =
-        "EXISTS (SELECT 1 FROM chat_room_messages rm WHERE rm.room = ?1 AND rm.message = m.id)";
+enum Audience {
+    Human,
+    Outside,
+}
+
+fn timeline_sql(room: &Room, audience: Audience) -> String {
+    let in_work = |node| format!("{node} IN (SELECT node FROM scope)");
+    let linked = "m.id IN (SELECT message FROM chat_room_messages WHERE room = ?1)";
     let linked_reply =
         "EXISTS (SELECT 1 FROM chat_room_messages rm WHERE rm.room = ?1 AND rm.message = p.id)";
     let signed = "m.sender_node_id IS NULL AND m.sender_name IN ('human', 'loom')";
     let (messages, talk, card, notices) = match &room.kind {
-        ChatRoomKind::Pinned => (
-            signed.to_owned(),
-            "(p.sender_node_id IS NULL AND p.sender_name = 'human')
-                OR (p.id IS NULL AND t.said = 'human')".to_owned(),
-            "1".to_owned(),
-            "1".to_owned(),
-        ),
+        ChatRoomKind::Pinned => {
+            let mut messages = signed.to_owned();
+            let mut talk = "(p.sender_node_id IS NULL AND p.sender_name = 'human')
+                OR (p.id IS NULL AND t.said = 'human')".to_owned();
+            if matches!(audience, Audience::Outside) {
+                messages = format!("{messages} OR ({linked} AND m.chat_group IS NOT NULL
+                    AND m.sender_node_id IS NULL AND m.sender_name LIKE '%{OUTSIDE_SUFFIX}')");
+                talk = format!("{talk} OR ({linked_reply} AND t.chat_reply = p.id AND p.chat_group IS NOT NULL
+                    AND p.sender_node_id IS NULL AND p.sender_name LIKE '%{OUTSIDE_SUFFIX}')");
+            }
+            (messages, talk, "1".to_owned(), "1".to_owned())
+        }
         ChatRoomKind::Agent { .. } => (
             "(m.recipient_node_id = ?2 OR m.sender_node_id = ?2)".to_owned(),
             "p.recipient_node_id = ?2 OR t.doc = printf('room/%d', ?2)
                 OR (p.id IS NULL AND EXISTS (SELECT 1 FROM doc_authors a WHERE a.doc = t.doc AND a.node = ?2))".to_owned(),
             "node = ?2".to_owned(),
-            "e.entry ->> '$.node.id' = ?2".to_owned(),
+            format!("{EVENT_NODE} = ?2"),
         ),
         ChatRoomKind::Work { .. } => (
             format!("{linked} OR (m.chat_group IS NULL AND {} AND (
@@ -790,7 +795,7 @@ fn timeline_sql(room: &Room) -> String {
                 AND (p.sender_name = 'human' OR p.sender_name LIKE '% (outside agent)')) OR (p.chat_group IS NULL
                 AND p.sender_node_id IS NULL AND p.sender_name = 'human' AND {})", in_work("p.recipient_node_id")),
             in_work("node"),
-            in_work("e.entry ->> '$.node.id'"),
+            in_work(EVENT_NODE),
         ),
         ChatRoomKind::Custom => (
             linked.to_owned(),
@@ -800,11 +805,11 @@ fn timeline_sql(room: &Room) -> String {
         ),
     };
     format!(
-        "WITH scope AS (SELECT ?1, ?2), mail AS (
+        "WITH scope AS (SELECT value AS node FROM json_each(?2) WHERE ?1 IS NOT NULL), mail AS (
             SELECT coalesce(m.chat_group, m.id) AS group_id, min(m.id) AS id, min(m.created_at) AS at,
                 sum(m.recipient IS NOT NULL AND m.delivered = 0 AND m.sent_at IS NULL AND m.printed = 0
                     AND EXISTS (SELECT 1 FROM nodes n WHERE n.id = m.recipient AND
-                        (n.process IS NULL OR n.process ->> 'kind' = 'asleep'))) AS unread
+                        {REACHABLE})) AS unread
             FROM messages m WHERE {messages} GROUP BY group_id
          ), history_waits AS (
             SELECT w.id, w.node, w.wait, n.name, NULL AS closed FROM chat_open_waits w JOIN nodes n ON n.id = w.node
@@ -823,7 +828,7 @@ fn timeline_sql(room: &Room) -> String {
                 FROM history_waits w WHERE {card}
             UNION ALL
             SELECT e.at, 3, e.id, 0, 0, 0 FROM events e
-                WHERE CASE WHEN json_valid(e.entry) THEN ({notices}) AND e.entry ->> 'kind' IN {NOTICE_KINDS} END
+                WHERE ({notices}) AND (CASE WHEN json_valid(e.entry) THEN e.entry ->> 'kind' END) IN {NOTICE_KINDS}
          )"
     )
 }
@@ -831,13 +836,14 @@ fn timeline_sql(room: &Room) -> String {
 fn stream(
     db: &Connection,
     room: &Room,
+    audience: Audience,
     before: Option<ChatCursor>,
     limit: usize,
 ) -> Result<ChatPage, Refusal> {
     let at = before.map_or(i64::MAX, |c| c.at_ms);
     let source = before.map_or(i64::MAX, |c| c.source as i64);
     let id = before.map_or(i64::MAX, |c| c.id);
-    let sql = timeline_sql(room);
+    let sql = timeline_sql(room, audience);
     let mut stmt = db.prepare_cached(&format!(
         "{sql} SELECT at * 1000 AS ms, source, id FROM timeline
             WHERE (at * 1000, source, id) < (?3, ?4, ?5)
@@ -847,7 +853,7 @@ fn stream(
         .query_map(
             params![
                 room.id,
-                room_node(room).map(|node| node.0),
+                timeline_scope(room),
                 at,
                 source,
                 id,
@@ -953,20 +959,24 @@ fn read_message(db: &Connection, room: &str, id: i64) -> rusqlite::Result<ChatMe
         },
     )?;
     let sql = if message.group.is_some() {
-        "SELECT m.id, m.recipient_node_id, m.recipient_name, m.delivered, m.printed, m.sent_at,
+        format!(
+            "SELECT m.id, m.recipient_node_id, m.recipient_name, m.delivered, m.printed, m.sent_at,
                   m.chat_exposed, m.recipient, rm.outside_read,
                   EXISTS (SELECT 1 FROM nodes n WHERE n.id = m.recipient AND
-                     (n.process IS NULL OR n.process ->> 'kind' = 'asleep'))
+                     {REACHABLE})
            FROM chat_room_messages rm JOIN messages m ON m.id = rm.message
            WHERE rm.room = ?1 AND m.chat_group = ?2 ORDER BY m.id"
+        )
     } else {
-        "SELECT m.id, m.recipient_node_id, m.recipient_name, m.delivered, m.printed, m.sent_at,
+        format!(
+            "SELECT m.id, m.recipient_node_id, m.recipient_name, m.delivered, m.printed, m.sent_at,
                   m.chat_exposed, m.recipient, 0,
                   EXISTS (SELECT 1 FROM nodes n WHERE n.id = m.recipient AND
-                     (n.process IS NULL OR n.process ->> 'kind' = 'asleep'))
+                     {REACHABLE})
            FROM messages m WHERE m.id = ?2 AND ?1 IS NOT NULL"
+        )
     };
-    let mut stmt = db.prepare_cached(sql)?;
+    let mut stmt = db.prepare_cached(&sql)?;
     let mut rows = stmt.query(params![room, message.group.unwrap_or(message.id)])?;
     while let Some(row) = rows.next()? {
         message.outside_read |= row.get::<_, bool>(8)?;

@@ -102,13 +102,15 @@ impl App {
         node: NodeId,
         prompt: Option<&str>,
     ) -> Result<Option<String>, Refusal> {
-        let injected = self.graph.first_input_taken(node)?;
+        let injected = self.graph.first_input_taken(node, prompt)?;
         if !injected {
             self.graph.human_input(node)?;
         }
         self.graph.limit_cleared(node)?;
         self.draft_ended(node);
-        self.turn_ends.human(node, prompt);
+        if !injected {
+            self.turn_ends.human(node, prompt);
+        }
         if !injected && !prompt.is_some_and(|p| p.trim_start().starts_with('/')) {
             self.graph.instructed(node, prompt.unwrap_or_default())?;
         }

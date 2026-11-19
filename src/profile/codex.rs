@@ -16,22 +16,25 @@ use super::adapter::{
     Carry, Chosen, Facts, LaunchAt, Logins, Port, Record, ResumeError, Started, TurnTake,
 };
 use super::process::Served;
-use crate::accounts::Cli;
+use crate::accounts::{Cli, Site};
 use crate::protocol::{
     Delivery, EndedTurn, IdleReply, IdleRequest, MessageId, Model, Report, Session, TakeRequest,
     TurnReply,
 };
 use crate::screen::{Dialog, Grammar, Options, Top};
 use crate::skills::Launch;
+use crate::transcript::{Fallback, Source};
 use api::graph::errors::{LaunchError, Refusal};
 use api::graph::messages::Kind;
 use api::graph::waits::{Prompt, PromptKey, PromptOption, WaitKind};
+use api::ids::AccountId;
 use api::profile::{ModelRule, Provider, VersionMismatch};
 use api::start::ModelChoice;
 use server::{Address, Approval, Asked, CodexServer, ThreadInfo, ThreadRead};
 
 pub mod server;
 mod stdio;
+mod transcript;
 mod usage;
 
 #[allow(clippy::all, dead_code)]
@@ -279,6 +282,35 @@ impl super::adapter::Adapter for Codex {
         }
         let rollout = rollout(to, &thread.0)?;
         Ok(super::copy_session(&rollout, ROLLOUT_DEPTH, &new_root)?)
+    }
+
+    fn transcript(
+        &self,
+        site: &Site,
+        session: Option<&Session>,
+        account: Option<&AccountId>,
+    ) -> Result<Source, Fallback> {
+        if !matches!(self, Self::OpenAi) {
+            return Err(Fallback::Unsupported);
+        }
+        let thread = session
+            .filter(|session| !session.0.is_empty())
+            .ok_or(Fallback::Missing)?;
+        let home = if account.is_none() && site.inside().is_none() {
+            std::env::var_os(CLI.env)
+                .filter(|dir| !dir.is_empty())
+                .map(PathBuf::from)
+        } else {
+            None
+        };
+        let home = home
+            .or_else(|| site.login_dir(&CLI, account))
+            .ok_or(Fallback::Missing)?;
+        if matches!(crate::place::of(&home), crate::place::Machine::Ssh(_)) {
+            return Err(Fallback::Unsupported);
+        }
+        let path = transcript::rollout(&home, &thread.0)?;
+        Source::jsonl(path, transcript::decode)
     }
 
     fn record<'a>(&'a self, rec: &'a Record) -> BoxFuture<'a, Option<String>> {

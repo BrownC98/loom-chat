@@ -29,6 +29,8 @@ mod ssh;
 mod tailscale;
 mod task;
 mod timed;
+#[allow(dead_code)]
+mod transcript;
 mod tunnel;
 mod update;
 mod usage;

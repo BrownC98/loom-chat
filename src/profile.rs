@@ -25,19 +25,20 @@ use serde::Deserialize;
 use api::profile::{AgentAt, AgentView, ModelRule, Profile, Provider, VersionMismatch};
 use api::start::{ModelChoice, Start};
 
-use crate::accounts::Cli;
+use crate::accounts::{Cli, Site};
 use crate::distro::Host;
 use crate::protocol::{
     ChoiceRequest, Delivery, MessageId, OpenQuestion, Report, Session, StartDigests, TurnReply,
 };
 use crate::screen::{self, LinePrompt, Reply, Screen, SessionStart};
 use crate::skills::Launch;
+use crate::transcript::{Decode, Fallback, Source};
 use crate::wsl::Inside;
 use adapter::{Adapter, InputSeen, LaunchAt, Logins, Meter, Port, Started};
 use api::graph::errors::{BRIEF_LIMIT_BYTES, LaunchError, Refusal};
 use api::graph::messages::Kind;
 use api::graph::waits::{InputField, Prompt as ScreenPrompt, WaitKind};
-use api::ids::AgentId;
+use api::ids::{AccountId, AgentId};
 use api::repos::PlaceView;
 
 pub const BATCH_LIMIT_BYTES: usize = 8 * 1024;
@@ -223,6 +224,29 @@ pub fn adapter(profile: Profile) -> &'static dyn Adapter {
         Profile::Hermes => &hermes::Hermes,
         Profile::Vibe => &vibe::Vibe,
     }
+}
+
+#[allow(dead_code)]
+pub(crate) fn transcript_source(
+    profile: Profile,
+    site: &Site,
+    session: Option<&Session>,
+    account: Option<&AccountId>,
+) -> Result<Source, Fallback> {
+    adapter(profile).transcript(site, session, account)
+}
+
+fn transcript_file(
+    site: &Site,
+    session: Option<&Session>,
+    decode: Decode,
+) -> Result<Source, Fallback> {
+    let session = session.filter(|session| !session.0.is_empty());
+    let path = site.local(&session.ok_or(Fallback::Missing)?.0);
+    if matches!(crate::place::of(&path), crate::place::Machine::Ssh(_)) {
+        return Err(Fallback::Unsupported);
+    }
+    Source::jsonl(path, decode)
 }
 
 #[derive(Clone, Copy)]

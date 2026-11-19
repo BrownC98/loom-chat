@@ -21,15 +21,18 @@ use crate::place::{self, Files, Machine};
 use crate::protocol::{Delivery, END_TURN_NOW, Model, Session, TurnReply};
 use crate::screen::{Answer, Dialog, Grammar, Options, Place, Screen, Top};
 use crate::skills::Launch;
+use crate::transcript::{Fallback, Source};
 use crate::wsl::Run;
 use api::graph::errors::LaunchError;
 use api::graph::messages::Kind;
 use api::graph::waits::WaitKind;
+use api::ids::AccountId;
 use api::profile::ModelRule;
 use api::settings::AlwaysOn;
 use api::start::ModelChoice;
 
 mod accounts;
+mod transcript;
 mod usage;
 
 const HOOK_TIMEOUT_SECS: u64 = 10;
@@ -312,6 +315,18 @@ impl Adapter for Claude {
                     format!("`claude stop {job}`이 옛 세션의 백그라운드 작업을 끝내지 못했다")
                 })
         })
+    }
+
+    fn transcript(
+        &self,
+        site: &Site,
+        session: Option<&Session>,
+        _: Option<&AccountId>,
+    ) -> Result<Source, Fallback> {
+        if !matches!(self, Self::Code) {
+            return Err(Fallback::Unsupported);
+        }
+        super::transcript_file(site, session, transcript::decode)
     }
 
     fn record<'a>(&'a self, rec: &'a Record) -> BoxFuture<'a, Option<String>> {

@@ -14,6 +14,7 @@ use crate::protocol::{
 use crate::screen::{Dialog, Grammar, Screen};
 use crate::skills::Launch;
 use crate::task::TaskDir;
+use crate::transcript::{Fallback, Source};
 use crate::wsl::Inside;
 use api::graph::errors::{LaunchError, Refusal};
 use api::graph::messages::Kind;
@@ -200,6 +201,15 @@ pub trait Adapter: Sync {
         Box::pin(async { Ok(()) })
     }
     fn record<'a>(&'a self, rec: &'a Record) -> BoxFuture<'a, Option<String>>;
+    fn transcript(
+        &self,
+        _: &Site,
+        _: Option<&Session>,
+        _: Option<&AccountId>,
+    ) -> Result<Source, Fallback> {
+        Err(Fallback::Unsupported)
+    }
+
     fn shell_root(&self, _: &Record) -> Option<u32> {
         None
     }

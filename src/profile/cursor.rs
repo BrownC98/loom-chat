@@ -9,19 +9,23 @@ use portable_pty::CommandBuilder;
 
 use super::adapter::{Adapter, Command, Facts, LaunchAt, Logins, Port, Record, Started, TurnTake};
 use super::{Handed, HookEvent, Report, Shown, Signals, Take};
+use crate::accounts::Site;
 use crate::place::Files;
 use crate::protocol::{Delivery, Model, Session};
 use crate::screen::{Answer, Dialog, Grammar, Options, Place, Top};
 use crate::skills::{Launch, Position};
+use crate::transcript::{Fallback, Source};
 use crate::wsl::Inside;
 use api::graph::errors::LaunchError;
 use api::graph::messages::Kind;
 use api::graph::waits::WaitKind;
+use api::ids::AccountId;
 use api::profile::ModelRule;
 use api::settings::AlwaysOn;
 use api::settings::usage::UsageProblem;
 use api::start::ModelChoice;
 
+mod transcript;
 mod usage;
 
 pub const PROMPT: Grammar = Grammar {
@@ -289,6 +293,15 @@ impl Adapter for Cursor {
 
     fn install(&self, dir: &Path) -> std::io::Result<()> {
         write_plugin(dir)
+    }
+
+    fn transcript(
+        &self,
+        site: &Site,
+        session: Option<&Session>,
+        _: Option<&AccountId>,
+    ) -> Result<Source, Fallback> {
+        super::transcript_file(site, session, transcript::decode)
     }
 
     fn record<'a>(&'a self, rec: &'a Record) -> BoxFuture<'a, Option<String>> {

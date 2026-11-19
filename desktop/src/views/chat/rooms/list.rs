@@ -1,12 +1,13 @@
 use std::cmp::Reverse;
 use std::collections::{HashMap, HashSet};
 
-use api::graph::Status;
 use api::graph::chat::{ChatRoom, ChatRoomKind};
-use api::ids::NodeId;
+use api::graph::{NodeView, Status};
+use api::ids::{NodeId, RepoId};
+use api::repos::RepoView;
 use gpui::App;
 
-use super::{ChatData, Group, Rooms, group_for};
+use super::{ChatData, Rooms};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Filter {
@@ -33,7 +34,11 @@ impl Filter {
         match self {
             Self::All => true,
             Self::MyTurn => room.questions > 0,
-            Self::Working => working(room, &index.working_agents),
+            Self::Working => room.members.iter().any(|node| {
+                index
+                    .node(*node)
+                    .is_some_and(|node| matches!(node.status, Status::Working { .. }))
+            }),
             Self::Unread => room.unread > 0,
         }
     }
@@ -41,57 +46,99 @@ impl Filter {
 
 pub(super) struct Index<'a> {
     pub(super) rooms: &'a [ChatRoom],
-    pub(super) selected: Option<&'a ChatRoom>,
-    pub(super) working_agents: HashSet<NodeId>,
+    pub(super) repos: &'a [RepoView],
+    pub(super) nodes: &'a [NodeView],
+    node_by_id: HashMap<NodeId, &'a NodeView>,
     agents: HashMap<NodeId, &'a str>,
-    work_by_agent: HashMap<NodeId, &'a str>,
+    work_by_agent: HashMap<NodeId, usize>,
+    work_parents: HashMap<usize, usize>,
 }
 
 impl<'a> Index<'a> {
     pub(super) fn new(data: &'a ChatData, cx: &'a App) -> Self {
-        let mut agents = HashMap::new();
-        let mut work_by_agent = HashMap::new();
-        for room in data.rooms() {
+        let snapshot = data.graph().read(cx).snapshot();
+        let repos = snapshot.map_or(&[][..], |s| s.repos.as_slice());
+        let nodes = snapshot.map_or(&[][..], |s| s.nodes.as_slice());
+        let mut index = Self {
+            rooms: data.rooms(),
+            repos,
+            nodes,
+            node_by_id: nodes.iter().map(|node| (node.id, node)).collect(),
+            agents: HashMap::new(),
+            work_by_agent: HashMap::new(),
+            work_parents: HashMap::new(),
+        };
+        for (slot, room) in index.rooms.iter().enumerate() {
             match &room.kind {
                 ChatRoomKind::Agent { node } => {
-                    agents.insert(*node, room.name.as_str());
+                    index.agents.insert(*node, room.name.as_str());
                 }
                 ChatRoomKind::Work { .. } => {
-                    for node in &room.members {
-                        work_by_agent.insert(*node, room.id.as_str());
-                    }
+                    index
+                        .work_by_agent
+                        .extend(room.members.iter().map(|node| (*node, slot)));
                 }
                 _ => {}
             }
         }
-        let working_agents = if let Some(recipients) = data.recipients() {
-            recipients
-                .agents
-                .iter()
-                .filter(|agent| matches!(agent.status, Status::Working { .. }))
-                .map(|agent| agent.node)
-                .collect()
-        } else {
-            data.graph()
-                .read(cx)
-                .snapshot()
-                .into_iter()
-                .flat_map(|snapshot| &snapshot.nodes)
-                .filter(|node| matches!(node.status, Status::Working { .. }))
-                .map(|node| node.id)
-                .collect()
-        };
-        Self {
-            rooms: data.rooms(),
-            selected: data.room(),
-            working_agents,
-            agents,
-            work_by_agent,
+        for node in nodes {
+            let Some((work, parent)) = index
+                .work(node.id)
+                .zip(node.parent.and_then(|id| index.work(id)))
+            else {
+                continue;
+            };
+            if work != parent
+                && !index.work_parents.contains_key(&work)
+                && !std::iter::successors(Some(parent), |slot| {
+                    index.work_parents.get(slot).copied()
+                })
+                .any(|slot| slot == work)
+            {
+                index.work_parents.insert(work, parent);
+            }
         }
+        index
     }
 
-    pub(super) fn work(&self, node: NodeId) -> Option<&'a str> {
+    pub(super) fn node(&self, node: NodeId) -> Option<&'a NodeView> {
+        self.node_by_id.get(&node).copied()
+    }
+
+    pub(super) fn repo(&self, repo: RepoId) -> Option<&'a RepoView> {
+        self.repos.iter().find(|entry| entry.id == repo)
+    }
+
+    pub(super) fn work(&self, node: NodeId) -> Option<usize> {
         self.work_by_agent.get(&node).copied()
+    }
+
+    pub(super) fn work_path(&self, work: usize) -> impl Iterator<Item = &ChatRoom> {
+        std::iter::successors(Some(work), |slot| self.work_parents.get(slot).copied())
+            .map(|slot| &self.rooms[slot])
+    }
+
+    fn member_repo(&self, node: NodeId) -> Option<RepoId> {
+        if let Some(live) = self.node(node) {
+            return Some(live.place.repo);
+        }
+        let ChatRoomKind::Work { place } = &self.rooms[self.work(node)?].kind else {
+            return None;
+        };
+        Some(place.repo)
+    }
+
+    pub(super) fn in_workspace(&self, room: &ChatRoom, repo: Option<RepoId>) -> bool {
+        let Some(repo) = repo else { return true };
+        match &room.kind {
+            ChatRoomKind::Pinned => true,
+            ChatRoomKind::Work { place } => place.repo == repo,
+            ChatRoomKind::Agent { node } => self.member_repo(*node) == Some(repo),
+            ChatRoomKind::Custom => room
+                .members
+                .iter()
+                .any(|&node| self.member_repo(node) == Some(repo)),
+        }
     }
 
     pub(super) fn matches(&self, room: &ChatRoom, query: &str) -> bool {
@@ -103,157 +150,153 @@ impl<'a> Index<'a> {
                     .is_some_and(|name| name.to_lowercase().contains(query))
             })
     }
-}
 
-pub(super) fn working(room: &ChatRoom, agents: &HashSet<NodeId>) -> bool {
-    !room.archived && room.members.iter().any(|node| agents.contains(node))
+    pub(super) fn work_title(&self, room: &'a ChatRoom) -> &'a str {
+        if let ChatRoomKind::Work { place } = &room.kind
+            && let Some(repo) = self.repo(place.repo)
+        {
+            if !repo.git {
+                return &repo.name;
+            }
+            if let Some(branch) = repo
+                .worktrees
+                .iter()
+                .find(|work| work.path == place.worktree)
+                .and_then(|work| work.branch.as_deref())
+            {
+                return branch;
+            }
+        }
+        &room.name
+    }
 }
 
 pub(super) enum Row {
     Room(usize),
-    Session(usize),
-    Group {
-        group: Group,
-        title: String,
-    },
-    Sessions {
-        group: Group,
-        count: usize,
-        open: bool,
-    },
+    Work(usize, usize),
+    Agent(usize, usize),
+    Custom,
+    Worktrees,
+    Unassigned,
     Hidden(usize),
-}
-
-enum SessionRows {
-    Folded(usize),
-    Open(Vec<usize>),
-}
-
-impl SessionRows {
-    fn add(&mut self, slot: usize) {
-        match self {
-            Self::Folded(count) => *count += 1,
-            Self::Open(slots) => slots.push(slot),
-        }
-    }
-
-    fn append_to(self, rows: &mut Vec<Row>, group: Group) {
-        let (count, slots) = match self {
-            Self::Folded(count) => (count, None),
-            Self::Open(slots) => (slots.len(), Some(slots)),
-        };
-        rows.push(Row::Sessions {
-            group,
-            count,
-            open: slots.is_some(),
-        });
-        rows.extend(slots.into_iter().flatten().map(Row::Session));
-    }
 }
 
 impl Rooms {
     pub(super) fn list_rows(&self, index: &Index<'_>, query: &str) -> (Vec<Row>, usize) {
+        let all = index.rooms.iter().enumerate().filter(|(_, room)| {
+            !matches!(room.kind, ChatRoomKind::Pinned) && index.in_workspace(room, self.workspace)
+        });
         let mut hidden = 0;
-        let matching = index
-            .rooms
-            .iter()
-            .enumerate()
-            .filter(|(_, room)| !matches!(room.kind, ChatRoomKind::Pinned))
+        let mut matches: Vec<_> = all
             .filter(|(_, room)| {
                 let visible = self.filter.shows(room, index) && index.matches(room, query);
                 hidden += usize::from(!visible);
                 visible
-            });
+            })
+            .collect();
         let rows = if self.flat {
-            let mut matches = matching.collect::<Vec<_>>();
             matches.sort_by_key(|(_, room)| (Reverse(room.last_activity), &room.name, &room.id));
             matches
                 .into_iter()
-                .map(|(slot, _)| Row::Room(slot))
+                .map(|(slot, room)| match room.kind {
+                    ChatRoomKind::Work { .. } => Row::Work(slot, 0),
+                    ChatRoomKind::Agent { .. } => Row::Agent(slot, 0),
+                    _ => Row::Room(slot),
+                })
                 .collect()
         } else {
-            self.grouped_rows(matching, index, query)
+            self.grouped_rows(matches, index)
         };
         (rows, hidden)
     }
 
-    fn grouped_rows<'a>(
-        &self,
-        matching: impl Iterator<Item = (usize, &'a ChatRoom)>,
-        index: &Index<'a>,
-        query: &str,
-    ) -> Vec<Row> {
+    fn grouped_rows(&self, matching: Vec<(usize, &ChatRoom)>, index: &Index<'_>) -> Vec<Row> {
         let mut rows = Vec::new();
-        let mut work_rooms = HashMap::new();
-        let mut sessions = HashMap::new();
-        let custom_open = !self.folded.contains(&Group::Custom);
-        let auto_expand = self.filter != Filter::All || !query.is_empty();
+        let mut work_rooms = HashSet::new();
+        let mut sessions = HashMap::<Option<usize>, Vec<(NodeId, usize)>>::new();
         for (slot, room) in matching {
             match &room.kind {
                 ChatRoomKind::Pinned => {}
                 ChatRoomKind::Custom => {
                     if rows.is_empty() {
-                        rows.push(Row::Group {
-                            group: Group::Custom,
-                            title: "내가 만든 방".to_owned(),
-                        });
+                        rows.push(Row::Custom);
                     }
-                    if custom_open {
+                    if !self.custom_folded {
                         rows.push(Row::Room(slot));
                     }
                 }
                 ChatRoomKind::Work { .. } => {
-                    work_rooms.insert(room.id.as_str(), slot);
+                    work_rooms.insert(slot);
                 }
                 ChatRoomKind::Agent { node } => {
                     let work = index.work(*node);
-                    sessions
-                        .entry(work)
-                        .or_insert_with(|| {
-                            let group = group_for(work);
-                            let open = self.sessions.get(&group).copied().unwrap_or(auto_expand);
-                            if open && !self.folded.contains(&group) {
-                                SessionRows::Open(Vec::new())
-                            } else {
-                                SessionRows::Folded(0)
-                            }
-                        })
-                        .add(slot);
+                    work_rooms.extend(work);
+                    sessions.entry(work).or_default().push((*node, slot));
                 }
             }
         }
-
-        for work in index
-            .rooms
-            .iter()
-            .filter(|room| matches!(room.kind, ChatRoomKind::Work { .. }))
-        {
-            let slot = work_rooms.get(work.id.as_str()).copied();
-            let agents = sessions.remove(&Some(work.id.as_str()));
-            if slot.is_none() && agents.is_none() {
-                continue;
+        if !work_rooms.is_empty() {
+            rows.push(Row::Worktrees);
+        }
+        let mut work_children = HashMap::<Option<usize>, Vec<usize>>::new();
+        for slot in 0..index.rooms.len() {
+            if work_rooms.contains(&slot) {
+                let parent = index
+                    .work_parents
+                    .get(&slot)
+                    .copied()
+                    .filter(|parent| work_rooms.contains(parent));
+                work_children.entry(parent).or_default().push(slot);
             }
-            let group = Group::Work(work.id.clone());
-            rows.push(Row::Group {
-                group: group.clone(),
-                title: work.name.clone(),
-            });
-            if !self.folded.contains(&group) {
-                rows.extend(slot.map(Row::Room));
-                if let Some(agents) = agents {
-                    agents.append_to(&mut rows, group);
+        }
+        let mut branches = Vec::new();
+        push_children(&mut branches, work_children.remove(&None), 0);
+        while let Some((slot, depth)) = branches.pop() {
+            rows.push(Row::Work(slot, depth));
+            if !self.folded.contains(&index.rooms[slot].id) {
+                if let Some(agents) = sessions.remove(&Some(slot)) {
+                    append_agents(&mut rows, index, agents, depth + 1);
                 }
+                push_children(&mut branches, work_children.remove(&Some(slot)), depth + 1);
             }
         }
         if let Some(agents) = sessions.remove(&None) {
-            rows.push(Row::Group {
-                group: Group::Unassigned,
-                title: "작업 없는 세션".to_owned(),
-            });
-            if !self.folded.contains(&Group::Unassigned) {
-                agents.append_to(&mut rows, Group::Unassigned);
-            }
+            rows.push(Row::Unassigned);
+            append_agents(&mut rows, index, agents, 1);
         }
         rows
     }
+}
+
+fn append_agents(
+    rows: &mut Vec<Row>,
+    index: &Index<'_>,
+    agents: Vec<(NodeId, usize)>,
+    depth: usize,
+) {
+    let visible: HashSet<_> = agents.iter().map(|(node, _)| *node).collect();
+    let mut children = HashMap::<Option<NodeId>, Vec<(NodeId, usize)>>::new();
+    for (node, slot) in agents {
+        let parent = index
+            .node(node)
+            .and_then(|node| node.parent)
+            .filter(|parent| visible.contains(parent));
+        children.entry(parent).or_default().push((node, slot));
+    }
+    let mut pending = Vec::new();
+    push_children(&mut pending, children.remove(&None), depth);
+    while let Some(((node, slot), depth)) = pending.pop() {
+        rows.push(Row::Agent(slot, depth));
+        push_children(&mut pending, children.remove(&Some(node)), depth + 1);
+    }
+}
+
+fn push_children<T>(pending: &mut Vec<(T, usize)>, children: Option<Vec<T>>, depth: usize) {
+    pending.extend(
+        children
+            .into_iter()
+            .flatten()
+            .rev()
+            .map(|child| (child, depth)),
+    );
 }

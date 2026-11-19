@@ -1,9 +1,7 @@
 use chrono::{Local, TimeZone, Timelike};
-use gpui::{
-    App, Div, ElementId, FontWeight, InteractiveElement, ParentElement, Stateful, Styled, div,
-};
+use gpui::{App, Div, ElementId, InteractiveElement, Stateful, Styled, div};
 
-use crate::scale::{self, px};
+use crate::scale;
 use crate::strings::{Lang, Str};
 use crate::theme::{Colors, Theme};
 
@@ -103,23 +101,6 @@ pub(super) fn button_frame(id: impl Into<ElementId>, zoom: f32) -> Stateful<Div>
         .border_1()
         .text_size(scale::fixed(SMALL * zoom))
         .cursor_pointer()
-}
-
-pub fn count(n: usize, c: &Colors) -> Div {
-    div()
-        .flex_none()
-        .min_w(px(18.0))
-        .h(px(18.0))
-        .px(px(5.0))
-        .rounded(px(9.0))
-        .bg(c.notice)
-        .text_color(c.notice_ink)
-        .text_size(px(11.0))
-        .font_weight(FontWeight::SEMIBOLD)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(n.to_string())
 }
 
 fn ago_text(unit: usize, count: i64, lang: Lang) -> String {

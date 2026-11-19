@@ -10,8 +10,6 @@ use gpui::{
     TextOverflow, TextRun, TextStyle, TruncateFrom, WhiteSpace, Window, WrappedLine,
 };
 
-use crate::scale::fixed as px;
-
 type Marks = Vec<(Range<usize>, HighlightStyle)>;
 
 struct Laid {
@@ -22,8 +20,6 @@ struct Laid {
 }
 
 type Click = Rc<dyn Fn(usize, &mut Window, &mut App)>;
-
-type Probe = Rc<dyn Fn(Bounds<Pixels>, &mut Window)>;
 
 struct Clicks {
     id: ElementId,
@@ -41,7 +37,6 @@ pub struct Prose {
     text: SharedString,
     marks: Marks,
     clicks: Option<Clicks>,
-    probe: Option<(usize, Probe)>,
     laid: Rc<RefCell<Option<Laid>>>,
 }
 
@@ -50,7 +45,6 @@ pub fn prose(text: impl Into<SharedString>) -> Prose {
         text: text.into(),
         marks: Vec::new(),
         clicks: None,
-        probe: None,
         laid: Rc::default(),
     }
 }
@@ -61,15 +55,6 @@ impl Prose {
         marks: impl IntoIterator<Item = (Range<usize>, HighlightStyle)>,
     ) -> Self {
         self.marks = marks.into_iter().collect();
-        self
-    }
-
-    pub fn with_probe(
-        mut self,
-        index: usize,
-        call: impl Fn(Bounds<Pixels>, &mut Window) + 'static,
-    ) -> Self {
-        self.probe = Some((index, Rc::new(call)));
         self
     }
 
@@ -108,27 +93,6 @@ fn index_at(
                 .ok()
                 .map(|found| start + found);
         }
-    }
-    None
-}
-
-fn spot(laid: &Laid, bounds: Bounds<Pixels>, index: usize) -> Option<Bounds<Pixels>> {
-    let mut origin = bounds.origin;
-    let mut start = 0;
-    for line in &laid.lines {
-        let end = start + line.len();
-        if index <= end {
-            let at = line.position_for_index(index - start, laid.line_height)?;
-            return Some(Bounds::new(
-                origin + at,
-                Size {
-                    width: px(1.0),
-                    height: laid.line_height,
-                },
-            ));
-        }
-        origin.y += line.size(laid.line_height).height;
-        start = end + 1;
     }
     None
 }
@@ -530,11 +494,6 @@ impl Element for Prose {
             line.paint(origin, laid.line_height, align, Some(bounds), window, cx)
                 .ok();
             origin.y += line.size(laid.line_height).height;
-        }
-        if let Some((index, probe)) = &self.probe
-            && let Some(at) = spot(laid, bounds, *index)
-        {
-            probe(at, window);
         }
     }
 }

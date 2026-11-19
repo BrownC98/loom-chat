@@ -7,8 +7,9 @@ use api::graph::waits::WaitTone;
 use api::ids::{NodeId, WaitId};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Context, Div, Entity, EventEmitter, IntoElement, ListAlignment, ListOffset, ListState,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div, list,
+    App, Context, Div, Entity, EventEmitter, InteractiveElement, IntoElement, KeyDownEvent,
+    ListAlignment, ListOffset, ListState, ParentElement, Render, StatefulInteractiveElement,
+    Styled, Subscription, Window, div, list,
 };
 
 use super::data::ChatData;
@@ -31,6 +32,8 @@ pub(super) enum StreamEvent {
     FollowUp { node: NodeId, wait: WaitId },
     OpenRoom(String),
 }
+
+pub(super) struct Quote(pub(super) Arc<ChatItem>);
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 enum Filter {
@@ -138,7 +141,7 @@ pub(super) struct Stream {
     rows: Rows,
     list: ListState,
     bar: Bar<ListState>,
-    expanded: BTreeSet<ChatCursor>,
+    expanded: HashMap<String, BTreeSet<ChatCursor>>,
     jumped: Option<ChatCursor>,
     jump_before: Option<ChatCursor>,
     paged: bool,
@@ -177,7 +180,7 @@ impl Stream {
             rows: Rows::default(),
             bar: Bar::over(list.clone()),
             list,
-            expanded: BTreeSet::new(),
+            expanded: HashMap::new(),
             jumped: None,
             jump_before: None,
             paged: false,
@@ -198,7 +201,6 @@ impl Stream {
         if changed_room {
             self.room = room.map(str::to_owned);
             self.filter = Filter::All;
-            self.expanded.clear();
             self.drafts.clear();
             self.jumped = None;
             self.jump_before = None;
@@ -408,6 +410,7 @@ impl Stream {
 }
 
 impl EventEmitter<StreamEvent> for Stream {}
+impl EventEmitter<Quote> for Stream {}
 
 impl Render for Stream {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -435,7 +438,7 @@ impl Render for Stream {
             self.bar
                 .reserved(list(
                     self.list.clone(),
-                    cx.processor(|stream, index, _, cx| stream.row(index, cx)),
+                    cx.processor(|stream, index, window, cx| stream.row(index, window, cx)),
                 ))
                 .flex_1()
                 .min_h_0()
@@ -449,6 +452,20 @@ impl Render for Stream {
             .bg(c.panel)
             .text_size(px(ui::TEXT))
             .text_color(c.ink)
+            .on_key_down(|event: &KeyDownEvent, window, cx| {
+                let stroke = &event.keystroke;
+                let modifiers = stroke.modifiers;
+                if stroke.key != "tab" || modifiers.alt || modifiers.control || modifiers.platform {
+                    return;
+                }
+                if modifiers.shift {
+                    window.focus_prev(cx);
+                } else {
+                    window.focus_next(cx);
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            })
             .children(toolbar)
             .child(content)
             .children(self.result.as_ref().map(|(text, failed)| {

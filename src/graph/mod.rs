@@ -118,7 +118,7 @@ const VIEW_COLUMNS: &str = "SELECT n.id, n.name, n.agent, n.parent, n.state,
     EXISTS(SELECT 1 FROM relaunch_plans p WHERE p.node = n.id),
     n.session IS NOT NULL,
     (SELECT s.state FROM agent_states s WHERE s.node = n.id),
-    n.limited";
+    n.limited, n.role";
 
 struct Db<'a> {
     conn: MutexGuard<'a, Connection>,
@@ -364,6 +364,7 @@ fn view_from_row(row: &Row, linked: fn(&AgentId) -> bool) -> rusqlite::Result<No
         id,
         name: row.get(1)?,
         agent,
+        role: row.get(21)?,
         parent: row.get::<_, Option<u32>>(3)?.map(NodeId),
         state,
         process,

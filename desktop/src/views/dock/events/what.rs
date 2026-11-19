@@ -8,13 +8,6 @@ use super::refusal;
 use crate::strings::{Lang, Str};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Category {
-    Node,
-    Message,
-    Notice,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Family {
     Question,
     Done,
@@ -48,19 +41,6 @@ impl Ctx<'_> {
 
     fn with(&self, text: Str, args: &[(&str, &str)]) -> String {
         text.with(self.lang, args)
-    }
-}
-
-pub fn category_of(entry: &Entry) -> Category {
-    match entry {
-        Entry::Message { .. } | Entry::Refused { .. } | Entry::Batch { .. } => Category::Message,
-        Entry::Asked { .. }
-        | Entry::Reported { .. }
-        | Entry::Answered { .. }
-        | Entry::Instructed { .. }
-        | Entry::Unanswered { .. }
-        | Entry::Confirmed { .. } => Category::Notice,
-        _ => Category::Node,
     }
 }
 
@@ -254,19 +234,6 @@ pub fn who_of(entry: &Entry) -> Vec<&Who> {
         | Entry::Batch { .. }
         | Entry::Tidied { .. } => Vec::new(),
     }
-}
-
-pub fn involved(entry: &Entry) -> Vec<u32> {
-    who_of(entry)
-        .into_iter()
-        .filter_map(|who| who.id.map(|id| id.0))
-        .collect()
-}
-
-pub fn matches_name(entry: &Entry, needle: &str) -> bool {
-    who_of(entry).iter().any(|who| who.name.contains(needle))
-        || matches!(entry, Entry::Refused { to, .. } if to.contains(needle))
-        || matches!(entry, Entry::Renamed { from, .. } if from.contains(needle))
 }
 
 pub fn plain(parts: &[TextPart]) -> String {

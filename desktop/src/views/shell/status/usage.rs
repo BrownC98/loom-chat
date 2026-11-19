@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use api::graph::GraphEvent;
 use api::graph::events::{Entry, SwitchCause};
-use api::ids::AccountId;
+use api::ids::{AccountId, RepoId};
 use api::profile::Provider;
 use api::repos::PlaceView;
 use api::settings::accounts::{AccountView, PlaceUsage};
@@ -39,6 +39,7 @@ mod popover;
 
 pub struct Usage {
     store: Entity<Store>,
+    pub(super) repo: Option<RepoId>,
     accounts: Option<Vec<AccountView>>,
     cursor: Option<Vec<PlaceUsage>>,
     loading: bool,
@@ -63,6 +64,7 @@ impl Usage {
         .detach();
         let usage = Self {
             store,
+            repo: None,
             accounts: None,
             cursor: None,
             loading: false,
@@ -167,12 +169,9 @@ impl Usage {
     fn distro(&self, cx: &App) -> Option<String> {
         let store = self.store.read(cx);
         let snapshot = store.snapshot()?;
-        let by_node = store
-            .selected()
-            .and_then(|id| snapshot.nodes.iter().find(|n| n.id.0 == id))
-            .map(|node| node.place.repo);
         let saved = store.settings().repo;
-        let repo = by_node
+        let repo = self
+            .repo
             .and_then(|id| snapshot.repos.iter().find(|r| r.id == id))
             .or_else(|| snapshot.repos.iter().find(|r| Some(r.id) == saved))
             .or_else(|| snapshot.repos.first())?;

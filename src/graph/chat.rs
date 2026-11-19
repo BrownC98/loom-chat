@@ -258,6 +258,14 @@ impl Graph {
                 ));
             }
         }
+        if let Some(nodes) = &req.attachment_nodes {
+            let uploaded: BTreeSet<_> = nodes.iter().map(|node| node.0).collect();
+            if !targets.outside.is_empty() || !targets.nodes.keys().copied().eq(uploaded) {
+                return Err(Refusal::BadSetting(
+                    "받는 이가 바뀌었습니다. 첨부 파일을 받을 사람을 다시 확인해 주세요.".into(),
+                ));
+            }
+        }
         let text = checked_text(&req.text)?;
         let group = enqueue(&tx, targets, HUMAN, req.mode, text)?;
         let message = group_message(&tx, PINNED, group)?;
@@ -780,15 +788,21 @@ fn timeline_sql(room: &Room, audience: Audience) -> String {
     let signed = "m.sender_node_id IS NULL AND m.sender_name IN ('human', 'loom')";
     let (messages, talk, card, notices) = match &room.kind {
         ChatRoomKind::Pinned => {
-            let mut messages = signed.to_owned();
-            let mut talk = "(p.sender_node_id IS NULL AND p.sender_name = 'human')
-                OR (p.id IS NULL AND t.said = 'human')".to_owned();
-            if matches!(audience, Audience::Outside) {
-                messages = format!("{messages} OR ({linked} AND m.chat_group IS NOT NULL
-                    AND m.sender_node_id IS NULL AND m.sender_name LIKE '%{OUTSIDE_SUFFIX}')");
-                talk = format!("{talk} OR ({linked_reply} AND t.chat_reply = p.id AND p.chat_group IS NOT NULL
-                    AND p.sender_node_id IS NULL AND p.sender_name LIKE '%{OUTSIDE_SUFFIX}')");
-            }
+            let direct_talk = "(p.sender_node_id IS NULL AND p.sender_name = 'human')
+                OR (p.id IS NULL AND t.said = 'human')";
+            let messages = match audience {
+                Audience::Human => "1".to_owned(),
+                Audience::Outside => format!("{signed} OR ({linked} AND m.chat_group IS NOT NULL
+                    AND m.sender_node_id IS NULL AND m.sender_name LIKE '%{OUTSIDE_SUFFIX}')"),
+            };
+            let talk = match audience {
+                Audience::Human => format!("{direct_talk} OR (t.chat_reply = p.id
+                    AND p.chat_group IS NOT NULL AND p.sender_node_id IS NULL
+                    AND p.sender_name LIKE '%{OUTSIDE_SUFFIX}')"),
+                Audience::Outside => format!("{direct_talk} OR ({linked_reply} AND t.chat_reply = p.id
+                    AND p.chat_group IS NOT NULL AND p.sender_node_id IS NULL
+                    AND p.sender_name LIKE '%{OUTSIDE_SUFFIX}')"),
+            };
             (messages, talk, "1".to_owned(), "1".to_owned())
         }
         ChatRoomKind::Agent { .. } => (

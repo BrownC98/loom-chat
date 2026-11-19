@@ -68,7 +68,7 @@ Windows loom 하나가 Windows와 WSL의 에이전트를 함께 돌립니다. WS
 
 ### loom desktop (네이티브 창)
 
-loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom 창입니다. loom 앱, 브라우저 판과 같은 화면을 보여 줍니다. 목표는 더 빠른 화면입니다. 실행 파일이 loom 데몬을 띄우거나 도는 데몬에 붙습니다. 같은 실행 파일에 인자를 주면 Loom 명령을 받습니다. 그래서 앱, 브라우저 탭, loom desktop이 같은 loom을 함께 보여 줄 수 있습니다.
+loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom 창입니다. 채팅을 엽니다. 에이전트를 띄우고, 방 기록을 보고, 메시지를 보낼 수 있습니다. 실행 파일이 loom 데몬을 띄우거나 도는 데몬에 붙습니다. 같은 실행 파일에 인자를 주면 Loom 명령을 받습니다. 그래서 앱, 브라우저 탭, loom desktop이 같은 loom을 함께 보여 줄 수 있습니다.
 
 | | loom 앱 | loom desktop | 브라우저 판 |
 |---|---|---|---|

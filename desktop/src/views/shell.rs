@@ -1,148 +1,47 @@
-mod pane;
 mod status;
 mod title;
-mod zoom;
 
-use api::settings::PaneWidths;
-use gpui::prelude::FluentBuilder;
+use api::graph::pty::Pace;
 use gpui::{
-    AnyView, App, AppContext, Context, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
-    KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
+    MouseDownEvent, ParentElement, Render, Styled, Subscription, Window, div,
 };
 
-use super::chat::{Chat, ChatEvent, Placement};
-use super::dock::{self, Dock};
-use super::icons::Lucide;
-use super::inputs::Inputs;
-use super::pictures::Shelf;
-use super::sidebar::{self, Sidebar};
-use super::widgets::{Label, segmented};
-use crate::canvas::view::{CanvasView, OpenChat};
-use crate::float::composer::{self, Composer};
-use crate::fonts;
-use crate::scale::{self, px};
+use super::chat::Chat;
 use crate::settings::{Dialog, DialogEvent};
 use crate::store::Store;
 use crate::strings::Lang;
 use crate::theme::Theme;
-
-use pane::{Pane, Widths};
+use crate::{fonts, link};
 
 gpui::actions!(loom, [OpenSettings]);
 
-const GRIP: f32 = 7.0;
-const GRIP_BEFORE: f32 = 3.0;
-const GRIP_ALPHA: f32 = 0.55;
-const KEY_STEP: f32 = 16.0;
-
-enum Shortcut {
-    Toggle(Pane),
-    Find,
-}
-
-struct Drag {
-    pane: Pane,
-    from: Pixels,
-    start: f32,
-    now: f32,
-}
-
-#[derive(Clone, Copy, PartialEq)]
-enum Mode {
-    Graph,
-    Chat,
-}
-
 pub struct Shell {
     store: Entity<Store>,
-    zoom: Entity<zoom::Zoom>,
-    main: Entity<CanvasView>,
-    left: Entity<Sidebar>,
-    right: Entity<Dock>,
-    composer: Entity<Composer>,
     chat: Entity<Chat>,
-    seen: PaneWidths,
-    kept: PaneWidths,
-    drag: Option<Drag>,
     focus: FocusHandle,
     settings: Option<(Entity<Dialog>, Subscription)>,
 }
 
 impl Shell {
-    pub fn new(
-        store: Entity<Store>,
-        inputs: Entity<Inputs>,
-        shelf: Entity<Shelf>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let main = cx.new(|cx| CanvasView::new(store.clone(), inputs.clone(), window, cx));
-        let left = sidebar::sidebar(store.clone(), window, cx);
-        let right = dock::dock(store.clone(), shelf.clone(), inputs.clone(), window, cx);
-        let zoom = cx.new(|cx| zoom::Zoom::new(store.clone(), window, cx));
-        let composer = composer::composer(store.clone(), inputs, shelf, window, cx);
+    pub fn new(store: Entity<Store>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let chat = cx.new(|cx| Chat::new(store.clone(), window, cx));
-        cx.subscribe_in(&main, window, |this, _, event: &OpenChat, window, cx| {
-            this.chat.update(cx, |chat, cx| chat.preview(event.0, cx));
-            this.show_placement(Placement::Graph, window, cx);
+        cx.observe(&store, |_, _, cx| cx.notify()).detach();
+        cx.observe(&chat, |_, _, cx| cx.notify()).detach();
+        cx.observe_window_activation(window, |_, window, _| {
+            link::pace(if window.is_window_active() {
+                Pace::Front
+            } else {
+                Pace::Back
+            });
         })
         .detach();
-        cx.subscribe_in(&chat, window, |this, _, event, window, cx| match event {
-            ChatEvent::OpenFull => this.show_placement(Placement::Full, window, cx),
-            ChatEvent::CloseGraphRoom => this.show_placement(Placement::Hidden, window, cx),
-            ChatEvent::GoGraph(nodes) => {
-                this.show_placement(Placement::Hidden, window, cx);
-                this.store
-                    .update(cx, |store, cx| store.show_nodes(nodes.clone(), cx));
-            }
-        })
-        .detach();
-        cx.observe(&store, |this, store, cx| {
-            let saved = store.read(cx).settings().pane_widths.clone();
-            if saved != this.seen {
-                this.seen = saved;
-                this.kept = PaneWidths::default();
-            }
-            cx.notify();
-        })
-        .detach();
-        let seen = store.read(cx).settings().pane_widths.clone();
         Self {
             store,
-            zoom,
-            main,
-            left,
-            right,
-            composer,
             chat,
-            seen,
-            kept: PaneWidths::default(),
-            drag: None,
             focus: cx.focus_handle(),
             settings: None,
         }
-    }
-
-    fn show_placement(
-        &mut self,
-        placement: Placement,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let graph = placement != Placement::Full;
-        self.main.update(cx, |view, cx| view.set_visible(graph, cx));
-        self.right.update(cx, |dock, cx| {
-            dock.set_visible(placement == Placement::Hidden, cx)
-        });
-        self.composer
-            .update(cx, |composer, cx| composer.set_visible(graph, window, cx));
-        self.store
-            .update(cx, |store, cx| store.set_graph_visible(graph, cx));
-        self.chat.update(cx, |chat, cx| chat.place(placement, cx));
-        self.drag = None;
-        window.focus(&self.focus, cx);
-        cx.notify();
     }
 
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -164,191 +63,6 @@ impl Shell {
         self.settings = Some((dialog, closed));
         cx.notify();
     }
-
-    fn toggle(&mut self, pane: Pane, cx: &mut Context<Self>) {
-        let closed = self.store.read(cx).settings().closed_panes.clone();
-        let open = match pane {
-            Pane::Side => closed.side,
-            Pane::Dock => closed.dock,
-        };
-        self.store
-            .update(cx, |store, cx| store.set_pane_open(pane.key(), open, cx));
-    }
-
-    fn find(&mut self, cx: &mut Context<Self>) {
-        self.left.update(cx, |sidebar, cx| sidebar.reveal_find(cx));
-    }
-
-    fn widths(&self, window: &Window, cx: &App) -> Widths {
-        let saved = &self.store.read(cx).settings().pane_widths;
-        Widths {
-            saved: PaneWidths {
-                side: self.kept.side.or(saved.side),
-                dock: self.kept.dock.or(saved.dock),
-            },
-            closed: self.store.read(cx).settings().closed_panes.clone(),
-            window: f32::from(window.viewport_size().width),
-            drag: self.drag.as_ref().map(|d| (d.pane, d.now)),
-        }
-    }
-
-    fn grab(&mut self, pane: Pane, event: &MouseDownEvent, width: f32, cx: &mut Context<Self>) {
-        if event.click_count >= 2 {
-            self.commit(pane, pane.initial(), cx);
-            return;
-        }
-        self.drag = Some(Drag {
-            pane,
-            from: event.position.x,
-            start: width,
-            now: width,
-        });
-        cx.notify();
-    }
-
-    fn slide(&mut self, event: &MouseMoveEvent, window: &Window, cx: &mut Context<Self>) {
-        let Some(drag) = &self.drag else { return };
-        if event.pressed_button != Some(MouseButton::Left) {
-            self.drag = None;
-            cx.notify();
-            return;
-        }
-        let moved = f32::from(event.position.x - drag.from);
-        let wanted = drag.start + drag.pane.grow() * moved;
-        let pane = drag.pane;
-        let clamped = self.widths(window, cx).clamp(pane, wanted);
-        if let Some(drag) = &mut self.drag {
-            drag.now = clamped;
-        }
-        cx.notify();
-    }
-
-    fn release(&mut self, cx: &mut Context<Self>) {
-        if let Some(drag) = self.drag.take() {
-            if drag.now != drag.start {
-                self.commit(drag.pane, drag.now, cx);
-            } else {
-                cx.notify();
-            }
-        }
-    }
-
-    fn commit(&mut self, pane: Pane, width: f32, cx: &mut Context<Self>) {
-        let width = (width / scale::get()).round() as u16;
-        match pane {
-            Pane::Side => self.kept.side = Some(width),
-            Pane::Dock => self.kept.dock = Some(width),
-        }
-        cx.notify();
-        let patch = serde_json::json!({ "paneWidths": { pane.key(): width } });
-        self.store
-            .update(cx, |store, cx| store.save_settings(patch, cx));
-    }
-}
-
-impl Shell {
-    fn grip(&self, pane: Pane, widths: &Widths, cx: &Context<Self>) -> impl IntoElement {
-        let width = widths.width(pane);
-        let accent = Hsla::from(cx.global::<Theme>().colors.accent).opacity(GRIP_ALPHA);
-        let active = self.drag.as_ref().is_some_and(|d| d.pane == pane);
-        let edge = div()
-            .id(pane.key())
-            .absolute()
-            .top_0()
-            .bottom_0()
-            .w(px(GRIP))
-            .cursor_col_resize()
-            .focusable()
-            .tab_index(0)
-            .focus(move |style| style.bg(accent))
-            .hover(move |style| style.bg(accent))
-            .on_key_down(cx.listener(move |this, e: &KeyDownEvent, window, cx| {
-                let step = match e.keystroke.key.as_str() {
-                    "left" => -KEY_STEP,
-                    "right" => KEY_STEP,
-                    _ => return,
-                };
-                let wanted = width + pane.grow() * step;
-                let clamped = this.widths(window, cx).clamp(pane, wanted);
-                this.commit(pane, clamped, cx);
-                cx.stop_propagation();
-            }))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
-                    this.grab(pane, e, width, cx);
-                    cx.stop_propagation();
-                }),
-            );
-        let edge = if active { edge.bg(accent) } else { edge };
-        match pane {
-            Pane::Side => edge.left(scale::fixed(widths.shown(pane)) - px(GRIP_BEFORE)),
-            Pane::Dock => edge.right(scale::fixed(widths.shown(pane)) - px(GRIP - GRIP_BEFORE)),
-        }
-    }
-
-    fn slot(widths: &Widths, pane: Pane, theme: &Theme, view: Option<AnyView>) -> gpui::Div {
-        let slot = div()
-            .w(scale::fixed(widths.shown(pane)))
-            .h_full()
-            .flex_none()
-            .overflow_hidden()
-            .bg(theme.colors.panel)
-            .border_color(theme.colors.line);
-        let slot = match pane {
-            Pane::Side => slot.border_r_1(),
-            Pane::Dock => slot.border_l_1(),
-        };
-        slot.children(view)
-    }
-
-    fn graph(&self, preview: bool, window: &Window, cx: &Context<Self>) -> gpui::Div {
-        let widths = self.widths(window, cx);
-        let theme = cx.global::<Theme>();
-        let left = Self::slot(&widths, Pane::Side, theme, Some(self.left.clone().into()));
-        let (right, grip) = if preview {
-            (
-                div()
-                    .flex_none()
-                    .w(px(450.0).min(window.viewport_size().width * 0.46))
-                    .h_full()
-                    .border_l_1()
-                    .border_color(theme.colors.line)
-                    .bg(theme.colors.panel)
-                    .child(self.chat.clone()),
-                None,
-            )
-        } else {
-            (
-                Self::slot(&widths, Pane::Dock, theme, Some(self.right.clone().into())),
-                widths
-                    .open(Pane::Dock)
-                    .then(|| self.grip(Pane::Dock, &widths, cx)),
-            )
-        };
-        div()
-            .relative()
-            .size_full()
-            .flex()
-            .child(left)
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .child(self.main.clone())
-                    .child(self.zoom.clone())
-                    .child(self.composer.clone()),
-            )
-            .child(right)
-            .children(
-                widths
-                    .open(Pane::Side)
-                    .then(|| self.grip(Pane::Side, &widths, cx)),
-            )
-            .children(grip)
-    }
 }
 
 impl Render for Shell {
@@ -356,42 +70,17 @@ impl Render for Shell {
         if window.focused(cx).is_none() {
             window.focus(&self.focus, cx);
         }
-        let placement = self.chat.read(cx).placement();
-        let mode = if placement == Placement::Full {
-            Mode::Chat
-        } else {
-            Mode::Graph
-        };
-        let current = cx.entity();
-        let switch = segmented(
-            "desktop-mode",
-            vec![
-                (
-                    Mode::Graph,
-                    Label::with_icon(SharedString::from("그래프"), Lucide::Workflow),
-                ),
-                (
-                    Mode::Chat,
-                    Label::with_icon(SharedString::from("채팅"), Lucide::MessageSquare),
-                ),
-            ],
-            mode,
-            move |selected, window, cx| {
-                if selected != mode {
-                    let placement = match selected {
-                        Mode::Chat => Placement::Full,
-                        Mode::Graph => Placement::Hidden,
-                    };
-                    current.update(cx, |this, cx| this.show_placement(placement, window, cx));
-                }
-            },
-            cx,
-        )
-        .aria_label("화면");
         let theme = cx.global::<Theme>();
         let lang = *cx.global::<Lang>();
-        let title = title::bar(window, &theme.colors, lang, switch);
-        let status = status::bar(&self.store, &theme.colors);
+        let title = title::bar(window, &theme.colors, lang);
+        let status = status::bar(&self.store, self.chat.read(cx).repo(cx), &theme.colors, cx);
+        let notice = self.store.read(cx).notice().map(|notice| {
+            super::dock::ui::note(notice.text.clone(), true, cx)
+                .flex_none()
+                .bg(theme.colors.panel)
+                .border_t_1()
+                .border_color(theme.colors.line)
+        });
         div()
             .size_full()
             .flex()
@@ -400,48 +89,28 @@ impl Render for Shell {
             .track_focus(&self.focus)
             .bg(theme.colors.bg)
             .text_color(theme.colors.ink)
-            .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
-                let stroke = &e.keystroke;
-                let placement = this.chat.read(cx).placement();
-                if placement != Placement::Hidden
-                    && stroke.modifiers.alt
+            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                let stroke = &event.keystroke;
+                if stroke.modifiers.alt
                     && !stroke.modifiers.secondary(cx)
                     && stroke.key.eq_ignore_ascii_case("l")
+                    && this.settings.is_none()
                 {
-                    if !e.is_held && this.settings.is_none() {
+                    if !event.is_held {
                         this.chat
                             .update(cx, |chat, cx| chat.open_picker(window, cx));
                     }
                     cx.stop_propagation();
-                    return;
-                }
-                if !stroke.modifiers.secondary(cx) || stroke.modifiers.alt {
-                    return;
-                }
-                if stroke.key == "," {
+                } else if stroke.modifiers.secondary(cx)
+                    && !stroke.modifiers.alt
+                    && stroke.key == ","
+                {
                     this.open_settings(window, cx);
                     cx.stop_propagation();
-                    return;
+                } else if this.settings.is_none() && stroke.modifiers.alt {
+                    this.chat
+                        .update(cx, |chat, cx| chat.alert_key(event, window, cx));
                 }
-                if placement == Placement::Full {
-                    return;
-                }
-                let shift = stroke.modifiers.shift;
-                let action = match stroke.key.as_str() {
-                    "{" => Shortcut::Toggle(Pane::Side),
-                    "}" => Shortcut::Toggle(Pane::Dock),
-                    "[" if shift => Shortcut::Toggle(Pane::Side),
-                    "]" if shift => Shortcut::Toggle(Pane::Dock),
-                    "f" | "F" if shift => Shortcut::Find,
-                    _ => return,
-                };
-                if !e.is_held {
-                    match action {
-                        Shortcut::Toggle(pane) => this.toggle(pane, cx),
-                        Shortcut::Find => this.find(cx),
-                    }
-                }
-                cx.stop_propagation();
             }))
             .font_family(fonts::UI_FAMILY)
             .on_action(
@@ -450,28 +119,9 @@ impl Render for Shell {
             .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| {
                 this.store.update(cx, |store, cx| store.clear_notice(cx));
             }))
-            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, window, cx| {
-                this.slide(e, window, cx);
-            }))
-            .on_mouse_up(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, cx| this.release(cx)),
-            )
-            .on_mouse_up_out(
-                MouseButton::Left,
-                cx.listener(|this, _: &MouseUpEvent, _, cx| this.release(cx)),
-            )
             .child(title)
-            .child(
-                div()
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .map(|body| match placement {
-                        Placement::Full => body.child(self.chat.clone()),
-                        _ => body.child(self.graph(placement == Placement::Graph, window, cx)),
-                    }),
-            )
+            .child(div().relative().flex_1().min_h_0().child(self.chat.clone()))
+            .children(notice)
             .child(status)
             .children(self.settings.as_ref().map(|(dialog, _)| dialog.clone()))
     }

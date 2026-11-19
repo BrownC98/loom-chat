@@ -2,7 +2,7 @@ use api::graph::chat::ChatRoom;
 use api::graph::messages::Kind;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Context, Div, FontWeight, InteractiveElement, KeyDownEvent, ParentElement, Role,
+    Context, Div, ExternalPaths, FontWeight, InteractiveElement, KeyDownEvent, ParentElement, Role,
     StatefulInteractiveElement, Styled, Toggled, div,
 };
 
@@ -11,10 +11,12 @@ use super::{Composer, Draft, SendIntent, mode_label};
 use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::views::icons::{Lucide, icon};
+use crate::views::pictures;
 use crate::views::tooltip::tip;
 use crate::views::{status, ui, widgets::btn};
 
-const INLINE_MEMBERS: usize = 6;
+pub(super) const ATTACH_INSET: f32 = 24.0;
+pub(super) const MODES_INSET: f32 = 132.0;
 
 impl Composer {
     pub(super) fn controls(
@@ -28,68 +30,69 @@ impl Composer {
         let c = ui::colors(cx);
         let mode = draft.mode(plan);
         let field = draft.field.read(cx);
-        let selected = draft.selected();
+        let busy = draft.pictures.read(cx).busy();
         let writable = catalog.is_some() && self.writable(cx);
-        let ready = writable && !field.is_blank() && plan.count() > 0 && !plan.unavailable;
+        let ready =
+            writable && draft.has_content(cx) && !busy && plan.count() > 0 && !plan.unavailable;
         let placeholder = if plan.count() == 0 {
-            "받는 이를 먼저 고릅니다".to_owned()
-        } else if selected.len() == 1 {
-            targets::name(&selected[0], catalog, self.data.read(cx).rooms())
-                .map_or_else(|| "보낼 말".into(), |name| format!("{name}에게 보낼 말"))
+            "받는 이를 고릅니다"
         } else {
-            "보낼 말".into()
+            "보낼 말"
         };
+        let paperclip = btn::tabbable(div().id("chat-attach"), cx)
+            .role(Role::Button)
+            .aria_label("파일 첨부")
+            .tooltip(tip("파일 첨부".into()))
+            .flex()
+            .items_center()
+            .justify_center()
+            .size(px(24.0))
+            .absolute()
+            .top(px(3.0))
+            .left(px(4.0))
+            .child(icon(Lucide::Paperclip, px(15.0), c.ink_2))
+            .when(!draft.sending, |button| {
+                let pictures = draft.pictures.clone();
+                button.cursor_pointer().on_click(move |_, _, cx| {
+                    pictures.update(cx, |pictures, cx| pictures.pick_files(cx));
+                })
+            })
+            .when(draft.sending, btn::inert);
         let input = div()
             .id("chat-message")
             .track_focus(&field.handle().tab_stop(false))
             .role(Role::MultilineTextInput)
             .aria_label("보낼 말")
             .aria_value(field.text().to_owned())
-            .aria_placeholder(placeholder.clone())
+            .aria_placeholder(placeholder)
             .relative()
-            .max_h(px(140.0))
-            .overflow_y_scroll()
-            .child(draft.field.clone())
+            .flex_1()
+            .min_w_0()
+            .child(
+                div()
+                    .id("chat-input-scroll")
+                    .max_h(px(140.0))
+                    .overflow_y_scroll()
+                    .child(draft.field.clone()),
+            )
             .children(field.text().is_empty().then(|| {
                 div()
                     .absolute()
                     .top(px(5.0))
-                    .left(px(9.0))
+                    .left(px(8.0 + ATTACH_INSET))
+                    .right(px(MODES_INSET))
+                    .truncate()
                     .text_color(c.ink_3)
                     .child(placeholder)
-            }));
-        let (hint, sender) = match (draft.sending, plan.count(), mode) {
-            (true, _, _) => ("", "보내는 중…".to_owned()),
-            (false, 0, _) => ("받는 이를 고르면 보낼 수 있습니다.", "보내기".to_owned()),
-            (false, _, Kind::Interrupt) => (
-                "하던 일을 바로 멈추고 이 말을 읽게 합니다.",
-                format!("{}명에게 중단하고 보내기", plan.count()),
-            ),
-            (false, _, _) if plan.outside_rooms > 0 => {
-                let rooms = plan.outside_rooms;
-                let nodes = plan.nodes.len();
-                let caption = if nodes == 0 {
-                    format!("외부 방 {rooms}곳에 보내기")
-                } else {
-                    format!("{nodes}명과 외부 방 {rooms}곳에 보내기")
-                };
-                (
-                    "외부 에이전트는 방에서 이 말을 가져옵니다. 일반으로만 보낼 수 있습니다.",
-                    caption,
-                )
-            }
-            (false, count, _) => {
-                let hint = if plan.queue_only {
-                    "고른 받는 이에게는 일반으로만 보낼 수 있습니다."
-                } else if plan.overlap {
-                    "여러 곳에서 고른 에이전트도 한 번만 받습니다."
-                } else if mode == Kind::Steer {
-                    "하던 일을 멈추지 않고 이 말을 읽게 합니다."
-                } else {
-                    "하던 일이 끝나면 읽습니다. Enter로 보냅니다."
-                };
-                (hint, format!("{count}명에게 보내기"))
-            }
+            }))
+            .child(paperclip)
+            .child(self.modes(mode, writable, plan, cx));
+        let sender = match (draft.sending, plan.count(), mode) {
+            (true, _, _) => "보내는 중".to_owned(),
+            (false, 0, _) => "받는 이를 고르면 보낼 수 있습니다".to_owned(),
+            (false, n, Kind::Interrupt) => format!("{n}명에게 중단하고 보내기"),
+            (false, _, _) if plan.outside_rooms > 0 => "고른 받는 이에게 보내기".to_owned(),
+            (false, n, _) => format!("{n}명에게 보내기"),
         };
         let warning = if plan.unavailable {
             Some("보낼 수 없는 받는 이를 목록에서 빼 주세요.")
@@ -101,47 +104,106 @@ impl Composer {
         } else {
             None
         };
-        let send = if ready {
-            let (fill, ink) = match mode {
-                Kind::Interrupt => (c.err, c.err_ink),
-                _ => (c.accent, c.accent_ink),
-            };
-            btn::filled("chat-send", fill, ink, cx).on_click(
-                cx.listener(|this, _, window, cx| this.submit(SendIntent::Request, window, cx)),
-            )
-        } else {
-            btn::inert(btn::button("chat-send", cx)).opacity(0.55)
-        }
-        .role(Role::Button)
-        .aria_label(sender.clone())
-        .child(sender);
-        let footer = div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(8.0))
-            .child(
-                div()
-                    .text_size(px(ui::SMALL))
-                    .text_color(c.ink_2)
-                    .child(hint),
-            )
-            .child(send.flex_none());
+        let (fill, ink) = match mode {
+            Kind::Interrupt => (c.err, c.err_ink),
+            _ => (c.accent, c.accent_ink),
+        };
+        let send = btn::filled("chat-send", fill, ink, cx)
+            .role(Role::Button)
+            .aria_label(sender.clone())
+            .aria_keyshortcuts("Enter")
+            .tooltip(tip(sender))
+            .flex_none()
+            .h(px(30.0))
+            .when(ready, |button| {
+                button.on_click(cx.listener(|this, _, window, cx| {
+                    this.submit(SendIntent::Request, window, cx);
+                }))
+            })
+            .when(!ready, |button| btn::inert(button).opacity(0.55))
+            .when(plan.count() > 1 && plan.outside_rooms == 0, |button| {
+                button.child(format!("{}명에게", plan.count()))
+            })
+            .child(icon(Lucide::ArrowUp, px(15.0), ink));
+        let viewer = self.viewer.clone();
+        let attachments = pictures::chips(
+            &draft.pictures,
+            move |picture, window, cx| {
+                viewer.update(cx, |viewer, cx| viewer.open(picture, window, cx));
+            },
+            "chat-attachment",
+            0,
+            crate::scale::get(),
+            cx,
+        );
         let mut body = div()
             .flex()
             .flex_col()
-            .gap(px(8.0))
-            .child(
+            .gap(px(6.0))
+            .children(draft.quote.as_ref().map(|quote| {
                 div()
                     .flex()
-                    .flex_wrap()
                     .items_center()
-                    .justify_between()
-                    .gap(px(8.0))
-                    .child(self.recipients(room, draft, catalog, cx))
-                    .child(self.modes(mode, writable, plan, cx)),
+                    .gap(px(7.0))
+                    .self_start()
+                    .max_w_full()
+                    .border_1()
+                    .border_color(c.line_strong)
+                    .rounded(px(6.0))
+                    .pl(px(7.0))
+                    .bg(c.surface)
+                    .child(icon(Lucide::MessageSquare, px(13.0), c.ink_2))
+                    .child(div().min_w_0().truncate().child(quote.label()))
+                    .child(
+                        btn::ghost("chat-quote-remove", cx)
+                            .role(Role::Button)
+                            .aria_label("인용문 빼기")
+                            .tooltip(tip("인용문 빼기".into()))
+                            .child(icon(Lucide::X, px(12.0), c.ink_2))
+                            .when(draft.sending, btn::inert)
+                            .when(!draft.sending, |button| {
+                                button.on_click(cx.listener(|this, _, window, cx| {
+                                    if let Some(draft) = this.draft_mut() {
+                                        draft.quote = None;
+                                    }
+                                    this.review = None;
+                                    this.focus_input(window, cx);
+                                    cx.notify();
+                                }))
+                            }),
+                    )
+            }))
+            .children(
+                (draft.selected().len() > 1 && !self.picker.open)
+                    .then(|| self.selected_chips(room, draft, catalog, cx)),
             )
-            .child(input);
+            .children(attachments)
+            .children(busy.then(|| div().child("파일을 읽는 중")))
+            .children(
+                (draft.sending && !draft.pictures.read(cx).is_empty())
+                    .then(|| div().child("첨부 파일을 올리고 보내는 중")),
+            )
+            .child(
+                div()
+                    .id("chat-composer-row")
+                    .flex()
+                    .items_end()
+                    .gap(px(7.0))
+                    .drag_over::<ExternalPaths>(move |style, _, _, _| {
+                        style.rounded(px(6.0)).bg(c.accent_wash)
+                    })
+                    .on_drop({
+                        let pictures = draft.pictures.clone();
+                        move |paths: &ExternalPaths, _, cx| {
+                            pictures.update(cx, |pictures, cx| {
+                                pictures.take_paths(paths.paths().to_vec(), cx);
+                            });
+                        }
+                    })
+                    .child(self.recipient_button(draft, catalog, plan, cx))
+                    .child(input)
+                    .child(send),
+            );
         if let Some(text) = draft.error.as_deref().or(warning) {
             body = body.child(
                 div()
@@ -156,13 +218,11 @@ impl Composer {
             && let Some(catalog) = catalog
         {
             body = body.child(self.confirmation(catalog, plan, cx));
-        } else {
-            body = body.child(footer);
         }
         body
     }
 
-    fn recipients(
+    pub(super) fn selected_chips(
         &self,
         room: &ChatRoom,
         draft: &Draft,
@@ -180,12 +240,9 @@ impl Composer {
             .flex()
             .flex_wrap()
             .items_center()
-            .gap(px(6.0))
-            .child(div().text_color(c.ink_2).child("받는 이"));
-        let local = targets::group(room);
+            .gap(px(6.0));
         let can_edit = self.writable(cx) && catalog.is_some();
         let local_rooms = data.rooms();
-        let inline = local && room.members.len() <= INLINE_MEMBERS;
         for (index, target) in selected.iter().cloned().enumerate() {
             let label = match &target {
                 Target::Room(id) if id == &room.id => "방 전체",
@@ -218,8 +275,13 @@ impl Composer {
                     .tooltip(tip(name))
                     .when(can_edit, |button| {
                         button.on_click(cx.listener(move |this, _, window, cx| {
+                            let focus = if this.picker.open {
+                                this.picker.query_focus(cx)
+                            } else {
+                                this.trigger.clone()
+                            };
                             this.toggle(target.clone(), cx);
-                            window.focus(&this.trigger, cx);
+                            window.focus(&focus, cx);
                         }))
                     })
                     .when(!can_edit, btn::inert)
@@ -228,95 +290,86 @@ impl Composer {
                     .child(icon(Lucide::X, px(12.0), c.ink_2)),
             );
         }
-        if inline {
-            for node in &room.members {
-                let target = Target::Node(*node);
-                if selected.contains(&target) {
-                    continue;
-                }
-                let Some(name) = targets::name(&target, catalog, local_rooms) else {
-                    continue;
-                };
-                let live = catalog.is_some_and(|catalog| catalog.node(*node).is_some());
-                chips = chips.child(
-                    btn::button(("chat-member", node.0 as usize), cx)
-                        .role(Role::Button)
-                        .aria_label(if live {
-                            format!("{name} 더하기")
-                        } else {
-                            format!("{name}, 끝남")
-                        })
-                        .when(can_edit && live, |button| {
-                            button.on_click(cx.listener(move |this, _, window, cx| {
-                                this.toggle(target.clone(), cx);
-                                window.focus(&this.trigger, cx);
-                            }))
-                        })
-                        .when(!can_edit || !live, |button| {
-                            btn::inert(button).opacity(0.55)
-                        })
-                        .child(div().truncate().max_w(px(160.0)).child(name.to_owned()))
-                        .children((!live).then_some("끝남")),
-                );
-            }
-        }
-        let target = Target::Room(room.id.clone());
-        if local && !selected.contains(&target) {
-            chips = chips.child(
-                btn::button("chat-room-all", cx)
-                    .role(Role::Button)
-                    .aria_label("방 전체 더하기")
-                    .when(can_edit, |button| {
-                        button.on_click(cx.listener(move |this, _, window, cx| {
-                            this.toggle(target.clone(), cx);
-                            window.focus(&this.trigger, cx);
-                        }))
-                    })
-                    .when(!can_edit, btn::inert)
-                    .child("방 전체"),
-            );
-        }
-        let add = if selected.is_empty() {
-            "받는 이 고르기"
-        } else {
-            "받는 이 더하기"
+        chips
+    }
+
+    fn recipient_button(
+        &self,
+        draft: &Draft,
+        catalog: Option<&Catalog>,
+        plan: &Plan,
+        cx: &Context<Self>,
+    ) -> gpui::Stateful<Div> {
+        let c = ui::colors(cx);
+        let label = match draft.selected() {
+            [] => "받는 이".to_owned(),
+            [target] => targets::name(target, catalog, self.data.read(cx).rooms())
+                .map_or_else(|| "받는 이".to_owned(), |name| format!("{name}에게")),
+            _ if plan.outside_rooms == 0 => format!("{}명에게", plan.count()),
+            _ => format!("{}곳에", plan.count()),
         };
-        chips.child(
-            btn::button("chat-picker-trigger", cx)
-                .role(Role::Button)
-                .track_focus(&self.trigger)
-                .aria_label(add)
-                .aria_keyshortcuts("Alt+L")
-                .aria_expanded(self.picker.open)
-                .when(self.writable(cx), |button| {
-                    button.on_click(cx.listener(|this, _, window, cx| {
-                        if this.picker.open {
-                            this.close_picker(window, cx);
-                        } else {
-                            this.open_picker(window, cx);
-                        }
-                    }))
-                })
-                .when(draft.sending, btn::inert)
-                .child(icon(Lucide::Plus, px(12.0), c.ink_2))
-                .child(add),
-        )
+        let title = format!("{label} · 받는 이 고르기 (Alt+L)");
+        btn::button("chat-picker-trigger", cx)
+            .role(Role::Button)
+            .track_focus(&self.trigger)
+            .aria_label(title.clone())
+            .aria_keyshortcuts("Alt+L")
+            .aria_expanded(self.picker.open)
+            .tooltip(tip(title))
+            .flex_none()
+            .max_w(px(124.0))
+            .h(px(30.0))
+            .when(!draft.selected().is_empty(), |button| {
+                button.bg(c.accent_wash)
+            })
+            .when(self.writable(cx), |button| {
+                button.on_click(cx.listener(|this, _, window, cx| {
+                    if this.picker.open {
+                        this.close_picker(window, cx);
+                    } else {
+                        this.open_picker(window, cx);
+                    }
+                }))
+            })
+            .when(draft.sending, btn::inert)
+            .child(div().min_w_0().truncate().child(label))
+            .child(icon(
+                if self.picker.open {
+                    Lucide::ChevronUp
+                } else {
+                    Lucide::ChevronDown
+                },
+                px(12.0),
+                c.ink_2,
+            ))
     }
 
     fn modes(&self, mode: Kind, writable: bool, plan: &Plan, cx: &Context<Self>) -> Div {
         let c = ui::colors(cx);
         let mut modes = div()
             .flex()
-            .flex_wrap()
+            .absolute()
+            .right(px(4.0))
+            .top(px(3.0))
             .items_center()
-            .gap(px(6.0))
-            .child(div().text_color(c.ink_2).child("전달"));
+            .gap(px(2.0));
         for (index, &kind) in Kind::ALL.iter().enumerate() {
             let disabled = !writable || (plan.queue_only && kind != Kind::Queue);
             modes = modes.child(
                 btn::button(("chat-delivery", index), cx)
                     .role(Role::Button)
                     .aria_label(mode_label(kind))
+                    .tooltip(tip(match kind {
+                        Kind::Queue => "일반 · 하던 일이 끝나면 읽습니다",
+                        Kind::Steer => "조정 · 하던 일 사이에 읽습니다",
+                        Kind::Interrupt => "중단 · 하던 일을 멈추고 읽습니다",
+                    }
+                    .into()))
+                    .px_0()
+                    .py_0()
+                    .h(px(24.0))
+                    .w(px(40.0))
+                    .justify_center()
                     .aria_toggled(Toggled::from(kind == mode))
                     .when(kind == mode, |button| button.bg(c.accent_wash))
                     .when(disabled, |button| btn::inert(button).opacity(0.55))

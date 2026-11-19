@@ -152,6 +152,9 @@ pub struct NodeView {
     /// 내 브랜치의 지금 관문에서 받은 판정 막음 수. 3 이상이면 칩 옆에 보인다. 옛 데몬이면 0이다.
     #[serde(default)]
     pub rework: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub role: Option<String>,
 }
 
 /// 노드 메뉴가 보이는 다시 띄우기. 데몬이 읽을 때 노드 상태, 에이전트의 메시지 연동, 남은 세션, 다시 띄우기 계획에서 정한다.

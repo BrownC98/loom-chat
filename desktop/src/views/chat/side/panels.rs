@@ -14,8 +14,8 @@ use crate::link;
 use crate::scale::px;
 use crate::store::Store;
 use crate::strings::Str;
-use crate::views::dock::Dock;
 use crate::views::dock::body;
+use crate::views::dock::docs::document_rows;
 use crate::views::dock::events::{EventRow, what};
 use crate::views::dock::ui;
 use crate::views::scrollbar::Bar;
@@ -216,7 +216,7 @@ impl SideSlot {
             return notice(Str::DocsEmpty, cx);
         }
         let graph = graph.clone();
-        let rows = Dock::document_rows(shown, cx, move |id, cx| {
+        let rows = document_rows(shown, cx, move |id, cx| {
             follow_link(&graph, body::Target::Doc(id), cx);
         });
         div()

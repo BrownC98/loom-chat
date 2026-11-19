@@ -80,6 +80,9 @@ pub struct SendChat {
     #[serde(default)]
     #[ts(optional)]
     pub confirmed_nodes: Option<Vec<NodeId>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub attachment_nodes: Option<Vec<NodeId>>,
 }
 
 #[derive(Serialize, Deserialize, TS)]

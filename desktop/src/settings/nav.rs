@@ -17,19 +17,17 @@ pub enum Tab {
     Agents,
     Accounts,
     Display,
-    Graph,
     Terminal,
     About,
 }
 
 impl Tab {
-    pub const ALL: [Tab; 8] = [
+    pub const ALL: [Tab; 7] = [
         Tab::General,
         Tab::Phone,
         Tab::Agents,
         Tab::Accounts,
         Tab::Display,
-        Tab::Graph,
         Tab::Terminal,
         Tab::About,
     ];
@@ -41,7 +39,6 @@ impl Tab {
             Tab::Agents => Str::SettingsTabAgents,
             Tab::Accounts => Str::SettingsTabAccounts,
             Tab::Display => Str::SettingsTabDisplay,
-            Tab::Graph => Str::SettingsTabGraph,
             Tab::Terminal => Str::SettingsTabTerminal,
             Tab::About => Str::SettingsTabAbout,
         }
@@ -79,12 +76,12 @@ pub const OWNERS: [(&str, Option<Tab>); 28] = [
     ("uiSize", Some(Tab::Display)),
     ("colors", Some(Tab::Display)),
     ("language", Some(Tab::Display)),
-    ("cardView", Some(Tab::Graph)),
-    ("graphScope", Some(Tab::Graph)),
-    ("edgeStyle", Some(Tab::Graph)),
-    ("composerOff", Some(Tab::Graph)),
-    ("composerPlace", Some(Tab::Graph)),
-    ("composerSize", Some(Tab::Graph)),
+    ("cardView", None),
+    ("graphScope", None),
+    ("edgeStyle", None),
+    ("composerOff", None),
+    ("composerPlace", None),
+    ("composerSize", None),
     ("terminalTheme", Some(Tab::Terminal)),
     ("terminalFont", Some(Tab::Terminal)),
     ("arrangeDirection", None),

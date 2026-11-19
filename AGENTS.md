@@ -20,7 +20,7 @@
 
 ## 개발 환경
 
-호스트(WSL)에서 빌드·실행한다. 사람이 loom을 쓰는 곳과 같다. Rust 판은 `rust-toolchain.toml`, Node 판은 `.nvmrc`가 정한다. 저장소 폴더에서 아래 명령을 쓴다. 무거운 빌드와 cargo 검사·생성 명령은 `memcap -m <예약량>` 아래에서 돌린다. memcap은 메모리가 예약량을 덮을 때만 명령을 띄우고, 아니면 stderr에 대기 줄을 쓰고 차례로 기다린다. 예약량은 그 명령의 상한이기도 하다: 넘으면 그 명령만 끊긴다. 예약량은 처음부터 빌드한 cgroup `memory.peak` 최대값을 512MiB 단위로 올린 값이다. 실측(2026-10-31): clippy 2771MiB, test 4411MiB, Windows clippy 2663MiB, `cargo build` 2289MiB. 그래서 clippy와 빌드는 3G, test는 4608M이다. 병합 관문(`scripts/gate/check.sh`)은 Linux·Windows cargo 검사와 화면 검사를 함께 돌린다. 데스크톱 입력이 바뀌면 데스크톱 갈래(fmt, clippy, 배치 고정값 시험)도 함께 돌린다. 단계마다 `CI_TIMING`에 시작 시각과 걸린 시간을 밀리초로 쓴다. `.cargo/config.toml`은 각 크레이트의 개발·시험 빌드에 줄 번호를 남기고 외부 의존성의 디버그 정보는 뺀다.
+호스트(WSL)에서 빌드·실행한다. 사람이 loom을 쓰는 곳과 같다. Rust 판은 `rust-toolchain.toml`, Node 판은 `.nvmrc`가 정한다. 저장소 폴더에서 아래 명령을 쓴다. 무거운 빌드와 cargo 검사·생성 명령은 `memcap -m <예약량>` 아래에서 돌린다. memcap은 메모리가 예약량을 덮을 때만 명령을 띄우고, 아니면 stderr에 대기 줄을 쓰고 차례로 기다린다. 예약량은 그 명령의 상한이기도 하다: 넘으면 그 명령만 끊긴다. 예약량은 처음부터 빌드한 cgroup `memory.peak` 최대값을 512MiB 단위로 올린 값이다. 실측(2026-10-31): clippy 2771MiB, test 4411MiB, Windows clippy 2663MiB, `cargo build` 2289MiB. 그래서 clippy와 빌드는 3G, test는 4608M이다. 병합 관문(`scripts/gate/check.sh`)은 Linux·Windows cargo 검사와 화면 검사를 함께 돌린다. 데스크톱 입력이 바뀌면 데스크톱 갈래(fmt, clippy, cargo test)도 함께 돌린다. 단계마다 `CI_TIMING`에 시작 시각과 걸린 시간을 밀리초로 쓴다. `.cargo/config.toml`은 각 크레이트의 개발·시험 빌드에 줄 번호를 남기고 외부 의존성의 디버그 정보는 뺀다.
 
 | 할 일 | 명령 |
 |---|---|

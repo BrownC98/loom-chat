@@ -29,14 +29,6 @@ pub fn busy(window: &Window, cx: &App) -> bool {
         .is_some_and(|focus| focus.is_focused(window))
 }
 
-pub fn refocus(target: &FocusHandle, window: &mut Window, cx: &mut App) -> bool {
-    if busy(window, cx) {
-        return false;
-    }
-    window.focus(target, cx);
-    true
-}
-
 pub fn retry<T: 'static>(window: &mut Window, cx: &mut Context<T>) {
     cx.spawn_in(window, async move |this, cx| {
         cx.background_executor().timer(RETRY).await;

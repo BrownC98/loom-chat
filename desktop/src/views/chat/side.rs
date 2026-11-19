@@ -3,15 +3,15 @@ use api::graph::chat::ChatRoom;
 use gpui::{
     App, AppContext, Context, Div, Entity, EventEmitter, FocusHandle, FontWeight,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Role,
-    StatefulInteractiveElement, Styled, Subscription, Window, div, transparent_black,
+    StatefulInteractiveElement, Styled, Subscription, UniformListScrollHandle, Window, div,
+    transparent_black,
 };
 
 use super::data::ChatData;
 use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::views::icons::{Lucide, icon};
-use crate::views::inputs::Inputs;
-use crate::views::scrollbar::Bar;
+use crate::views::scrollbar::{Bar, Track};
 use crate::views::tooltip::tip;
 use crate::views::ui::{self, SMALL};
 use crate::views::widgets::btn;
@@ -44,7 +44,7 @@ impl SideTab {
         }
     }
 
-    fn icon(self) -> Lucide {
+    pub(super) fn icon(self) -> Lucide {
         match self {
             Self::Members => Lucide::Workflow,
             Self::Terminal => Lucide::SquareTerminal,
@@ -59,22 +59,16 @@ pub enum SideEvent {
     OpenRoom(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Header {
-    Tabs,
-    External,
-}
-
 pub struct SideSlot {
     data: Entity<ChatData>,
     terminal: Entity<SessionTerminal>,
     panel: Option<Panel>,
-    header: Header,
     room: Option<String>,
     member: Option<MemberKey>,
     choosing: bool,
     copied: bool,
     scroll: Bar,
+    member_scroll: Bar<UniformListScrollHandle>,
     tab_focus: [FocusHandle; SideTab::ALL.len()],
     _subscriptions: [Subscription; 3],
 }
@@ -82,9 +76,9 @@ pub struct SideSlot {
 impl EventEmitter<SideEvent> for SideSlot {}
 
 impl SideSlot {
-    pub fn new(data: Entity<ChatData>, inputs: Entity<Inputs>, cx: &mut Context<Self>) -> Self {
+    pub fn new(data: Entity<ChatData>, cx: &mut Context<Self>) -> Self {
         let graph = data.read(cx).graph().clone();
-        let terminal = cx.new(|cx| SessionTerminal::new(graph.clone(), inputs, cx));
+        let terminal = cx.new(|cx| SessionTerminal::new(graph.clone(), cx));
         let subscriptions = [
             cx.observe(&data, |this, _, cx| {
                 if this.panel.is_some() {
@@ -110,12 +104,12 @@ impl SideSlot {
             data,
             terminal,
             panel: None,
-            header: Header::Tabs,
             room: None,
             member: None,
             choosing: false,
             copied: false,
             scroll: Bar::new(),
+            member_scroll: Bar::default(),
             tab_focus: std::array::from_fn(|_| cx.focus_handle()),
             _subscriptions: subscriptions,
         }
@@ -126,22 +120,10 @@ impl SideSlot {
     }
 
     pub fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
-        self.open(tab, Header::Tabs, cx);
-    }
-
-    pub fn show_body(&mut self, tab: SideTab, cx: &mut Context<Self>) {
-        self.open(tab, Header::External, cx);
-    }
-
-    fn open(&mut self, tab: SideTab, header: Header, cx: &mut Context<Self>) {
         self.sync_room(cx);
-        let moved = header != self.header;
-        self.header = header;
         if self.tab() != Some(tab) {
             self.clear_tab(cx);
             self.panel = Some(Panel::open(tab, &self.data, cx));
-            cx.notify();
-        } else if moved {
             cx.notify();
         }
     }
@@ -158,6 +140,7 @@ impl SideSlot {
         self.choosing = false;
         self.copied = false;
         self.scroll.reset();
+        self.member_scroll.reset();
     }
 
     fn sync_room(&mut self, cx: &mut Context<Self>) {
@@ -186,13 +169,13 @@ impl SideSlot {
                 .aria_label(label)
                 .aria_selected(active)
                 .flex()
-                .flex_1()
+                .flex_auto()
                 .min_w_0()
                 .justify_center()
                 .items_center()
-                .gap(px(4.0))
+                .gap(px(3.0))
                 .h(px(36.0))
-                .px(px(4.0))
+                .px(px(2.0))
                 .border_b_2()
                 .border_color(if active {
                     c.accent.into()
@@ -206,6 +189,7 @@ impl SideSlot {
                 })
                 .text_size(px(SMALL))
                 .text_color(color)
+                .bg(c.panel)
                 .cursor_pointer()
                 .hover(move |style| style.bg(c.surface_hover))
                 .tooltip(tip(label.to_owned()))
@@ -268,7 +252,7 @@ impl Render for SideSlot {
             return div();
         };
         let c = ui::colors(cx);
-        let tabs = (self.header == Header::Tabs).then(|| self.tabs(tab, cx));
+        let tabs = self.tabs(tab, cx);
         let body = self.body(cx);
         div()
             .size_full()
@@ -278,7 +262,29 @@ impl Render for SideSlot {
             .bg(c.panel)
             .text_color(c.ink)
             .text_size(px(ui::TEXT))
-            .children(tabs)
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                let stroke = &event.keystroke;
+                let modifiers = stroke.modifiers;
+                if modifiers.alt || modifiers.control || modifiers.platform {
+                    return;
+                }
+                match stroke.key.as_str() {
+                    "tab" if modifiers.shift => window.focus_prev(cx),
+                    "tab" => window.focus_next(cx),
+                    "pageup" | "pagedown" if this.tab() == Some(SideTab::Members) => {
+                        let scroll = this.member_scroll.handle();
+                        let height = scroll.0.borrow().base_handle.bounds().size.height.as_f32();
+                        let step = height * if stroke.key == "pageup" { -0.9 } else { 0.9 };
+                        scroll.set((scroll.offset() + step).clamp(0.0, scroll.max()));
+                        window.focus(&this.tab_focus[SideTab::Members as usize], cx);
+                        cx.notify();
+                    }
+                    _ => return,
+                }
+                window.prevent_default();
+                cx.stop_propagation();
+            }))
+            .child(tabs)
             .child(div().flex_1().min_h_0().child(body))
     }
 }

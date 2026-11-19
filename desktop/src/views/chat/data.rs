@@ -6,7 +6,6 @@ use api::graph::chat::{
     ChatCursor, ChatItem, ChatMessage, ChatPage, ChatRecipients, ChatRoom, ChatRoomKind,
     ChatSession, ChatTranscript, EditChat, SaveChatRoom, SendChat,
 };
-use api::ids::NodeId;
 use gpui::{Context, Entity, Subscription, Task};
 use ureq::http::Method;
 
@@ -25,12 +24,6 @@ const COALESCE: Duration = Duration::from_millis(80);
 enum Read {
     Refresh,
     Older(ChatCursor),
-}
-
-#[derive(PartialEq, Eq)]
-enum Selection {
-    Room(String),
-    WorkOf(NodeId),
 }
 
 type RoomPage = (ChatPage, Option<ChatTranscript>);
@@ -116,10 +109,9 @@ impl RoomWindow {
 pub struct ChatData {
     graph: Entity<Store>,
     _events: [Subscription; 2],
-    active: bool,
     generation: u64,
     rooms: Vec<ChatRoom>,
-    selected: Option<Selection>,
+    selected: Option<String>,
     recipients: Option<ChatRecipients>,
     window: Option<RoomWindow>,
     stream_revision: u64,
@@ -136,15 +128,10 @@ impl ChatData {
                 data.refresh(cx);
             }
         });
-        let connection = cx.subscribe(&graph, |data, _, _: &LinkState, cx| {
-            if data.active {
-                cx.notify();
-            }
-        });
-        Self {
+        let connection = cx.subscribe(&graph, |_, _, _: &LinkState, cx| cx.notify());
+        let mut data = Self {
             graph,
             _events: [events, connection],
-            active: false,
             generation: 0,
             rooms: Vec::new(),
             selected: None,
@@ -155,7 +142,9 @@ impl ChatData {
             refresh_pending: false,
             older_pending: false,
             error: None,
-        }
+        };
+        data.refresh(cx);
+        data
     }
 
     pub fn graph(&self) -> &Entity<Store> {
@@ -166,10 +155,12 @@ impl ChatData {
         &self.rooms
     }
 
+    pub(super) fn selected(&self) -> Option<&str> {
+        self.selected.as_deref()
+    }
+
     pub fn room(&self) -> Option<&ChatRoom> {
-        let Selection::Room(id) = self.selected.as_ref()? else {
-            return None;
-        };
+        let id = self.selected.as_ref()?;
         self.rooms.iter().find(|room| &room.id == id)
     }
 
@@ -196,54 +187,25 @@ impl ChatData {
     }
 
     pub fn loading_older(&self) -> bool {
-        self.active
-            && (self.older_pending
-                || self
-                    .in_flight
-                    .as_ref()
-                    .is_some_and(|(read, generation, _)| {
-                        *generation == self.generation && matches!(read, Read::Older(_))
-                    }))
+        self.older_pending
+            || self
+                .in_flight
+                .as_ref()
+                .is_some_and(|(read, generation, _)| {
+                    *generation == self.generation && matches!(read, Read::Older(_))
+                })
     }
 
     pub fn loading(&self) -> bool {
-        self.active && self.window.is_none() && (self.in_flight.is_some() || self.refresh_pending)
+        self.window.is_none() && (self.in_flight.is_some() || self.refresh_pending)
     }
 
     pub fn error(&self) -> Option<&str> {
         self.error.as_deref()
     }
 
-    pub fn activate(&mut self, cx: &mut Context<Self>) {
-        if !self.active {
-            self.active = true;
-            self.refresh(cx);
-        }
-    }
-
-    pub fn deactivate(&mut self, cx: &mut Context<Self>) {
-        if self.active {
-            self.active = false;
-            self.generation += 1;
-            self.refresh_pending = false;
-            self.older_pending = false;
-            cx.notify();
-        }
-    }
-
     pub fn select(&mut self, room: String, cx: &mut Context<Self>) {
-        self.change_selection(Selection::Room(room), cx);
-    }
-
-    pub(super) fn preview(&mut self, node: NodeId, cx: &mut Context<Self>) {
-        let selection = self.room_for(node).map_or(Selection::WorkOf(node), |room| {
-            Selection::Room(room.id.clone())
-        });
-        self.change_selection(selection, cx);
-    }
-
-    fn change_selection(&mut self, selection: Selection, cx: &mut Context<Self>) {
-        if self.selected.as_ref() == Some(&selection)
+        if self.selected.as_ref() == Some(&room)
             && self
                 .window
                 .as_ref()
@@ -251,7 +213,7 @@ impl ChatData {
         {
             return;
         }
-        self.selected = Some(selection);
+        self.selected = Some(room);
         self.generation += 1;
         self.clear_window();
         self.error = None;
@@ -260,14 +222,12 @@ impl ChatData {
     }
 
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
-        if self.active {
-            self.refresh_pending = true;
-            self.read_next(cx);
-        }
+        self.refresh_pending = true;
+        self.read_next(cx);
     }
 
     pub fn load_older(&mut self, cx: &mut Context<Self>) {
-        if self.active && self.before().is_some() && !self.loading_older() {
+        if self.before().is_some() && !self.loading_older() {
             self.older_pending = true;
             self.read_next(cx);
             cx.notify();
@@ -281,7 +241,7 @@ impl ChatData {
     }
 
     fn read_next(&mut self, cx: &mut Context<Self>) {
-        if !self.active || self.in_flight.is_some() {
+        if self.in_flight.is_some() {
             return;
         }
         let read = std::mem::take(&mut self.older_pending)
@@ -349,9 +309,7 @@ impl ChatData {
                 }
                 data.in_flight = None;
                 data.read_next(cx);
-                if data.active {
-                    cx.notify();
-                }
+                cx.notify();
             });
         });
         self.in_flight = Some((read, generation, task));
@@ -363,33 +321,16 @@ impl ChatData {
         if self.room().is_some() {
             return;
         }
-        let preview = match self.selected {
-            Some(Selection::WorkOf(node)) => self.room_for(node),
-            _ => None,
-        };
-        let selected = preview
-            .or_else(|| {
-                self.rooms
-                    .iter()
-                    .find(|room| matches!(room.kind, ChatRoomKind::Pinned))
-            })
+        let selected = self
+            .rooms
+            .iter()
+            .find(|room| matches!(room.kind, ChatRoomKind::Pinned))
             .or(self.rooms.first())
-            .map(|room| Selection::Room(room.id.clone()));
+            .map(|room| room.id.clone());
         if selected != self.selected {
             self.selected = selected;
             self.clear_window();
         }
-    }
-
-    fn room_for(&self, node: NodeId) -> Option<&ChatRoom> {
-        self.rooms
-            .iter()
-            .find(|r| matches!(r.kind, ChatRoomKind::Work { .. }) && r.members.contains(&node))
-            .or_else(|| {
-                self.rooms
-                    .iter()
-                    .find(|r| matches!(r.kind, ChatRoomKind::Agent { node: id } if id == node))
-            })
     }
 
     fn page_task(&self, read: Read, cx: &Context<Self>) -> Option<Task<Result<RoomPage, String>>> {

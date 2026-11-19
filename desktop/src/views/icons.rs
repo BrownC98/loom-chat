@@ -50,6 +50,7 @@ pub fn icon(name: Lucide, size: Pixels, color: Rgba) -> Svg {
         .text_color(color)
 }
 
+#[cfg(windows)]
 pub fn icon_styled(name: Lucide, size: Pixels, color: Rgba, stroke: f32, filled: bool) -> Svg {
     let fill = if filled { "&fill" } else { "" };
     svg()

@@ -68,7 +68,7 @@ One Windows loom runs agents on Windows and in WSL. To work on a repository in W
 
 ### loom desktop (native window)
 
-loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead of a web view. It shows the same screen as the loom app and the browser version. Its goal is a faster screen. The executable starts or joins the loom daemon. Run the same executable with arguments to use the Loom CLI. So the app, the browser tab and loom desktop can show the same loom at the same time.
+loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead of a web view. It opens Chat. Use Chat to start agents, read room history, and send messages. The executable starts or joins the loom daemon. Run the same executable with arguments to use the Loom CLI. So the app, the browser tab and loom desktop can show the same loom at the same time.
 
 | | loom app | loom desktop | Browser version |
 |---|---|---|---|

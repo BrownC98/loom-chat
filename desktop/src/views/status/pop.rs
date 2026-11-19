@@ -4,19 +4,23 @@ use gpui::{
     KeyDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
 };
 
-use super::{Tone, chip, line, pill, rework, since_short};
+use super::{Tone, chip, line, pill, process_text, rework, since_short};
 use crate::fonts;
 use crate::scale::px;
 use crate::store::Store;
 use crate::strings::{Lang, Str};
 use crate::theme::{Colors, Theme};
-use crate::views::card::process_text;
 use crate::views::cardlink;
 use crate::views::ui;
-use crate::views::worktree::{Closed, error, shell};
+use crate::views::widgets::btn;
+use crate::views::worktree::{error, shell};
 
-pub const WIDTH: f32 = 380.0;
-pub const HEIGHT: f32 = 200.0;
+const WIDTH: f32 = 380.0;
+
+pub enum StatusEvent {
+    Close,
+    History,
+}
 
 pub struct StatusView {
     store: Entity<Store>,
@@ -25,7 +29,7 @@ pub struct StatusView {
     focus: FocusHandle,
 }
 
-impl EventEmitter<Closed> for StatusView {}
+impl EventEmitter<StatusEvent> for StatusView {}
 
 impl StatusView {
     pub fn new(
@@ -105,7 +109,6 @@ impl Render for StatusView {
         let Some(node) = node else {
             return shell(&c, WIDTH).id("status-pop").track_focus(&self.focus);
         };
-        let name = node.name.clone();
         let state = chip(&node.status, lang);
         let waiting = state
             .as_ref()
@@ -145,7 +148,7 @@ impl Render for StatusView {
             .gap(px(10.0))
             .on_key_down(cx.listener(|_, e: &KeyDownEvent, _, cx| {
                 if e.keystroke.key == "escape" {
-                    cx.emit(Closed);
+                    cx.emit(StatusEvent::Close);
                     cx.stop_propagation();
                 }
             }))
@@ -170,14 +173,9 @@ impl Render for StatusView {
             .children(failed)
             .child(
                 div().flex().justify_end().child(
-                    ui::button("status-events", cx)
+                    btn::button("status-events", cx)
                         .child(ui::say(cx, Str::NodeStatusPopEvents))
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            let name = name.clone();
-                            this.store
-                                .update(cx, |store, cx| store.show_events(name, cx));
-                            cx.emit(Closed);
-                        })),
+                        .on_click(cx.listener(|_, _, _, cx| cx.emit(StatusEvent::History))),
                 ),
             )
     }

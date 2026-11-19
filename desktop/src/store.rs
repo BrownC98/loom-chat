@@ -1,49 +1,33 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use api::canvas::{CardSize, Layout, Placed};
 use api::graph::docs::DocRow;
-use api::graph::events::{Entry, EventLog, SwitchCause};
-use api::graph::waits::{AnswerWait, ChooseOption, ClosedPage, PressKeys, Prompt, TypeText};
-use api::graph::{GraphEvent, NewNode, NodeView};
+use api::graph::events::{Entry, SwitchCause};
+use api::graph::waits::{AnswerWait, ChooseOption, PressKeys, Prompt, TypeText};
+use api::graph::{GraphEvent, NewNode};
 use api::ids::{NodeId, RepoId, WaitId};
 use api::profile::AgentView;
-use api::repos::{PlaceView, RepoView};
-use api::settings::places::ReachView;
-use api::settings::{ArrangeDirection, GraphScope, SettingsView};
+use api::repos::RepoView;
+use api::settings::SettingsView;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Bounds, Context, EventEmitter, Image, ImageFormat, Pixels,
-    Task, Window, WindowAppearance,
+    App, AppContext, Context, EventEmitter, Image, ImageFormat, Task, Window, WindowAppearance,
 };
 
-use crate::canvas::drag::Arrange;
-use crate::canvas::repos::{chosen_repo, groups_of};
-use crate::link::{self, Fresh, Graph, GraphRead, GraphView, LinkState, Snapshot};
+use crate::link::{self, Fresh, Graph, LinkState, Snapshot};
 use crate::problem::Failure;
 use crate::{scale, strings, theme};
 
-const ROOM_GAP: f32 = 14.0;
 const PROMPT_CHANGED: &str = "promptChanged";
 const REPOS_EVERY: Duration = Duration::from_secs(5);
-pub const NODE_ENV: &str = "LOOM_DESKTOP_NODE";
-
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SentPart {
-    Report,
-    Answer,
-}
 
 pub struct Store {
     base: Option<String>,
     status: String,
     connection: LinkState,
     watch: Option<link::Watch>,
-    window: AnyWindowHandle,
     repo_watch: Option<Task<()>>,
     snapshot: Option<Snapshot>,
-    revision: u64,
-    loaded: u64,
     nodes_at: u64,
     repos_at: u64,
     settings: SettingsView,
@@ -51,71 +35,22 @@ pub struct Store {
     unsaved: VecDeque<serde_json::Value>,
     confirmed: SettingsView,
     settings_from: u64,
-    selected: Option<u32>,
-    chosen: Option<String>,
-    wanted: Option<u32>,
-    zoom_percent: u32,
     notice: Option<Notice>,
-    found: Option<HashSet<String>>,
-    current: Option<String>,
-    picked: Option<HashSet<String>>,
-    composer: Option<(Bounds<Pixels>, bool)>,
-    zoomed: bool,
-    drafts: HashMap<(u32, Slot), String>,
     busy: HashSet<u32>,
-    unreached: HashSet<String>,
 }
 
-#[derive(Clone)]
 pub struct Notice {
     pub text: String,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Slot {
-    Answer,
-    Option(usize),
-    Field,
-}
-
-pub struct ZoomTo(pub f32);
-
-pub struct NodeMenu {
-    pub node: u32,
-    pub at: gpui::Point<Pixels>,
-    pub button: Option<Bounds<Pixels>>,
-}
-
-pub struct NodeStatus {
-    pub node: u32,
-    pub at: gpui::Point<Pixels>,
-    pub button: Option<Bounds<Pixels>>,
-}
-
-#[derive(Clone)]
-pub enum Target {
-    Nodes(Vec<u32>),
-    Boxes(Vec<String>),
-    All,
-}
-
-pub struct Show(pub Target);
-
-pub struct ShowEvents(pub String);
-pub struct DraftChanged(pub u32, pub Slot);
-
 pub struct BusyChanged;
+
+pub struct OpenAgent(pub NodeId);
 
 impl EventEmitter<GraphEvent> for Store {}
 impl EventEmitter<LinkState> for Store {}
-impl EventEmitter<Arrange> for Store {}
-impl EventEmitter<ZoomTo> for Store {}
-impl EventEmitter<NodeMenu> for Store {}
-impl EventEmitter<NodeStatus> for Store {}
-impl EventEmitter<ShowEvents> for Store {}
-impl EventEmitter<Show> for Store {}
-impl EventEmitter<DraftChanged> for Store {}
 impl EventEmitter<BusyChanged> for Store {}
+impl EventEmitter<OpenAgent> for Store {}
 
 fn newer(at: &mut u64, order: u64) -> bool {
     let newer = order > *at;
@@ -123,19 +58,6 @@ fn newer(at: &mut u64, order: u64) -> bool {
         *at = order;
     }
     newer
-}
-
-fn unreached_of(base: &str, hosts: Vec<String>, graph: &GraphRead) -> HashSet<String> {
-    hosts
-        .into_iter()
-        .take_while(|_| graph.is_current())
-        .filter(|host| {
-            matches!(
-                graph.read::<Option<ReachView>>(base, &format!("/api/ssh/{}", link::escape(host))),
-                Ok(Some(reach)) if !matches!(reach, ReachView::Reached { .. })
-            )
-        })
-        .collect()
 }
 
 fn patched<'a>(
@@ -204,11 +126,8 @@ impl Store {
             status,
             connection,
             watch,
-            window: window.window_handle(),
             repo_watch: None,
             snapshot: None,
-            revision: 0,
-            loaded: 0,
             nodes_at: 0,
             repos_at: 0,
             settings,
@@ -216,87 +135,34 @@ impl Store {
             unsaved: VecDeque::new(),
             confirmed: SettingsView::default(),
             settings_from: 0,
-            selected: None,
-            chosen: None,
-            wanted: None,
-            zoom_percent: 100,
             notice,
-            found: None,
-            current: None,
-            picked: None,
-            composer: None,
-            zoomed: false,
-            drafts: HashMap::new(),
             busy: HashSet::new(),
-            unreached: HashSet::new(),
         };
-        store.set_graph_visible(true, cx);
+        if let Some(base) = store.base.clone() {
+            store.watch_repos(base, window.window_handle(), cx);
+        }
         store
     }
 
-    pub fn set_graph_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
-        let Some(watch) = &self.watch else {
-            return;
-        };
-        if visible {
-            if !watch.graph_visible() {
-                watch.set_graph_visible(true);
-                watch.reload();
-            }
-            if self.repo_watch.is_none() {
-                self.watch_repos(cx);
-            }
-        } else {
-            watch.set_graph_visible(false);
-            self.repo_watch = None;
-        }
-    }
-
-    fn watch_repos(&mut self, cx: &Context<Self>) {
-        let Some((base, graph)) = self
-            .base
-            .clone()
-            .zip(self.watch.as_ref().and_then(link::Watch::graph_read))
-        else {
-            return;
-        };
-        let window = self.window;
+    fn watch_repos(&mut self, base: String, window: gpui::AnyWindowHandle, cx: &Context<Self>) {
         self.repo_watch = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(REPOS_EVERY).await;
                 let Ok(visible) = window.update(cx, |_, window, _| window.is_visible()) else {
                     break;
                 };
-                let order = link::order();
-                let repos = if visible {
-                    let read_base = base.clone();
-                    let reading = graph.clone();
-                    cx.background_spawn(async move { reading.read(&read_base, "/api/repos").ok() })
-                        .await
-                } else {
-                    None
-                };
-                let Ok(hosts) = this.update(cx, |store, cx| {
-                    if let Some(repos) = repos {
-                        store.keep_repos(order, repos, cx);
-                    }
-                    store.ssh_hosts()
-                }) else {
-                    break;
-                };
-                if hosts.is_empty() {
+                if !visible {
                     continue;
                 }
+                let order = link::order();
                 let read_base = base.clone();
-                let reading = graph.clone();
-                let down = cx
-                    .background_spawn(async move { unreached_of(&read_base, hosts, &reading) })
+                let repos = cx
+                    .background_spawn(async move { link::read(&read_base, "/api/repos").ok() })
                     .await;
                 if this
                     .update(cx, |store, cx| {
-                        if store.unreached != down {
-                            store.unreached = down;
-                            cx.notify();
+                        if let Some(repos) = repos {
+                            store.keep_repos(order, repos, cx);
                         }
                     })
                     .is_err()
@@ -305,32 +171,6 @@ impl Store {
                 }
             }
         }));
-    }
-
-    fn ssh_hosts(&self) -> Vec<String> {
-        let mut hosts: Vec<String> = self
-            .snapshot
-            .iter()
-            .flat_map(|snapshot| &snapshot.repos)
-            .filter_map(|repo| match &repo.place {
-                PlaceView::Ssh { host } => Some(host.to_lowercase()),
-                _ => None,
-            })
-            .collect();
-        hosts.sort();
-        hosts.dedup();
-        hosts
-    }
-
-    pub fn is_unreached(&self, node: &NodeView) -> bool {
-        self.snapshot
-            .iter()
-            .flat_map(|snapshot| &snapshot.repos)
-            .find(|repo| repo.id == node.place.repo)
-            .is_some_and(|repo| match &repo.place {
-                PlaceView::Ssh { host } => self.unreached.contains(&host.to_lowercase()),
-                _ => false,
-            })
     }
 
     pub fn base(&self) -> Option<&str> {
@@ -345,45 +185,8 @@ impl Store {
         self.snapshot.as_ref()
     }
 
-    pub fn revision(&self) -> u64 {
-        self.revision
-    }
-
-    pub fn loaded(&self) -> u64 {
-        self.loaded
-    }
-
     pub fn settings(&self) -> &SettingsView {
         &self.settings
-    }
-
-    pub fn selected(&self) -> Option<u32> {
-        self.selected
-    }
-
-    pub fn draft(&self, wait: u32, slot: Slot) -> &str {
-        self.drafts.get(&(wait, slot)).map_or("", String::as_str)
-    }
-
-    pub fn set_draft(&mut self, wait: u32, slot: Slot, text: &str, cx: &mut Context<Self>) {
-        if self.draft(wait, slot) == text {
-            return;
-        }
-        if text.is_empty() {
-            self.drafts.remove(&(wait, slot));
-        } else {
-            self.drafts.insert((wait, slot), text.to_owned());
-        }
-        cx.emit(DraftChanged(wait, slot));
-    }
-
-    pub fn keep_waits(&mut self, live: &HashSet<u32>, cx: &mut Context<Self>) {
-        self.drafts.retain(|(wait, _), _| live.contains(wait));
-        let before = self.busy.len();
-        self.busy.retain(|wait| live.contains(wait));
-        if self.busy.len() != before {
-            cx.emit(BusyChanged);
-        }
     }
 
     pub fn is_busy(&self, wait: u32) -> bool {
@@ -401,178 +204,11 @@ impl Store {
         }
     }
 
-    pub fn zoom_percent(&self) -> u32 {
-        self.zoom_percent
-    }
-
-    pub fn set_zoom_percent(&mut self, percent: u32, cx: &mut Context<Self>) {
-        if self.zoom_percent != percent {
-            self.zoom_percent = percent;
-            cx.notify();
-        }
-    }
-
-    pub fn lit(&self) -> Option<&HashSet<String>> {
-        self.found.as_ref().or(self.picked.as_ref())
-    }
-
-    pub fn current(&self) -> Option<&str> {
-        self.found.as_ref().and(self.current.as_deref())
-    }
-
-    pub fn set_found(
-        &mut self,
-        keys: Option<HashSet<String>>,
-        current: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.found != keys || self.current != current {
-            self.found = keys;
-            self.current = current;
-            cx.notify();
-        }
-    }
-
-    pub fn has_picked(&self) -> bool {
-        self.picked.is_some()
-    }
-
-    pub fn set_picked(&mut self, keys: Option<HashSet<String>>, cx: &mut Context<Self>) {
-        if self.picked != keys {
-            self.picked = keys;
-            cx.notify();
-        }
-    }
-
-    pub fn show_node(&mut self, node: u32, cx: &mut Context<Self>) {
-        self.show_nodes(vec![node], cx);
-    }
-
-    pub fn open_node_menu(
-        &mut self,
-        node: u32,
-        at: gpui::Point<Pixels>,
-        button: Option<Bounds<Pixels>>,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(NodeMenu { node, at, button });
-    }
-
-    pub fn show_events(&mut self, name: String, cx: &mut Context<Self>) {
-        self.set_pane_open("dock", true, cx);
-        cx.emit(ShowEvents(name));
-    }
-
-    pub fn open_node_status(
-        &mut self,
-        node: u32,
-        at: gpui::Point<Pixels>,
-        button: Option<Bounds<Pixels>>,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(NodeStatus { node, at, button });
-    }
-
-    pub fn go(&mut self, node: u32, cx: &mut Context<Self>) {
-        self.select(node, cx);
-        self.show_node(node, cx);
-    }
-
-    pub fn show_nodes(&mut self, nodes: Vec<u32>, cx: &mut Context<Self>) {
-        let present: Vec<(u32, RepoId)> = nodes
-            .into_iter()
-            .filter_map(|id| Some((id, self.repo_of(id)?)))
-            .collect();
-        let shown = self.shown_repos();
-        let mut ids: Vec<u32> = present
-            .iter()
-            .filter(|(_, repo)| shown.contains(repo))
-            .map(|(id, _)| *id)
-            .collect();
-        if ids.is_empty()
-            && let Some(&(_, repo)) = present.first()
-        {
-            self.choose_repo(repo, cx);
-            ids = present
-                .iter()
-                .filter(|(_, r)| *r == repo)
-                .map(|(id, _)| *id)
-                .collect();
-        }
-        if !ids.is_empty() {
-            cx.emit(Show(Target::Nodes(ids)));
-        }
-    }
-
-    pub fn show_boxes(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
-        cx.emit(Show(Target::Boxes(paths)));
-    }
-
-    pub fn show_repo(&mut self, repo: RepoId, cx: &mut Context<Self>) {
-        self.choose_repo(repo, cx);
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        let Some(info) = snapshot.repos.iter().find(|r| r.id == repo) else {
-            return;
-        };
-        let views: Vec<&NodeView> = snapshot
-            .nodes
-            .iter()
-            .filter(|n| n.place.repo == repo)
-            .collect();
-        let paths = groups_of(info, &views)
-            .into_iter()
-            .map(|g| g.path)
-            .collect();
-        cx.emit(Show(Target::Boxes(paths)));
-    }
-
-    pub fn show_all(&mut self, cx: &mut Context<Self>) {
-        cx.emit(Show(Target::All));
-    }
-
-    fn current_repo(&self) -> Option<RepoId> {
-        let snapshot = self.snapshot.as_ref()?;
-        chosen_repo(&snapshot.repos, self.settings.repo).map(|r| r.id)
-    }
-
-    pub fn shown_repos(&self) -> Vec<RepoId> {
-        match (self.settings.graph_scope, &self.snapshot) {
-            (GraphScope::All, Some(snapshot)) => snapshot.repos.iter().map(|r| r.id).collect(),
-            _ => self.current_repo().into_iter().collect(),
-        }
-    }
-
     pub fn choose_repo(&mut self, repo: RepoId, cx: &mut Context<Self>) {
-        if self.current_repo() == Some(repo) {
+        if self.settings.repo == Some(repo) {
             return;
         }
         self.save_settings(serde_json::json!({ "repo": repo }), cx);
-    }
-
-    fn repo_of(&self, node: u32) -> Option<RepoId> {
-        let snapshot = self.snapshot.as_ref()?;
-        snapshot
-            .nodes
-            .iter()
-            .find(|n| n.id.0 == node)
-            .map(|n| n.place.repo)
-    }
-
-    pub fn zoomed(&self) -> bool {
-        self.zoomed
-    }
-
-    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut Context<Self>) {
-        if self.zoomed != zoomed {
-            self.zoomed = zoomed;
-            cx.notify();
-        }
-    }
-
-    pub fn zoom_to(&mut self, percent: f32, cx: &mut Context<Self>) {
-        cx.emit(ZoomTo(percent / 100.0));
     }
 
     pub fn notice(&self) -> Option<&Notice> {
@@ -642,59 +278,20 @@ impl Store {
 
     fn show_settings(&mut self, settings: SettingsView, cx: &mut Context<Self>) {
         self.take_settings(settings, cx);
-        if self.snapshot.is_some() {
-            self.revision += 1;
-        }
         cx.notify();
     }
 
-    fn take_settings(&mut self, settings: SettingsView, cx: &mut Context<Self>) -> bool {
+    fn take_settings(&mut self, settings: SettingsView, cx: &mut Context<Self>) {
         let key = serde_json::to_string(&settings).unwrap_or_default();
-        if key == self.settings_key {
-            return false;
-        }
-        apply_settings(&settings, cx);
-        if settings.closed_panes.dock {
-            self.picked = None;
-        }
-        self.settings = settings;
-        self.settings_key = key;
-        true
-    }
-
-    pub fn set_pane_open(&mut self, pane: &str, open: bool, cx: &mut Context<Self>) {
-        self.save_settings(serde_json::json!({ "closedPanes": { pane: !open } }), cx);
-    }
-
-    pub fn select_when_loaded(&mut self, node: u32, cx: &mut Context<Self>) {
-        self.wanted = Some(node);
-        self.reload(cx);
-    }
-
-    pub fn select(&mut self, node: u32, cx: &mut Context<Self>) {
-        if let Some(repo) = self.repo_of(node) {
-            self.choose_repo(repo, cx);
-        }
-        if (self.selected != Some(node)) | self.chosen.take().is_some() {
-            self.selected = Some(node);
-            cx.notify();
+        if key != self.settings_key {
+            apply_settings(&settings, cx);
+            self.settings = settings;
+            self.settings_key = key;
         }
     }
 
-    pub fn chosen(&self) -> Option<&str> {
-        self.chosen.as_deref()
-    }
-
-    pub fn choose_box(&mut self, key: String, cx: &mut Context<Self>) {
-        self.selected = None;
-        self.chosen = Some(key);
-        cx.notify();
-    }
-
-    pub fn clear_selection(&mut self, cx: &mut Context<Self>) {
-        if self.selected.take().is_some() | self.chosen.take().is_some() {
-            cx.notify();
-        }
+    pub fn open_agent(&self, node: NodeId, cx: &mut Context<Self>) {
+        cx.emit(OpenAgent(node));
     }
 
     pub fn reload(&self, _: &mut Context<Self>) {
@@ -704,21 +301,13 @@ impl Store {
     }
 
     fn apply(&mut self, event: Graph, cx: &mut Context<Self>) {
-        let accepts_graph = |order| {
-            self.watch
-                .as_ref()
-                .is_some_and(|watch| watch.accepts_graph(order))
-        };
         match event {
             Graph::Connection(state) => {
                 self.connection = state;
                 cx.emit(state);
                 return;
             }
-            Graph::Nodes(mut fresh) => {
-                if !accepts_graph(fresh.order) {
-                    fresh.view = None;
-                }
+            Graph::Nodes(fresh) => {
                 if !self.refresh(*fresh) {
                     return;
                 }
@@ -734,15 +323,10 @@ impl Store {
                 {
                     self.reload(cx);
                 }
-                let nodes = matches!(*event, GraphEvent::Nodes);
                 cx.emit(*event);
-                if nodes || !self.watch.as_ref().is_some_and(link::Watch::graph_visible) {
-                    return;
-                }
+                return;
             }
-            Graph::Failed { order, error }
-                if accepts_graph(order) && order > self.loaded.max(self.nodes_at) =>
-            {
+            Graph::Failed { order, error } if order > self.nodes_at => {
                 self.fail(error, cx);
             }
             _ => return,
@@ -764,9 +348,7 @@ impl Store {
         self.status = self.base.clone().unwrap_or_default();
         if self.unsaved.is_empty() && newer(&mut self.settings_from, order) {
             self.confirmed = settings.clone();
-            if self.take_settings(settings, cx) && self.snapshot.is_some() {
-                self.revision += 1;
-            }
+            self.take_settings(settings, cx);
         }
     }
 
@@ -774,42 +356,20 @@ impl Store {
         let snapshot = self.snapshot.get_or_insert_with(|| Snapshot {
             nodes: Vec::new(),
             repos: Vec::new(),
-            layout: Layout {
-                placed: Vec::new(),
-                arranged: Vec::new(),
-            },
-            sizes: Vec::new(),
         });
         let mut used = false;
         if newer(&mut self.nodes_at, fresh.order) {
             snapshot.nodes = fresh.nodes;
             used = true;
         }
-        if let Some(view) = fresh.view {
-            let repos = match view {
-                GraphView::Repos(repos) => repos,
-                GraphView::Full {
-                    repos,
-                    layout,
-                    sizes,
-                } => {
-                    if newer(&mut self.loaded, fresh.order) {
-                        snapshot.layout = layout;
-                        snapshot.sizes = sizes;
-                        used = true;
-                    }
-                    repos
-                }
-            };
-            if newer(&mut self.repos_at, fresh.order) {
-                snapshot.repos = repos;
-                used = true;
-            }
+        if let Some(repos) = fresh.repos
+            && newer(&mut self.repos_at, fresh.order)
+        {
+            snapshot.repos = repos;
+            used = true;
         }
         if used {
             self.status = self.base.clone().unwrap_or_default();
-            self.revision += 1;
-            self.reselect();
         }
         used
     }
@@ -824,49 +384,11 @@ impl Store {
             return;
         }
         snapshot.repos = repos;
-        self.revision += 1;
         cx.notify();
-    }
-
-    fn reselect(&mut self) {
-        let Some(snapshot) = &self.snapshot else {
-            return;
-        };
-        let present = |id: u32| snapshot.nodes.iter().any(|n| n.id.0 == id);
-        if let Some(id) = self.wanted.filter(|&id| present(id)) {
-            self.selected = Some(id);
-            self.wanted = None;
-        }
-        if self.selected.is_some_and(|id| !present(id)) {
-            self.selected = None;
-        }
-        if self.revision == 1
-            && self.selected.is_none()
-            && let Some(id) = std::env::var(NODE_ENV)
-                .ok()
-                .and_then(|id| id.parse().ok())
-                .filter(|&id| present(id))
-        {
-            self.selected = Some(id);
-        }
     }
 }
 
 impl Store {
-    pub fn arrange(&mut self, direction: ArrangeDirection, cx: &mut Context<Self>) {
-        self.save_settings(serde_json::json!({ "arrangeDirection": direction }), cx);
-        cx.emit(Arrange { direction });
-    }
-
-    pub fn keep_arranged(&mut self, on: bool, cx: &mut Context<Self>) {
-        self.save_settings(serde_json::json!({ "alwaysArrange": on }), cx);
-        if on {
-            cx.emit(Arrange {
-                direction: self.settings.arrange_direction,
-            });
-        }
-    }
-
     pub(crate) fn call<T: Send + 'static>(
         &self,
         cx: &App,
@@ -973,29 +495,15 @@ impl Store {
         })
     }
 
-    pub fn adopt(
-        &self,
-        child: u32,
-        parent: u32,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
-        self.call(cx, move |base| link::adopt(base, child, parent))
-    }
-
     pub fn wait_image(
         &self,
         wait: WaitId,
-        part: SentPart,
         index: usize,
         cx: &mut Context<Self>,
     ) -> Task<Result<Arc<Image>, String>> {
-        let route = match part {
-            SentPart::Report => "images",
-            SentPart::Answer => "answer-images",
-        };
         self.call(cx, move |base| {
             let (mime, bytes) =
-                link::image(base, &format!("/api/waits/{}/{route}/{index}", wait.0))?;
+                link::image(base, &format!("/api/waits/{}/images/{index}", wait.0))?;
             let format = ImageFormat::from_mime_type(&mime)
                 .ok_or_else(|| Failure::Other(format!("image type {mime}")))?;
             Ok(Arc::new(Image::from_bytes(format, bytes)))
@@ -1005,43 +513,6 @@ impl Store {
     pub fn dismiss_wait(&self, wait: WaitId, cx: &mut Context<Self>) -> Task<Result<(), String>> {
         self.call(cx, move |base| {
             link::delete(base, &format!("/api/waits/{}", wait.0))
-        })
-    }
-
-    pub fn closed_waits(
-        &self,
-        query: String,
-        before: Option<u32>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<ClosedPage, String>> {
-        self.call(cx, move |base| {
-            let mut at = Vec::new();
-            if let Some(seq) = before {
-                at.push(format!("before={seq}"));
-            }
-            if !query.is_empty() {
-                let query = percent_encoding::utf8_percent_encode(
-                    &query,
-                    percent_encoding::NON_ALPHANUMERIC,
-                );
-                at.push(format!("q={query}"));
-            }
-            let path = match at.is_empty() {
-                true => "/api/waits/closed".to_owned(),
-                false => format!("/api/waits/closed?{}", at.join("&")),
-            };
-            link::read(base, &path)
-        })
-    }
-
-    pub fn event_console(
-        &self,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(EventLog, Vec<AgentView>), String>> {
-        self.call(cx, |base| {
-            let agents = link::read(base, "/api/agents").unwrap_or_default();
-            let log = link::read(base, "/api/events/log")?;
-            Ok((log, agents))
         })
     }
 
@@ -1058,48 +529,6 @@ impl Store {
 }
 
 impl Store {
-    pub fn save_size(
-        &self,
-        size: CardSize,
-        spot: Option<Placed>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
-        self.call(cx, move |base| {
-            link::put_sizes(base, &[size])?;
-            match spot {
-                Some(spot) => link::put_spots(base, &[spot]),
-                None => Ok(()),
-            }
-        })
-    }
-
-    pub fn clear_sizes(
-        &self,
-        nodes: Vec<NodeId>,
-        cx: &mut Context<Self>,
-    ) -> Task<Result<(), String>> {
-        self.call(cx, move |base| link::clear_sizes(base, &nodes))
-    }
-}
-
-impl Store {
-    pub fn composer_room(&self) -> f32 {
-        self.composer
-            .filter(|(_, home)| *home)
-            .map_or(0.0, |(bounds, _)| f32::from(bounds.size.height) + ROOM_GAP)
-    }
-
-    pub fn set_composer(
-        &mut self,
-        composer: Option<(Bounds<Pixels>, bool)>,
-        cx: &mut Context<Self>,
-    ) {
-        if self.composer != composer {
-            self.composer = composer;
-            cx.notify();
-        }
-    }
-
     pub fn save_paste(
         &self,
         node: NodeId,

@@ -10,7 +10,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Task, UnderlineStyle, div,
 };
 
-use super::find::Find;
 use super::ui;
 use crate::scale::fixed as px;
 use crate::store::Store;
@@ -68,20 +67,18 @@ pub fn has_doc(parts: &[TextPart]) -> bool {
         .any(|part| matches!(part, TextPart::Doc { .. }))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn render(
     id: impl Into<ElementId>,
     parts: &[TextPart],
     plain: &str,
     doc: Option<&WaitDoc>,
     color: Rgba,
-    find: Option<&Find>,
     cx: &App,
     follow: impl Fn(Target, &mut App) + 'static,
 ) -> AnyElement {
     let id = id.into();
     let follow: Follow = Rc::new(follow);
-    let text = inline(id.clone(), parts, plain, doc, color, find, cx, &follow);
+    let text = inline(id.clone(), parts, plain, doc, color, cx, &follow);
     let tail = doc
         .filter(|_| !has_doc(parts))
         .map(|doc| tail(id, doc, color, cx, &follow));
@@ -122,14 +119,12 @@ pub fn tail(id: ElementId, doc: &WaitDoc, color: Rgba, cx: &App, follow: &Follow
         .on_click(move |_, _, cx| follow(target.clone(), cx))
 }
 
-#[allow(clippy::too_many_arguments)]
 pub fn inline(
     id: ElementId,
     parts: &[TextPart],
     plain: &str,
     doc: Option<&WaitDoc>,
     color: Rgba,
-    find: Option<&Find>,
     cx: &App,
     follow: &Follow,
 ) -> Option<AnyElement> {
@@ -187,10 +182,7 @@ pub fn inline(
     marks.sort_by_key(|(r, _)| r.start);
     let (ranges, targets): (Vec<_>, Vec<_>) = links.into_iter().unzip();
     let follow = follow.clone();
-    let base = match find {
-        Some(find) => find.apply(find.scan(&shown, 0, marks), prose(shown)),
-        None => prose(shown).with_highlights(marks),
-    };
+    let base = prose(shown).with_highlights(marks);
     Some(
         base.on_click(
             ElementId::NamedChild(Arc::new(id), "text".into()),

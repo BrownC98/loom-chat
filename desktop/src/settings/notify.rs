@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
+use api::ids::NodeId;
 use gpui::{App, Entity, SharedString, SystemNotification, Window};
 
 use crate::store::Store;
@@ -30,7 +31,7 @@ pub fn watch(store: &Entity<Store>, window: &mut Window, cx: &mut App) {
             return;
         };
         let _ = handle.update(cx, |_, window, _| window.activate_window());
-        let _ = target.update(cx, |store, cx| store.select(node, cx));
+        let _ = target.update(cx, |store, cx| store.open_agent(NodeId(node), cx));
     });
     let mut seen: Option<HashSet<u32>> = None;
     window

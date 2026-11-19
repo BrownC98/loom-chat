@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-  <a href="https://github.com/BrownC98/loom/releases/latest"><img src="https://img.shields.io/github/v/release/BrownC98/loom?style=flat&color=2E5BD6" alt="최신 릴리스"></a>
+  <a href="https://github.com/BrownC98/loom-chat/releases/latest"><img src="https://img.shields.io/github/v/release/BrownC98/loom-chat?style=flat&color=2E5BD6" alt="최신 릴리스"></a>
   <img src="https://img.shields.io/badge/license-MIT-2E5BD6?style=flat" alt="라이선스: MIT">
   <img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-2E5BD6?style=flat" alt="플랫폼: Windows, macOS, Linux, Android">
 </p>
@@ -23,27 +23,27 @@
 
 ## 설치
 
-[가장 새 릴리스](https://github.com/BrownC98/loom/releases/latest)에서 파일을 받습니다. 그다음 쓸 에이전트 CLI(예: Claude Code, Codex, OpenCode 2)를 설치합니다. loom은 `PATH`에서 찾습니다.
+[가장 새 릴리스](https://github.com/BrownC98/loom-chat/releases/latest)에서 파일을 받습니다. 그다음 쓸 에이전트 CLI(예: Claude Code, Codex, OpenCode 2)를 설치합니다. loom은 `PATH`에서 찾습니다.
 
 ### Windows
 
 `loom_<판>_x64-setup.exe`를 실행합니다. loom 창이 열립니다.
 
 - 브라우저로도 씁니다. 시작 메뉴의 **loom (browser)**가 같은 loom을 기본 브라우저에 엽니다.
-- 설치 프로그램 없이: PowerShell에서 아래 한 줄을 실행합니다. 같은 릴리스의 `loom-desktop.exe`(네이티브 loom 창)와 `loom.exe`를 `%LOCALAPPDATA%\loom\bin`에 넣고, 바탕 화면에 창을 여는 **loom** 아이콘을 만들고, 창을 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 데스크톱 프로그램이 없으면(옛 릴리스) 브라우저 판을 설치하고, 아이콘은 브라우저에 loom을 엽니다.
+- 설치 프로그램 없이: PowerShell에서 아래 한 줄을 실행합니다. `loom-desktop.exe`를 `%LOCALAPPDATA%\loom\bin`에 넣습니다. 바탕 화면에 **loom** 아이콘을 만들고 창을 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 데스크톱 프로그램이 없으면(옛 릴리스) 브라우저 판을 설치하고, 아이콘은 브라우저에 loom을 엽니다.
 
   ```powershell
-  irm https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.ps1 | iex
+  irm https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.ps1 | iex
   ```
 
 - 지울 때는 Windows **설정 › 앱**을 씁니다.
 
 ### macOS(Apple Silicon)
 
-터미널에서 아래 한 줄을 실행합니다. loom 앱을 받아 응용 프로그램 폴더에 넣고 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 네이티브 데스크톱 프로그램이 있으면 `loom-desktop.app`(자기 `loom`이 든 네이티브 loom 창, 같은 릴리스)도 응용 프로그램 폴더에 넣고 그 앱을 엽니다.
+터미널에서 아래 한 줄을 실행합니다. loom 앱을 받아 응용 프로그램 폴더에 넣고 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 네이티브 데스크톱 프로그램이 있으면 `loom-desktop.app`(같은 릴리스의 네이티브 loom 창)도 응용 프로그램 폴더에 넣고 그 앱을 엽니다.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
 - 터미널 없이: `loom_<판>_aarch64.dmg`를 열고 loom을 응용 프로그램 폴더로 끕니다. 앱에 Apple 서명이 없어 macOS가 받은 앱이 「손상되었기 때문에 열 수 없습니다」라고 합니다. 처음 열기 전에 터미널에서 `xattr -cr /Applications/loom.app`을 실행합니다.
@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.
 Linux의 loom은 브라우저에서 돕니다. 터미널에서 아래 한 줄을 실행합니다.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
 `~/loom/bin`에 `loom` 명령을 넣고, 앱 메뉴와 바탕 화면에 **loom**을 더하고, 브라우저에 loom을 엽니다. 다음부터는 **loom** 아이콘을 누릅니다. 다시 실행하면 새 판으로 바꿉니다.
@@ -68,7 +68,7 @@ Windows loom 하나가 Windows와 WSL의 에이전트를 함께 돌립니다. WS
 
 ### loom desktop (네이티브 창)
 
-loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom 창입니다. loom 앱, 브라우저 판과 같은 화면을 보여 줍니다. 목표는 더 빠른 화면입니다. 앱처럼 보기만 하는 창입니다: loom 데몬을 띄우거나 도는 데몬에 붙고, 에이전트는 데몬이 돌립니다. 그래서 앱, 브라우저 탭, loom desktop이 같은 loom을 함께 보여 줄 수 있습니다.
+loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom 창입니다. loom 앱, 브라우저 판과 같은 화면을 보여 줍니다. 목표는 더 빠른 화면입니다. 실행 파일이 loom 데몬을 띄우거나 도는 데몬에 붙습니다. 같은 실행 파일에 인자를 주면 Loom 명령을 받습니다. 그래서 앱, 브라우저 탭, loom desktop이 같은 loom을 함께 보여 줄 수 있습니다.
 
 | | loom 앱 | loom desktop | 브라우저 판 |
 |---|---|---|---|
@@ -82,20 +82,24 @@ loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom �
 **손으로 설치:**
 
 1. 릴리스에서 내 운영체제의 파일을 받습니다.
-2. 압축을 풉니다. 같은 릴리스의 `loom-desktop`과 `loom`이 든 폴더 하나가 나옵니다. 두 파일을 함께 둡니다: `loom-desktop`은 옆의 `loom`(없으면 `PATH`의 `loom`)을 띄웁니다.
+2. 압축을 풉니다. `loom-desktop`에 창, 데몬, CLI가 들어 있습니다.
 3. `loom-desktop`을 실행합니다.
    - Windows: `loom-desktop.exe`를 두 번 누릅니다. SmartScreen이 막으면 **추가 정보 › 실행**을 누릅니다.
    - macOS: Apple 서명이 없는 파일입니다. 먼저 터미널에서 `xattr -cr <폴더>`를 실행하고, `<폴더>/loom-desktop`을 실행합니다.
 
 **처음 쓰기.** 창이 loom 데몬을 띄우고 그래프를 보여 줍니다. 도는 loom 데몬이 있으면 그 데몬에 붙습니다. 그 데몬이 옛 판이면 새 `loom`이 바꾸고, 에이전트는 계속 돕니다. 그 뒤 앱과 같이 저장소를 더하고 에이전트를 띄웁니다.
 
-**닫기와 끄기.** 창을 닫아도 데몬과 에이전트는 계속 돕니다. 데몬을 끄려면 `loom-desktop` 옆의 `loom`으로 `stop`을 실행합니다. 설치는 이 `loom`을 `PATH`에 넣지 않습니다:
+**닫기와 끄기.** 창을 닫아도 데몬과 에이전트는 계속 돕니다. 데몬을 끄려면 데스크톱 실행 파일에 `stop`을 줍니다.
 
-- Windows(한 줄 설치): `%LOCALAPPDATA%\loom\bin\loom.exe stop`
-- macOS(한 줄 설치): `/Applications/loom-desktop.app/Contents/MacOS/loom stop`(또는 `~/Applications/…`)
-- 손으로 설치: `<폴더>/loom stop`
+- Windows(한 줄 설치): `& "$env:LOCALAPPDATA\loom\bin\loom-desktop.exe" stop | Out-Host`
+- macOS(한 줄 설치): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop`(또는 `~/Applications/…`)
+- 손으로 설치: `<폴더>/loom-desktop stop`
 
-**업데이트.** 설정 › 정보에서 **업데이트 확인**, 이어서 **업데이트**를 누릅니다. 데몬이 `loom`과 그 옆의 `loom-desktop`을 새 릴리스로 바꾸고 다시 뜹니다. 그 뒤 창 프로그램을 끝내고 다시 엽니다: 창이 이 안내를 보여 줍니다. 설치한 loom이 이 기능 전 릴리스이면 단추는 `loom`만 바꿉니다. 그때는 설치 한 줄을 한 번 더 실행합니다. 업데이트 단추는 도는 데몬이 `loom-desktop` 옆의 `loom`일 때만 `loom-desktop`을 바꿉니다.
+Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전에 프롬프트가 돌아올 수 있습니다. 명령이 끝날 때까지 기다리고 종료 코드를 받으려면 PowerShell에서 `| Out-Host`를 붙입니다. 명령 프롬프트에서는 `start "" /wait "%LOCALAPPDATA%\loom\bin\loom-desktop.exe" stop`을 씁니다.
+
+**업데이트.** 설정 › 정보에서 **업데이트 확인**, 이어서 **업데이트**를 누릅니다. `loom-desktop`이 데몬을 돌리면 그 실행 파일을 바꾸고 데몬을 다시 띄웁니다. 새 판의 창을 보려면 창 프로그램을 끝내고 다시 엽니다.
+
+**WSL.** Windows 설치 명령은 WSL 노드용 Linux CLI를 따로 받습니다. 손으로 설치하면 같은 릴리스의 `loom-web-linux-x64`를 `loom-linux`로 이름을 바꿔 `loom-desktop.exe` 옆에 둡니다. WSL 설치 명령은 Windows 설치가 고른 실행 파일을 `~/loom/bin/loom`에 연결합니다.
 
 **한계.** 릴리스에는 Windows x64와 macOS Apple Silicon용 loom desktop만 있습니다. Linux는 브라우저 판을 씁니다. v0.1.2825보다 옛 릴리스에는 없습니다. 그때 설치 한 줄은 브라우저 판(Windows) 또는 앱만(macOS) 설치합니다.
 

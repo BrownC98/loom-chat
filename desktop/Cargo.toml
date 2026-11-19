@@ -9,6 +9,7 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "08cbb88a
 
 alacritty_terminal = "=0.26.0"
 api = { path = "../api" }
+loom = { path = "..", features = ["embedded-web"] }
 async-channel = "2"
 polling = "3"
 serde = "1"

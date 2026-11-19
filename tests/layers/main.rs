@@ -13,7 +13,8 @@ const FEATURE: &str = "기능";
 
 const DOC: &str = "docs/design/레이어.md";
 
-const ROOT: &str = "main";
+const ROOT: &str = "lib";
+const ROOT_FILE: &str = "src/lib.rs";
 
 const MODULE_TABLE: &str = "| 모듈 | 레이어 | 맡는 일 |";
 
@@ -336,12 +337,9 @@ fn parse(source: &str) -> tree_sitter::Tree {
 impl Crate {
     fn read(repo: &Path) -> Crate {
         let mut krate = Crate::default();
-        krate.read_file(
-            repo,
-            Path::new("src/main.rs"),
-            Vec::new(),
-            PathBuf::from("src"),
-        );
+        for file in [ROOT_FILE, "src/main.rs"] {
+            krate.read_file(repo, Path::new(file), Vec::new(), PathBuf::from("src"));
+        }
         krate
     }
 
@@ -720,7 +718,7 @@ fn cycles(edges: &[&Edge]) -> Vec<Vec<String>> {
 
 fn problems(krate: &Crate, doc: &Doc) -> Vec<String> {
     let mut problems = krate.unread.clone();
-    let mut declared: Vec<(&str, &str)> = vec![(ROOT, "src/main.rs")];
+    let mut declared: Vec<(&str, &str)> = vec![(ROOT, ROOT_FILE)];
     declared.extend(
         krate
             .top_level
@@ -737,7 +735,7 @@ fn problems(krate: &Crate, doc: &Doc) -> Vec<String> {
     for module in doc.layer_of.keys() {
         if !declared.iter().any(|(name, _)| name == module) {
             problems.push(format!(
-                "no module: the table of {DOC} has a row `{module}`, but src/main.rs declares no such module"
+                "no module: the table of {DOC} has a row `{module}`, but {ROOT_FILE} and src/main.rs declare no such module"
             ));
         }
     }

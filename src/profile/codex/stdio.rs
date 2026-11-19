@@ -15,6 +15,7 @@ pub fn replies<const N: usize>(
     calls: [(&str, Value); N],
     limit: Duration,
 ) -> Result<[Value; N], Failure> {
+    crate::timed::hide_console(&mut cmd);
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

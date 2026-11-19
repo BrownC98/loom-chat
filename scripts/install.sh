@@ -3,7 +3,8 @@ set -eu
 
 bin=$HOME/loom/bin/loom
 port=${LOOM_PORT:-7420}
-raw=https://raw.githubusercontent.com/BrownC98/loom/main
+raw=https://raw.githubusercontent.com/BrownC98/loom-chat/main
+releases=https://github.com/BrownC98/loom-chat/releases
 
 is_web_install() {
   [ -x "$bin" ] && [ "$(head -c 2 "$bin")" != '#!' ]
@@ -29,8 +30,15 @@ if [ -n "${WSL_DISTRO_NAME:-}" ]; then
   fi
   rm -f "$HOME/.loom/serve.pid"
   export WSLENV="${WSLENV:+$WSLENV:}LOOM_DOWNLOAD_URL:LOOM_DESKTOP/p"
-  (cd /mnt/c && powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [Text.Encoding]::UTF8; irm $raw/scripts/install.ps1 | iex")
-  exe=$(wslpath "$(cd /mnt/c && cmd.exe /c 'echo %LOCALAPPDATA%' | tr -d '\r')")/loom/bin/loom.exe
+  windows_exe=$(
+    cd /mnt/c
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+      \$ErrorActionPreference = 'Stop'
+      [Console]::OutputEncoding = [Text.Encoding]::UTF8
+      irm $raw/scripts/install.ps1 | iex | ForEach-Object { [Console]::Error.WriteLine(\$_) }
+      [Console]::WriteLine(\$shortcut.TargetPath)"
+  )
+  exe=$(wslpath "$(printf '%s' "$windows_exe" | tr -d '\r')")
   point_bin_to "$exe"
   if [ -n "$carry" ]; then "$bin" carry "$carry"; fi
   exit 0
@@ -41,7 +49,6 @@ if [ "$(uname -s)" = Darwin ]; then
     echo "macOS 앱은 Apple Silicon만 있습니다." >&2
     exit 1
   fi
-  releases=https://github.com/BrownC98/loom/releases
   url=${LOOM_DOWNLOAD_URL:-}
   if [ -z "$url" ]; then
     version=$(curl -fsSL "$releases/latest/download/latest.json" | sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p')
@@ -60,13 +67,20 @@ if [ "$(uname -s)" = Darwin ]; then
   tar -xzf "$tmp/loom.app.tar.gz" -C "$tmp"
   xattr -cr "$tmp/loom.app"
   with_desktop=
-  if curl -fsL -o "$tmp/desktop.tar.gz" "${url%/*}/loom-desktop-macos-arm64.tar.gz" && tar -xzf "$tmp/desktop.tar.gz" -C "$tmp" && [ -x "$tmp/loom-desktop-macos-arm64/loom-desktop" ] && [ -x "$tmp/loom-desktop-macos-arm64/loom" ]; then
+  desktop_files=$tmp/loom-desktop-macos-arm64
+  if curl -fsL -o "$tmp/desktop.tar.gz" "${url%/*}/loom-desktop-macos-arm64.tar.gz" && tar -xzf "$tmp/desktop.tar.gz" -C "$tmp" && [ -x "$desktop_files/loom-desktop" ]; then
     with_desktop=1
     macos=$tmp/loom-desktop.app/Contents/MacOS
     mkdir -p "$macos"
-    mv "$tmp/loom-desktop-macos-arm64/loom-desktop" "$tmp/loom-desktop-macos-arm64/loom" "$macos/"
+    mv "$desktop_files/loom-desktop" "$macos/"
+    legacy_cli=$dir/loom-desktop.app/Contents/MacOS/loom
+    if [ -x "$desktop_files/loom" ]; then
+      mv "$desktop_files/loom" "$macos/"
+    elif [ -x "$legacy_cli" ]; then
+      cp -p "$legacy_cli" "$macos/"
+    fi
     mkdir "$tmp/loom-desktop.app/Contents/Resources"
-    mv "$tmp/loom-desktop-macos-arm64/icon.icns" "$tmp/loom-desktop.app/Contents/Resources/" 2>/dev/null || true
+    mv "$desktop_files/icon.icns" "$tmp/loom-desktop.app/Contents/Resources/" 2>/dev/null || true
     cat >"$tmp/loom-desktop.app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -84,17 +98,25 @@ EOF
     echo "이 릴리스에는 데스크톱 앱이 없습니다. 지금까지의 loom 앱만 설치합니다."
   fi
   me=$(id -u)
+  desktop_gui_pids() {
+    desktop_exe=$dir/loom-desktop.app/Contents/MacOS/loom-desktop
+    ps -ww -U "$me" -o pid=,command= | LOOM_GUI_EXE="$desktop_exe" awk '
+      { pid = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "") }
+      $0 == ENVIRON["LOOM_GUI_EXE"] { print pid }
+    '
+  }
   quit_app() {
-    if pkill -xu "$me" "$1"; then
-      deadline=$(($(date +%s) + 10))
-      while pgrep -qxu "$me" "$1"; do
-        if [ "$(date +%s)" -ge "$deadline" ]; then
-          echo "loom 앱이 끝나지 않았습니다. ⌘Q로 앱을 끝내고 다시 실행합니다." >&2
-          exit 1
-        fi
-        sleep 0.2
-      done
-    fi
+    pids=$("$@" || true)
+    [ -n "$pids" ] || return 0
+    printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
+    deadline=$(($(date +%s) + 10))
+    while [ -n "$("$@" || true)" ]; do
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        echo "loom 앱이 끝나지 않았습니다. ⌘Q로 앱을 끝내고 다시 실행합니다." >&2
+        exit 1
+      fi
+      sleep 0.2
+    done
   }
   put_app() {
     if [ -e "$dir/$1" ]; then mv "$dir/$1" "$tmp/old-$1"; fi
@@ -106,10 +128,10 @@ EOF
       exit 1
     fi
   }
-  quit_app loom-app
+  quit_app pgrep -xu "$me" loom-app
   put_app loom.app
   if [ -n "$with_desktop" ]; then
-    quit_app loom-desktop
+    quit_app desktop_gui_pids
     put_app loom-desktop.app
     echo "loom 데스크톱 앱을 설치했습니다: $dir/loom-desktop.app"
   fi
@@ -129,11 +151,11 @@ EOF
 fi
 
 if [ "$(uname -s)/$(uname -m)" != Linux/x86_64 ]; then
-  echo "이 스크립트는 x86-64 Linux·WSL과 Apple Silicon macOS용입니다. Windows는 PowerShell에서 'irm https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.ps1 | iex'를 실행하거나 데스크톱 앱을 씁니다: https://github.com/BrownC98/loom/releases/latest" >&2
+  echo "이 스크립트는 x86-64 Linux·WSL과 Apple Silicon macOS용입니다. Windows는 PowerShell에서 'irm $raw/scripts/install.ps1 | iex'를 실행하거나 데스크톱 앱을 씁니다: $releases/latest" >&2
   exit 1
 fi
 
-url=${LOOM_DOWNLOAD_URL:-https://github.com/BrownC98/loom/releases/latest/download/loom-web-linux-x64}
+url=${LOOM_DOWNLOAD_URL:-$releases/latest/download/loom-web-linux-x64}
 data=$HOME/.loom
 mkdir -p "$(dirname "$bin")" "$data"
 

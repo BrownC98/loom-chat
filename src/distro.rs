@@ -16,7 +16,7 @@ use crate::{process_tree, tunnel};
 
 pub const LINUX_LOOM: &str = "loom-linux";
 const LINUX_HASH_HEX: usize = 12;
-const LINUX_MISSING: &str = "loom-linux is not next to loom.exe";
+const LINUX_MISSING: &str = "loom-linux is not next to the Windows executable";
 const SSH_FILE: &str = "ssh-";
 const MAGIC: &[u8] = b"loom-distro";
 const READY: &str = "loom distro-host ready";
@@ -901,6 +901,7 @@ impl Drop for Running {
 
 async fn run_until_hung_up(stream: &mut tunnel::Stream, command: &Command) -> Option<Answer> {
     let spawned = process(command).and_then(|mut cmd| {
+        crate::timed::hide_console(cmd.as_std_mut());
         cmd.stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()

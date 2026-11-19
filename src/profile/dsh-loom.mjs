@@ -94,7 +94,9 @@ export function apply(ctx, config) {
   );
 
   const open = () => {
-    const child = spawn("loom", ["hook", ENTRY], { stdio: ["pipe", "pipe", "pipe"], signal: shutdown.signal, windowsHide: true });
+    const child = spawn(process.env.LOOM_CLI_EXE || "loom", ["hook", ENTRY], {
+      stdio: ["pipe", "pipe", "pipe"], signal: shutdown.signal, windowsHide: true,
+    });
     const opened = { child, pending: new Map(), open: true };
     let out = "";
     let err = "";

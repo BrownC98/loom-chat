@@ -7,14 +7,15 @@ on:
       - 'api/**'
       - 'app/icons/icon.ico'
       - 'fixtures/layout/**'
-      - 'web/src/fonts/jetendard/**'
-      - 'web/package-lock.json'
-      - 'web/src/styles.css'
-      - 'web/src/terminalThemes.ts'
-      - 'web/src/locales/**'
+      - 'src/**'
+      - 'web/**'
       - 'Cargo.toml'
+      - 'build.rs'
       - '.cargo/config.toml'
+      - '.nvmrc'
       - 'rust-toolchain.toml'
+      - 'scripts/version.sh'
+      - 'scripts/worktree/setup.sh'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
 
@@ -39,19 +40,23 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/desktop/target
+      LOOM_RELEASES: https://github.com/BrownC98/loom-chat/releases
     defaults:
       run:
         shell: bash
         working-directory: desktop
     steps:
       - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .nvmrc
           cache: npm
           cache-dependency-path: web/package-lock.json
-      - name: 글꼴 내려받기 (Pretendard)
-        run: npm --prefix ../web ci --ignore-scripts
+      - name: 화면 빌드
+        run: bash scripts/worktree/setup.sh
+        working-directory: .
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: desktop
@@ -60,7 +65,7 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo test
       - name: 빌드
-        run: cargo build --release
+        run: LOOM_VERSION="$(sh ../scripts/version.sh)" cargo build --release
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.artifact }}

@@ -8,7 +8,7 @@ use serde::Deserialize;
 
 use api::settings::update::{UpdateStep, UpdateView};
 
-use crate::launch;
+use crate::launch::{self, Executable};
 
 const RELEASES: Option<&str> = option_env!("LOOM_RELEASES");
 const CHECK_EVERY: Duration = Duration::from_secs(6 * 60 * 60);
@@ -51,14 +51,25 @@ const MAC_DESKTOP: Beside = Beside {
 };
 
 impl Install {
-    fn of(
-        exe: &Path,
-        asset: Option<&'static str>,
-        besides: &'static [Beside],
-        desktop: Option<&'static Beside>,
-    ) -> Self {
+    fn of(exe: &Path, executable: Executable) -> Self {
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+        let besides = besides(os, arch);
+        let desktop = desktop(os, arch);
+        if let Executable::Desktop = executable {
+            return match desktop {
+                Some(desktop) => Install::Standalone {
+                    exe: exe.to_owned(),
+                    asset: desktop.asset,
+                    besides: besides
+                        .iter()
+                        .filter(|beside| exe.with_file_name(beside.file).is_file())
+                        .collect(),
+                },
+                None => Install::Unsupported,
+            };
+        }
         let app = exe.with_file_name(format!("{APP_NAME}{}", std::env::consts::EXE_SUFFIX));
-        match asset {
+        match asset_name(os, arch) {
             _ if app.is_file() => Install::App { app },
             Some(asset) => Install::Standalone {
                 exe: exe.to_owned(),
@@ -125,26 +136,19 @@ pub struct Updater {
 }
 
 impl Updater {
-    pub fn new(listen: SocketAddr, notify: impl Fn() + Send + Sync + 'static) -> Self {
-        let install = match std::env::current_exe() {
-            Ok(exe) => {
-                let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
-                let install = Install::of(
-                    &exe,
-                    asset_name(os, arch),
-                    besides(os, arch),
-                    desktop(os, arch),
-                );
-                remove_aside(&exe);
-                if let Install::Standalone { besides, .. } = &install {
-                    for beside in besides {
-                        remove_aside(&exe.with_file_name(beside.file));
-                    }
-                }
-                install
+    pub fn new(
+        exe: &Path,
+        executable: Executable,
+        listen: SocketAddr,
+        notify: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        let install = Install::of(exe, executable);
+        remove_aside(exe);
+        if let Install::Standalone { besides, .. } = &install {
+            for beside in besides {
+                remove_aside(&exe.with_file_name(beside.file));
             }
-            Err(_) => Install::Unsupported,
-        };
+        }
         Self {
             releases: RELEASES,
             install,

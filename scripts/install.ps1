@@ -1,10 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$url = if ($env:LOOM_DOWNLOAD_URL) { $env:LOOM_DOWNLOAD_URL } else { 'https://github.com/BrownC98/loom/releases/latest/download/loom-web-windows-x64.exe' }
+$url = if ($env:LOOM_DOWNLOAD_URL) { $env:LOOM_DOWNLOAD_URL } else { 'https://github.com/BrownC98/loom-chat/releases/latest/download/loom-web-windows-x64.exe' }
 $linux_url = $url -replace 'loom-web-windows-x64\.exe$', 'loom-web-linux-x64'
 $desktop_url = $url -replace 'loom-web-windows-x64\.exe$', 'loom-desktop-windows-x64.zip'
-$raw = 'https://raw.githubusercontent.com/BrownC98/loom/main'
+$raw = 'https://raw.githubusercontent.com/BrownC98/loom-chat/main'
 $home_dir = Join-Path $env:LOCALAPPDATA 'loom'
 $dir = Join-Path $home_dir 'bin'
 $exe = Join-Path $dir 'loom.exe'
@@ -34,14 +34,17 @@ if ($desktop_url -ne $url) {
   try {
     Invoke-WebRequest -Uri $desktop_url -OutFile "$unpack.zip" -UseBasicParsing
     Expand-Archive -Path "$unpack.zip" -DestinationPath $unpack -Force
-    $with_desktop = (Test-Path (Join-Path $unpack '*\loom-desktop.exe')) -and (Test-Path (Join-Path $unpack '*\loom.exe'))
+    $with_desktop = Test-Path (Join-Path $unpack '*\loom-desktop.exe')
   } catch {
     $with_desktop = $false
   }
   Remove-Item "$unpack.zip" -Force -ErrorAction SilentlyContinue
 }
+$with_web = !$with_desktop
 if ($with_desktop) {
-  Move-Item -Force (Join-Path $unpack '*\loom.exe') "$exe.new"
+  $web = Join-Path $unpack '*\loom.exe'
+  $with_web = Test-Path $web
+  if ($with_web) { Move-Item -Force $web "$exe.new" }
   Move-Item -Force (Join-Path $unpack '*\loom-desktop.exe') "$app.new"
 } else {
   Write-Output '이 릴리스에는 데스크톱 앱이 없습니다. 브라우저 판 loom만 설치합니다.'
@@ -50,7 +53,7 @@ if ($with_desktop) {
 Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($with_linux) { Move-Item -Force "$linux.new" $linux }
-Install-File "$exe.new" $exe
+if ($with_web) { Install-File "$exe.new" $exe }
 if ($with_desktop) { Install-File "$app.new" $app }
 
 $icon = Join-Path $home_dir 'icon.ico'

@@ -1,6 +1,3 @@
-use std::os::windows::process::CommandExt;
-use std::process::Command;
-
 use gpui::{
     AnyElement, App, Div, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, Stateful,
     StatefulInteractiveElement, Styled, TitlebarOptions, Window, WindowControlArea, WindowOptions,
@@ -14,16 +11,11 @@ use crate::theme::Colors;
 use crate::views::icons::{Lucide, icon_styled};
 use crate::views::tooltip::tip;
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CAPTION_WIDTH: f32 = 46.0;
 const CAPTION_ICON: f32 = 14.0;
 const CAPTION_STROKE: f32 = 1.5;
 const CLOSE_HOVER: u32 = 0xc42b1c;
 const CLOSE_INK: u32 = 0xffffff;
-
-pub fn hide_console(command: &mut Command) {
-    command.creation_flags(CREATE_NO_WINDOW);
-}
 
 pub fn window_options(cx: &App) -> WindowOptions {
     WindowOptions {

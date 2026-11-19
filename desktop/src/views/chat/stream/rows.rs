@@ -7,19 +7,23 @@ use api::graph::chat::{
 use api::graph::events::{BatchResult, Entry};
 use api::graph::messages::{Kind, MessageKind};
 use api::ids::NodeId;
+use api::repos::RepoView;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    Rgba, StatefulInteractiveElement, Styled, div,
+    Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, div, radians, relative,
 };
 
-use super::{Stream, StreamEvent, tr};
+use super::{Quote, Stream, StreamEvent, tr};
 use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::views::icons::{Lucide, icon};
 use crate::views::prose::prose;
+use crate::views::tooltip::tip;
 use crate::views::ui;
 use crate::views::widgets::btn;
+
+const MESSAGE_GROUP: &str = "stream-message";
 
 impl Stream {
     pub(super) fn row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
@@ -39,13 +43,14 @@ impl Stream {
                 let (label, detail) = notice(event, cx);
                 self.folded(cursor, label, detail, cx)
             }
-            ChatEntry::Transcript { item } => self.transcript(cursor, item, cx),
+            ChatEntry::Transcript { item: transcript } => self.transcript(&item, transcript, cx),
         };
         div()
             .id(format!(
                 "stream-{}-{}-{}",
                 cursor.source as u8, cursor.id, cursor.part
             ))
+            .group(MESSAGE_GROUP)
             .w_full()
             .px(px(14.0))
             .py(px(6.0))
@@ -55,25 +60,10 @@ impl Stream {
 
     pub(super) fn source<'a>(
         &self,
-        room: Option<&str>,
+        named: Option<&str>,
         node: Option<NodeId>,
         cx: &'a App,
     ) -> Option<&'a ChatRoom> {
-        let rooms = self.data.read(cx).rooms();
-        room
-            .and_then(|id| rooms.iter().find(|room| room.id == id && !matches!(room.kind, ChatRoomKind::Pinned)))
-            .or_else(|| {
-                let node = node?;
-                rooms.iter().find(|room| matches!(room.kind, ChatRoomKind::Work { .. }) && room.members.contains(&node))
-                    .or_else(|| rooms.iter().find(|room| matches!(room.kind, ChatRoomKind::Agent { node: owner } if owner == node)))
-            })
-    }
-
-    pub(super) fn source_link(
-        &self,
-        room: Option<(String, String)>,
-        cx: &mut Context<Self>,
-    ) -> Option<Div> {
         let data = self.data.read(cx);
         if !data
             .room()
@@ -81,15 +71,60 @@ impl Stream {
         {
             return None;
         }
-        let (id, name) = room?;
+        let rooms = data.rooms();
+        let named = named.and_then(|id| {
+            rooms
+                .iter()
+                .find(|room| room.id == id && !matches!(room.kind, ChatRoomKind::Pinned))
+        });
+        named
+            .filter(|room| matches!(room.kind, ChatRoomKind::Work { .. }))
+            .or_else(|| {
+                let node = node?;
+                rooms.iter().find(|room| {
+                    matches!(room.kind, ChatRoomKind::Work { .. }) && room.members.contains(&node)
+                })
+            })
+            .or(named)
+            .or_else(|| {
+                let node = node?;
+                rooms.iter().find(
+                    |room| matches!(room.kind, ChatRoomKind::Agent { node: owner } if owner == node),
+                )
+            })
+    }
+
+    fn message_source(
+        &self,
+        named: Option<&str>,
+        node: Option<NodeId>,
+        cx: &mut Context<Self>,
+    ) -> Option<Stateful<Div>> {
+        let room = self.source(named, node, cx)?;
+        let data = self.data.read(cx);
+        let repos = data
+            .graph()
+            .read(cx)
+            .snapshot()
+            .map_or(&[][..], |snapshot| snapshot.repos.as_slice());
+        let name = source_name(room, repos, data.rooms());
+        let id = room.id.clone();
+        let c = ui::colors(cx);
         Some(
-            flow().child(meta(name, cx)).child(
-                btn::ghost("stream-source", cx)
-                    .child(tr(cx, "방에서 보기", "View in room"))
-                    .on_click(
-                        cx.listener(move |_, _, _, cx| cx.emit(StreamEvent::OpenRoom(id.clone()))),
-                    ),
-            ),
+            btn::ghost("stream-source", cx)
+                .min_w_0()
+                .bg(c.accent_wash)
+                .px(px(5.0))
+                .py(px(2.0))
+                .aria_label(format!(
+                    "{} · {name}",
+                    tr(cx, "방에서 보기", "View in room")
+                ))
+                .tooltip(tip(name.clone()))
+                .child(div().min_w_0().truncate().child(name))
+                .on_click(
+                    cx.listener(move |_, _, _, cx| cx.emit(StreamEvent::OpenRoom(id.clone()))),
+                ),
         )
     }
 
@@ -101,19 +136,34 @@ impl Stream {
             ChatOrigin::Loom => "loom",
             ChatOrigin::Agent | ChatOrigin::Outside => &message.from.name,
         };
-        let node = message.from.id.or(match message.receipts.as_slice() {
-            [receipt] => receipt.to.id,
-            _ => None,
-        });
-        let room = self.source(message.room.as_deref(), node, cx);
+        let node = message
+            .from
+            .id
+            .or_else(|| message.receipts.iter().find_map(|receipt| receipt.to.id));
+        let fold = (message.origin == ChatOrigin::Agent
+            && !message.receipts.is_empty()
+            && message
+                .receipts
+                .iter()
+                .all(|receipt| receipt.to.id.is_some())
+            && self.data.read(cx).room().is_some_and(|room| {
+                matches!(
+                    room.kind,
+                    ChatRoomKind::Work { .. } | ChatRoomKind::Custom | ChatRoomKind::Pinned
+                )
+            }))
+        .then(|| self.is_expanded(item.cursor));
+        let source = self.message_source(message.room.as_deref(), node, cx);
         let recipient = self
             .data
             .read(cx)
             .room()
             .and_then(|current| {
                 let named = message.room.as_ref()?;
-                (named == &current.id && !matches!(current.kind, ChatRoomKind::Pinned))
-                    .then(|| current.name.clone())
+                (fold.is_none()
+                    && named == &current.id
+                    && !matches!(current.kind, ChatRoomKind::Pinned))
+                .then(|| current.name.clone())
             })
             .or_else(|| {
                 let recipients: Vec<_> = message
@@ -127,8 +177,30 @@ impl Stream {
             Some(recipient) => format!("{display} → {recipient}"),
             None => display.to_owned(),
         };
+        let text = super::super::message_text(message);
+        if fold == Some(false) {
+            let preview = text.lines().map(str::trim).find(|line| !line.is_empty());
+            let label =
+                preview.map_or_else(|| author.clone(), |preview| format!("{author} · {preview}"));
+            return div()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(self.expand_button(item.cursor, div().min_w_0().truncate().child(label), cx))
+                .child(timestamp(item.cursor, cx))
+                .children(source.map(|badge| badge.max_w(relative(0.4))));
+        }
+        let author = if fold == Some(true) {
+            self.expand_button(item.cursor, div().min_w_0().truncate().child(author), cx)
+                .into_any_element()
+        } else {
+            div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(prose(author))
+                .into_any_element()
+        };
         let header = flow()
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(prose(author)))
+            .child(author)
             .children(
                 (message.origin == ChatOrigin::Outside)
                     .then(|| badge(tr(cx, "외부 에이전트", "Outside agent"), c.ink_2, cx)),
@@ -147,7 +219,7 @@ impl Stream {
             )
             .children(message.reply_to.map(|id| meta(format!("#{id}"), cx)))
             .child(timestamp(item.cursor, cx))
-            .children(self.source_link(room.map(|room| (room.id.clone(), room.name.clone())), cx));
+            .children(source);
         let receipts = (!message.receipts.is_empty() || message.outside_read).then(|| {
             flow()
                 .children(message.receipts.iter().enumerate().map(|(index, receipt)| {
@@ -189,7 +261,8 @@ impl Stream {
             .when(mine, |column| column.items_end())
             .child(header)
             .child(bubble(
-                super::super::message_text(message),
+                item,
+                text,
                 if mine { c.accent_wash } else { c.surface },
                 cx,
             ))
@@ -199,11 +272,12 @@ impl Stream {
 
     fn transcript(
         &self,
-        cursor: ChatCursor,
+        row: &Arc<ChatItem>,
         item: &ChatTranscriptItem,
         cx: &mut Context<Self>,
     ) -> Div {
         let c = ui::colors(cx);
+        let cursor = row.cursor;
         match item {
             ChatTranscriptItem::User { text } | ChatTranscriptItem::Assistant { text } => {
                 let mine = matches!(item, ChatTranscriptItem::User { .. });
@@ -224,6 +298,7 @@ impl Stream {
                             .child(timestamp(cursor, cx)),
                     )
                     .child(bubble(
+                        row,
                         text,
                         if mine { c.accent_wash } else { c.surface },
                         cx,
@@ -261,6 +336,54 @@ impl Stream {
         }
     }
 
+    fn is_expanded(&self, cursor: ChatCursor) -> bool {
+        self.room
+            .as_ref()
+            .and_then(|room| self.expanded.get(room))
+            .is_some_and(|rows| rows.contains(&cursor))
+    }
+
+    fn expand_button(
+        &self,
+        cursor: ChatCursor,
+        label: impl IntoElement,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
+        let c = ui::colors(cx);
+        let expanded = self.is_expanded(cursor);
+        btn::ghost("stream-expand", cx)
+            .min_w_0()
+            .aria_expanded(expanded)
+            .child(icon(
+                if expanded {
+                    Lucide::ChevronDown
+                } else {
+                    Lucide::ChevronRight
+                },
+                px(14.0),
+                c.ink_2,
+            ))
+            .child(label)
+            .on_click(cx.listener(move |stream, _, _, cx| {
+                let Some(room) = &stream.room else {
+                    return;
+                };
+                let Ok(index) = stream
+                    .rows
+                    .visible
+                    .binary_search_by_key(&cursor, |row| row.cursor)
+                else {
+                    return;
+                };
+                let expanded = stream.expanded.entry(room.clone()).or_default();
+                if !expanded.remove(&cursor) {
+                    expanded.insert(cursor);
+                }
+                stream.list.remeasure_items(index..index + 1);
+                cx.notify();
+            }))
+    }
+
     fn folded(
         &self,
         cursor: ChatCursor,
@@ -269,32 +392,9 @@ impl Stream {
         cx: &mut Context<Self>,
     ) -> Div {
         let c = ui::colors(cx);
-        let expanded = self.expanded.contains(&cursor);
         let label = match &detail {
-            Some(_) => btn::ghost("stream-expand", cx)
-                .child(icon(
-                    if expanded {
-                        Lucide::ChevronDown
-                    } else {
-                        Lucide::ChevronRight
-                    },
-                    px(14.0),
-                    c.ink_2,
-                ))
-                .child(prose(label))
-                .on_click(cx.listener(move |stream, _, _, cx| {
-                    if !stream.expanded.remove(&cursor) {
-                        stream.expanded.insert(cursor);
-                    }
-                    if let Ok(index) = stream
-                        .rows
-                        .visible
-                        .binary_search_by_key(&cursor, |row| row.cursor)
-                    {
-                        stream.list.remeasure_items(index..index + 1);
-                    }
-                    cx.notify();
-                }))
+            Some(_) => self
+                .expand_button(cursor, prose(label), cx)
                 .into_any_element(),
             None => meta(label, cx).into_any_element(),
         };
@@ -306,10 +406,28 @@ impl Stream {
             .child(flow().child(label).child(timestamp(cursor, cx)))
             .children(
                 detail
-                    .filter(|_| expanded)
+                    .filter(|_| self.is_expanded(cursor))
                     .map(|text| div().px(px(6.0)).child(prose(text))),
             )
     }
+}
+
+fn source_name(room: &ChatRoom, repos: &[RepoView], rooms: &[ChatRoom]) -> String {
+    if let ChatRoomKind::Work { place } = &room.kind
+        && let Some(repo) = repos.iter().find(|repo| repo.id == place.repo)
+    {
+        if !repo.git {
+            return repo.name.clone();
+        }
+        if repos.len() > 1
+            || rooms.iter().any(|room| {
+                matches!(&room.kind, ChatRoomKind::Work { place: other } if other.repo != place.repo)
+            })
+        {
+            return format!("{} › {}", repo.name, room.name);
+        }
+    }
+    room.name.clone()
 }
 
 pub(super) fn column() -> Div {
@@ -352,17 +470,48 @@ pub(super) fn badge(text: impl Into<String>, ink: Rgba, cx: &App) -> Div {
         .bg(ui::colors(cx).accent_wash)
 }
 
-fn bubble(text: &str, fill: Rgba, cx: &App) -> Div {
-    div()
+fn bubble(item: &Arc<ChatItem>, text: &str, fill: Rgba, cx: &mut Context<Stream>) -> Div {
+    let c = ui::colors(cx);
+    let label = tr(cx, "전하기", "Forward");
+    let quote = Quote(item.clone());
+    let body = div()
         .min_w_0()
-        .max_w_full()
         .rounded(px(8.0))
         .border_1()
-        .border_color(ui::colors(cx).line)
+        .border_color(c.line)
         .bg(fill)
         .px(px(11.0))
         .py(px(7.0))
-        .child(prose(text.to_owned()))
+        .child(prose(text.to_owned()));
+    div()
+        .flex()
+        .items_start()
+        .max_w_full()
+        .min_w_0()
+        .gap(px(6.0))
+        .child(body)
+        .child(
+            btn::ghost("stream-forward", cx)
+                .flex_none()
+                .size(px(26.0))
+                .px(px(0.0))
+                .justify_center()
+                .opacity(0.0)
+                .group_hover(MESSAGE_GROUP, |style| style.opacity(1.0))
+                .focus(|style| style.opacity(1.0))
+                .aria_label(label)
+                .tooltip(tip(label.to_owned()))
+                .child(
+                    icon(Lucide::CornerLeftUp, px(14.0), c.ink_2).with_transformation(
+                        Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)),
+                    ),
+                )
+                .on_click(cx.listener(move |stream, _, _, cx| {
+                    if stream.current(&quote.0, cx).is_some() {
+                        cx.emit(Quote(quote.0.clone()));
+                    }
+                })),
+        )
 }
 
 fn mode_name(mode: Kind, cx: &App) -> &'static str {

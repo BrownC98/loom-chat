@@ -36,9 +36,16 @@ impl Stream {
         let c = ui::colors(cx);
         let id = wait.wait.id;
         let label = ui::say(cx, kind_label(wait.wait.kind));
-        let room = self
-            .source(None, node.id, cx)
-            .map(|room| (room.id.clone(), room.name.clone()));
+        let source = self.source(None, node.id, cx).map(|room| {
+            let id = room.id.clone();
+            flow().child(meta(room.name.clone(), cx)).child(
+                btn::ghost("stream-source", cx)
+                    .child(tr(cx, "방에서 보기", "View in room"))
+                    .on_click(
+                        cx.listener(move |_, _, _, cx| cx.emit(StreamEvent::OpenRoom(id.clone()))),
+                    ),
+            )
+        });
         let head = flow()
             .child(
                 div()
@@ -48,7 +55,7 @@ impl Stream {
             .child(badge(label, entry::tone_of(wait.tone, &c), cx))
             .child(meta(id.to_string(), cx))
             .child(timestamp(item.cursor, cx))
-            .children(self.source_link(room, cx));
+            .children(source);
         if let Some(closed) = closed {
             return column()
                 .px(px(8.0))

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -17,7 +18,7 @@ use crate::protocol::{
     TakeRequest, Taken, WakeReply,
 };
 use crate::wsl::REWAKE_EXIT;
-use api::graph::messages::Kind;
+use api::graph::messages::{Kind, MessageKind};
 use api::graph::waits::PromptKey;
 
 const CALL_LIMIT: Duration = Duration::from_secs(5);
@@ -265,7 +266,7 @@ fn run(
         }
     }
     let mut handoff = None;
-    let (handed, ack_limit) = match step {
+    let (mut handed, ack_limit) = match step {
         Step::Skip => {
             let handed = match signals.asks_interrupt && interrupt_pending() {
                 true => Handed::Interrupted,
@@ -313,6 +314,7 @@ fn run(
             (handed, Some(CALL_LIMIT))
         }
     };
+    spill_human_input(&mut handed);
     let shown = event.show(&handed);
     let rewake = shown.rewake;
     write(shown)?;
@@ -322,6 +324,28 @@ fn run(
         limit: ack_limit,
     };
     Ok((rewake, unacked))
+}
+
+fn spill_human_input(handed: &mut Handed) {
+    let Some(dir) = std::env::var_os(crate::task::ENV)
+        .map(PathBuf::from)
+        .filter(|dir| dir.is_absolute())
+    else {
+        return;
+    };
+    let messages = match handed {
+        Handed::Taken { messages, .. } | Handed::Mail(messages) => messages,
+        Handed::Nudge(_) | Handed::Interrupted => return,
+    };
+    for delivery in messages.iter_mut().filter(|delivery| {
+        matches!(delivery.what, Some(MessageKind::HumanInput { .. }))
+            && delivery.text().len() > BATCH_LIMIT_BYTES
+    }) {
+        let file = dir.join(format!("logs/human-input-{}.txt", delivery.id.0));
+        if crate::distro::replace(&file, delivery.body.as_bytes()).is_ok() {
+            delivery.body = format!("file: {}", crate::wsl::for_caller(&file));
+        }
+    }
 }
 
 fn interrupt_pending() -> bool {

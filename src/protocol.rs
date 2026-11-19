@@ -5,7 +5,7 @@ mod waits;
 use serde::{Deserialize, Serialize};
 
 pub use agent::{Model, StartDigests};
-use api::graph::messages::{Field, Kind, MessageKind};
+use api::graph::messages::{Kind, MessageKind};
 pub use link::{
     AckRequest, AdapterRecord, ChoiceRequest, EndedTurn, Handoff, IdleReply, IdleRequest, ListenAt,
     ListenRequest, Report, Session, TakeRequest, Taken, TurnReply, WakeReply,
@@ -77,9 +77,7 @@ impl Delivery {
         let mode = match self.kind {
             Kind::Queue => "",
             Kind::Steer => ", mode: steer",
-            Kind::Interrupt => {
-                ", mode: interrupt. Stop your current work and do what this message says"
-            }
+            Kind::Interrupt => ", mode: interrupt",
         };
         let note = MessageKind::Note;
         let what = self.what.as_ref().unwrap_or(&note);
@@ -89,17 +87,15 @@ impl Delivery {
             self.id.0,
             what.word()
         )];
-        let repeated = what.repeats_file(&self.body);
         lines.extend(
             what.fields()
                 .into_iter()
-                .filter(|(name, _)| !(repeated && *name == Field::File))
                 .map(|(name, value)| format!("{}: {value}", name.word())),
         );
         if !self.body.is_empty() {
             if self.by_human() {
                 lines.insert(0, self.body.clone());
-            } else {
+            } else if !what.repeats_file(&self.body) {
                 lines.push(self.body.clone());
             }
         }
@@ -175,17 +171,3 @@ Read the owner's check record (result.md and logs/ in $LOOM_TASK_DIR: the light 
 Reviewers of one branch share their work. When you find a defect, send it at once to the other reviewer with `loom note <reviewer> --steer`. Do not check again a defect that the other reviewer sent or wrote. Answer a disagreement or a rejection with evidence: evidence decides, not authority. loom does not deliver a note to a reviewer that already judged this round: write evidence against its finding in your findings file.
 
 On `kind: withdrawn`, write your findings to your findings file, then stop that review.";
-
-#[macro_export]
-macro_rules! message_usage {
-    () => {
-        "- loom ask <question>: ask your parent, who may forward it to the human. Write one line: `<question> (A: <option> / B: <option>, Recommended: A)`. Then end your turn. The answer comes as a message (kind: answer), or wait for it: loom wait --reply-to <message-id> --timeout <seconds>.
-- loom answer <message-id> <body>: answer an ask that you received.
-- loom done <summary> [--file <path>] (a relative path is in $LOOM_TASK_DIR): report a finished result to your parent, also in a turn that a message or a notice started. Call it only when no work of your own remains (no background job, no wait). Send interim results with loom note parent; call loom done again after more work. Do not call it to answer a question in text. People read the summary on your node card: write it in the language they use with you. Send no progress reports.
-- loom note <target> <body> [--steer|--interrupt]: any other message. --steer puts it between the receiver's tool calls; --interrupt stops its current work. If you receive an interrupt, stop your previous task and do what it tells. Do not start a body with a kind word (QUESTION, STATUS, READY, ...): use the verb for that kind.
-- loom check (branch owner, all committed): runs the gate check on your branch. The merge queue runs the same check once after the reviews: use loom check only to confirm a fix after the queue's check failed. It waits for the end (at most 60 minutes): run it in the background. Only `passed` exits 0. Do not run the full checks in your worktree.
-- loom ready <branch> [--no-deploy] (branch owner, all committed): send the branch to its gate (your parent when your branch was made from its branch, else you). A new loom ready with a new commit replaces an open round until the queue takes the branch. Write your summary on the first line of result.md first and do not call loom done for the branch: on merged, loom marks you done, sends your parent the merged with that line and the file, does not wake you, and removes your node when your turn ends (`loom wait` returns that merged at once). Do follow-up work before loom ready. If loom wakes you with merged, your parent did not get it: call loom done. Details: loom ready --help.
-- loom verdict <branch> <head> pass|block [--findings <file>]: judge a branch. The round message gives the head and your next step. Only the branch's reviewers judge a merge into the original checkout, never the owner. Without --findings, the file is review/<branch>-<your name>.md in your task folder.
-"
-    };
-}

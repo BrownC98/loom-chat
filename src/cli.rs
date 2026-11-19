@@ -169,15 +169,12 @@ pub fn answer(message: u32, body: String) -> Result<(), String> {
 
 fn print_sent(sent: &Sent) {
     if let Some(page) = &sent.page {
-        println!("Answered #{} on the page {page}.", sent.id.0);
+        println!("Answered #{} on page {page}.", sent.id.0);
         return;
     }
     match sent.recipient {
-        Some(to) => println!("loom message #{} → node #{}", sent.id.0, to.0),
-        None => println!(
-            "Kept loom message #{}. You have no parent now; your next parent gets it.",
-            sent.id.0
-        ),
+        Some(to) => println!("Sent #{} to node #{}.", sent.id.0, to.0),
+        None => println!("Held #{} for your next parent.", sent.id.0),
     }
 }
 
@@ -192,12 +189,10 @@ pub fn status() -> Result<(), String> {
 
 pub fn directory() -> Result<(), String> {
     let listed: Vec<Listed> = call("nodes", &())?;
-    let lines = listed
-        .iter()
-        .map(serde_json::to_string)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|e| e.to_string())?;
-    println!("[\n{}\n]", lines.join(",\n"));
+    println!(
+        "{}",
+        serde_json::to_string(&listed).map_err(|e| e.to_string())?
+    );
     Ok(())
 }
 
@@ -406,12 +401,12 @@ pub fn ask(question: String, doc: Option<PathBuf>) -> Result<(), String> {
         .doc
         .map(|doc| format!(" with {} ({})", doc.id, doc.title))
         .unwrap_or_default();
-    println!("{} is in the human's inbox{with}.", asked.id);
+    println!("{} sent to the human's inbox{with}.", asked.id);
     if asked.open.len() > 1 {
         let open: Vec<String> = asked.open.iter().map(WaitId::to_string).collect();
         println!("Open questions: {}.", open.join(", "));
     }
-    println!("{END_TURN_NOW} Do not write the question again in the terminal.");
+    println!("{END_TURN_NOW}");
     Ok(())
 }
 
@@ -490,14 +485,14 @@ pub fn done(
         },
     )?;
     match reported.warning {
-        None => println!("Reported. {END_TURN_NOW} Do not write the report again in the terminal."),
-        Some(warning) => println!(
-            "Reported. Warning: {warning}. Your parent sees this warning. When the branch is ready, call `loom ready <branch>`."
-        ),
+        None => println!("Reported. {END_TURN_NOW}"),
+        Some(warning) => {
+            println!("Reported with warning: {warning}. Call `loom ready <branch>` when ready.")
+        }
     }
     if !reported.removed.is_empty() {
         println!(
-            "loom removed your finished children: {}. Their task folders stay.",
+            "Removed finished children: {}.",
             reported.removed.join(", ")
         );
     }

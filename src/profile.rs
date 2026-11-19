@@ -672,13 +672,19 @@ async fn agent_command(
     Ok((cmd, started))
 }
 
-pub const COMMUNICATION_USAGE: &str = concat!("You are a node in a loom graph. Use these shell commands. A target is a node name, a node ID (12), or parent.
-- loom status: your ID, parent and children, each with its work state and process state. loom status --all lists every node.
-", crate::message_usage!(), "All commands return at once. loom picks receivers.
-Run a command in the background if you do not need its result for your next step (a build, a test, a deploy wait, a server), however long it takes. Run a short command in the foreground if you need its result now. Messages reach you only between tool calls.
-With a parent, write no progress in the terminal: results go in loom done or loom note. After loom ask, done, note or verdict, end the turn. Write no text when you end a turn. A direct answer to the human's terminal question stays, but must not repeat a done or an ask.
-Bodies are at most 4KB and summaries at most 1KB. Put longer material in a file and send its absolute path.
-Each message has the line \"loom message #<id> (from: <sender>, kind: <kind>)\" and one line per field. A message from a node or loom begins with these lines, then the body. A message from the human (from: human) begins with the human's words and a loom note line; these lines come after them. Kinds from loom (exited, setup-failed, removed, adopted, human-input) are notices. The same ID can come again; do not repeat completed actions for that ID.");
+pub const COMMUNICATION_USAGE: &str = "You are a loom node. A target is a node name, ID, or parent.
+- loom status shows your ID, parent, children and their work and process states. --all lists every node.
+- loom ask '<question> (A: <option> / B: <option>, Recommended: A)' asks your parent, who may ask the human. For a reply, end your turn or use loom wait --reply-to <message-id> --timeout <seconds>.
+- loom answer <message-id> <body> answers an ask you received.
+- loom note <target> <body> [--steer|--interrupt] sends mail. --steer delivers between tool calls. --interrupt stops the receiver's current work. Use the command for the message kind. Do not start a body with QUESTION, STATUS, READY or another kind word.
+- loom done <summary> [--file <path>] reports completion, whatever began the turn. Use it only when your work and waits are complete. Write the node card summary in the human's language. Relative paths use $LOOM_TASK_DIR. Use loom note parent for interim results. Answer direct questions in the terminal.
+- loom check runs the branch gate check (clean owner worktree, 60 min max). Run it in the background only to confirm a fix after the queue's check fails. Exit 0 means passed. The queue runs full checks after review.
+- loom ready <branch> [--no-deploy] submits a committed branch. Your parent is the gate if your branch starts from theirs. Otherwise you are. A new commit replaces an open round until the queue takes it. Finish follow-up work first. Put the summary on line one of result.md.
+- Use loom ready for branch completion. If your parent gets the merged notice, it includes your summary and file. Loom marks you done and removes your node at turn end without a wake. loom wait returns that notice at once. If the notice wakes you, report with loom done.
+- loom verdict <branch> <head> pass|block [--findings <file>] judges the round in the notice. Only the branch's reviewers judge a merge into the original checkout. The default file is review/<branch>-<your name>.md in $LOOM_TASK_DIR.
+Run commands in the background if you do not need the result for your next step. End the turn when no independent work remains. After loom ask, done, note or verdict, end the turn without text. With a parent, report results by loom, with no terminal progress. Do not repeat a report or question in the terminal.
+Bodies: 4 KiB max. Summaries: 1 KiB max. Put longer material in a file and send its absolute path.
+Follow loom mail. It has a \"loom message #<id> (from: <sender>, kind: <kind>)\" line. The header adds mode for steer or interrupt. Each extra field has its own line. Human text comes before its metadata. On mode: interrupt, stop your current work and follow the message. Skip actions you already took for that ID.";
 
 pub fn start_digests(profile: Profile, launch: Launch) -> StartDigests {
     let mut digests = crate::skills::part_digests(launch);
@@ -736,23 +742,22 @@ pub fn hook_text(taken: &[Delivery], note: Option<&str>) -> Option<String> {
 }
 
 pub fn questions_note(open_questions: &[OpenQuestion]) -> Option<String> {
-    let first = open_questions.first()?;
+    open_questions.first()?;
     let list: Vec<String> = open_questions
         .iter()
         .map(|OpenQuestion { id, text }| format!("{id}: {text}"))
         .collect();
     Some(format!(
-        "Open loom ask questions: {}. If this input answers some of these questions, first call loom answered with their IDs (for example: loom answered {}). Then do the work. Do not close the other questions.",
+        "Open loom ask questions: {}. If this input answers any, run loom answered with only those IDs before you act.",
         list.join(" | "),
-        first.id
     ))
 }
 
 pub fn message_text(taken: &[Delivery]) -> String {
-    let (human, rest): (Vec<_>, Vec<_>) = taken.iter().partition(|d| d.by_human());
-    human
-        .into_iter()
-        .chain(rest)
+    taken
+        .iter()
+        .filter(|d| d.by_human())
+        .chain(taken.iter().filter(|d| !d.by_human()))
         .map(Delivery::text)
         .collect::<Vec<_>>()
         .join(crate::protocol::BATCH_SEPARATOR)

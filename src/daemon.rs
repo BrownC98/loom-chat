@@ -1,6 +1,7 @@
 mod agent;
 mod arrival;
 mod carry;
+mod chat;
 mod commands;
 mod deploy;
 pub mod gate;
@@ -235,6 +236,7 @@ pub async fn serve(listen: SocketAddr, ready_to: Option<SocketAddr>) -> std::io:
         .merge(nodes::routes())
         .merge(waits::routes())
         .merge(rooms::routes())
+        .merge(chat::routes())
         .merge(system::routes())
         .merge(settings::routes())
         .merge(places::routes())
@@ -248,6 +250,7 @@ pub async fn serve(listen: SocketAddr, ready_to: Option<SocketAddr>) -> std::io:
         .clone()
         .merge(commands::routes())
         .merge(rooms::outside_routes())
+        .merge(chat::outside_routes())
         .merge(human_routes)
         .fallback(system::asset)
         .layer(axum::middleware::from_fn_with_state(

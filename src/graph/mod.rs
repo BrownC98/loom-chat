@@ -1,4 +1,5 @@
 mod agent_state;
+mod chat;
 mod closed;
 mod deploys;
 mod doc_talk;
@@ -32,6 +33,7 @@ use api::graph::{
 use api::ids::{AgentId, NodeId, RepoId};
 
 pub use agent_state::{AgentChange, AgentState};
+pub(crate) use chat::{ChatInterrupt, ChatLaunch};
 pub use deploys::Deploy;
 pub use gate::{BatchId, Ended, GateChoice, Merge, Outcome, Queued, Reclaim, Round, Unjudged};
 pub use idle::IdleId;
@@ -174,6 +176,7 @@ impl Drop for Db<'_> {
 impl Graph {
     pub fn open(db: Database, linked: fn(&AgentId) -> bool) -> rusqlite::Result<Self> {
         let published = events::last_id(&db.lock())?;
+        chat::ensure_key(&db.lock())?;
         relaunch_plans::settle_at_start(&db.lock())?;
         mailbox::requeue_handed(&db.lock())?;
         idle::forget_old_daemon(&db.lock())?;

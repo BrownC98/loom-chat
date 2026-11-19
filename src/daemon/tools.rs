@@ -20,10 +20,12 @@ pub struct Tools {
 impl Tools {
     pub fn used(&self, node: NodeId, tool: String) {
         let mark = self.next.fetch_add(1, Ordering::Relaxed);
-        let before = self.last.lock().unwrap().insert(node, (mark, tool.clone()));
-        if before.map(|(_, t)| t).as_ref() != Some(&tool) {
-            self.changed.notify_one();
-        }
+        self.last.lock().unwrap().insert(node, (mark, tool));
+        self.transcript_changed();
+    }
+
+    pub(super) fn transcript_changed(&self) {
+        self.changed.notify_one();
     }
 
     pub fn mark(&self, node: NodeId) -> Option<u64> {

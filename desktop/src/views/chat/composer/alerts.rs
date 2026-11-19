@@ -1,6 +1,6 @@
 use api::graph::NodeView;
 use api::graph::chat::{ChatEntry, ChatOrigin, ChatPage, ChatRoomKind};
-use api::graph::waits::{ScreenWait, WaitKind, WaitTone};
+use api::graph::waits::{ScreenWait, WaitTone};
 use api::ids::{NodeId, WaitId};
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -14,25 +14,26 @@ use crate::scale::{self, px};
 use crate::store::Store;
 use crate::theme::mix;
 use crate::views::dock::answers::{self, Answers};
+use crate::views::dock::entry::tone_of;
 use crate::views::icons::{Lucide, icon};
 use crate::views::tooltip::tip;
 use crate::views::{ui, widgets::btn};
 
 type Position = (i64, u32);
 
-struct Question<'a> {
+struct Alert<'a> {
     node: &'a NodeView,
     wait: &'a ScreenWait,
 }
 
-impl Question<'_> {
+impl Alert<'_> {
     fn position(&self) -> Position {
         (self.wait.wait.since, self.wait.wait.id.0)
     }
 }
 
 #[derive(Default)]
-struct QuestionContext {
+struct AlertContext {
     last_message: Option<String>,
     previous_reply: Option<String>,
 }
@@ -42,7 +43,7 @@ pub(super) struct Alerts {
     pub(super) expanded: bool,
     selected: Option<Position>,
     focus: bool,
-    context: Option<(WaitId, QuestionContext)>,
+    context: Option<(WaitId, AlertContext)>,
     reading: Option<Task<()>>,
     _answers: Subscription,
 }
@@ -62,12 +63,12 @@ impl Alerts {
         }
     }
 
-    fn current(&self, questions: &[Question]) -> usize {
+    fn current(&self, notices: &[Alert<'_>]) -> usize {
         let Some(selected) = self.selected else {
             return 0;
         };
-        let index = questions.partition_point(|question| question.position() < selected);
-        index % questions.len()
+        let index = notices.partition_point(|notice| notice.position() < selected);
+        index % notices.len()
     }
 }
 
@@ -78,41 +79,39 @@ enum Move {
 }
 
 impl Composer {
-    fn questions<'a>(&self, cx: &'a App) -> Vec<Question<'a>> {
+    fn notices<'a>(&self, cx: &'a App) -> Vec<Alert<'a>> {
         let graph = self.data.read(cx).graph().read(cx);
-        let mut questions: Vec<_> = graph
+        let mut notices: Vec<_> = graph
             .snapshot()
             .into_iter()
             .flat_map(|snapshot| &snapshot.nodes)
             .flat_map(|node| {
                 node.waits
                     .iter()
-                    .filter(|wait| {
-                        wait.wait.kind == WaitKind::Question && matches!(wait.tone, WaitTone::Ask)
-                    })
-                    .map(move |wait| Question { node, wait })
+                    .filter(|wait| answers::in_alert_strip(wait))
+                    .map(move |wait| Alert { node, wait })
             })
             .collect();
-        questions.sort_by_key(Question::position);
-        questions
+        notices.sort_by_key(Alert::position);
+        notices
     }
 
     fn move_alert(&mut self, movement: Move, cx: &mut Context<Self>) -> bool {
         if self.picker.open || self.viewer.read(cx).is_open() {
             return false;
         }
-        let questions = self.questions(cx);
-        if questions.is_empty() {
+        let notices = self.notices(cx);
+        if notices.is_empty() {
             return false;
         }
-        let current = self.alerts.current(&questions);
+        let current = self.alerts.current(&notices);
         let index = match movement {
-            Move::Step(by) => (current as isize + by).rem_euclid(questions.len() as isize) as usize,
+            Move::Step(by) => (current as isize + by).rem_euclid(notices.len() as isize) as usize,
             _ => current,
         };
-        let question = &questions[index];
-        let wait = question.wait.clone();
-        let position = question.position();
+        let notice = &notices[index];
+        let wait = notice.wait.clone();
+        let position = notice.position();
         self.alerts.expanded = !matches!(movement, Move::Fold) || !self.alerts.expanded;
         self.alerts.selected = Some(position);
         self.alerts.focus = self.alerts.expanded;
@@ -162,7 +161,7 @@ impl Composer {
         {
             return;
         }
-        self.alerts.context = Some((id, QuestionContext::default()));
+        self.alerts.context = Some((id, AlertContext::default()));
         self.alerts.reading = None;
         let data = self.data.read(cx);
         let Some(room) = data.rooms().iter().find(
@@ -180,7 +179,7 @@ impl Composer {
             let Ok(page) = task.await else {
                 return;
             };
-            let mut context = QuestionContext::default();
+            let mut context = AlertContext::default();
             for item in page
                 .items
                 .into_iter()
@@ -224,26 +223,24 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let questions = self.questions(cx);
-        if questions.is_empty() {
+        let notices = self.notices(cx);
+        if notices.is_empty() {
             self.alerts.expanded = false;
             self.alerts.selected = None;
             self.alerts.context = None;
             self.alerts.reading = None;
             return None;
         }
-        let index = self.alerts.current(&questions);
-        let question = &questions[index];
-        let total = questions.len();
-        let wait = question.wait.clone();
-        let node = question.node.id;
-        let name = question.node.name.clone();
+        let index = self.alerts.current(&notices);
+        let notice = &notices[index];
+        let total = notices.len();
+        let wait = notice.wait.clone();
+        let node = notice.node.id;
+        let name = notice.node.name.clone();
         let (repo, task) = {
             let data = self.data.read(cx);
             let repos = &data.graph().read(cx).snapshot()?.repos;
-            let repo = repos
-                .iter()
-                .find(|repo| repo.id == question.node.place.repo);
+            let repo = repos.iter().find(|repo| repo.id == notice.node.place.repo);
             let task = data.recipients().and_then(|data| {
                 data.agents
                     .iter()
@@ -253,16 +250,17 @@ impl Composer {
             });
             (repo.map(|repo| repo.name.clone()), task)
         };
-        let reply = question.node.reply.clone();
+        let reply = notice.node.reply.clone();
         if self.alerts.expanded {
             self.read_context(node, &wait, cx);
         }
         let colors = ui::colors(cx);
         let label = if self.alerts.expanded {
-            "질문 접기"
+            "알림 접기"
         } else {
-            "질문 펼치기"
+            "알림 펼치기"
         };
+        let tone = tone_of(wait.tone, &colors);
         let name = repo.map_or_else(|| name.clone(), |repo| format!("{repo} › {name}"));
         let head = self.alert_header(index, total, &wait, name.clone(), label, cx);
         let strip = div()
@@ -272,8 +270,8 @@ impl Composer {
             .p(px(6.0))
             .rounded(px(6.0))
             .border_1()
-            .border_color(mix(colors.warn, 0.45, colors.line))
-            .bg(mix(colors.warn, 0.09, colors.panel))
+            .border_color(mix(tone, 0.45, colors.line))
+            .bg(mix(tone, 0.09, colors.panel))
             .child(head);
         if !self.alerts.expanded {
             return Some(strip);
@@ -359,6 +357,11 @@ impl Composer {
         cx: &Context<Self>,
     ) -> Div {
         let colors = ui::colors(cx);
+        let tone = tone_of(wait.tone, &colors);
+        let (icon_kind, kind) = match wait.tone {
+            WaitTone::Ask => (Lucide::CircleQuestionMark, "질문"),
+            WaitTone::Done => (Lucide::Check, "완료"),
+        };
         let arrow = |direction, id, hint: &'static str, glyph| {
             btn::ghost(id, cx)
                 .role(Role::Button)
@@ -385,14 +388,14 @@ impl Composer {
                     .aria_keyshortcuts(
                         "Alt+Up Alt+Down Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7 Alt+8 Alt+9",
                     )
-                    .tooltip(tip(format!("{label} · Alt+↑↓ 질문 이동 · Alt+1~9 선택")))
+                    .tooltip(tip(format!("{label} · Alt+↑↓ 알림 이동 · Alt+1~9 선택")))
                     .flex_1()
                     .min_w_0()
-                    .bg(mix(colors.warn, 0.17, colors.panel))
+                    .bg(mix(tone, 0.17, colors.panel))
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.move_alert(Move::Fold, cx);
                     }))
-                    .child(icon(Lucide::CircleQuestionMark, px(15.0), colors.warn))
+                    .child(icon(icon_kind, px(15.0), tone))
                     .child(
                         div()
                             .min_w_0()
@@ -411,7 +414,7 @@ impl Composer {
                     .child(
                         div()
                             .flex_none()
-                            .child(format!("질문 {}/{}", index + 1, total)),
+                            .child(format!("{kind} {}/{}", index + 1, total)),
                     )
                     .child(icon(
                         if self.alerts.expanded {
@@ -426,13 +429,13 @@ impl Composer {
             .child(arrow(
                 -1,
                 "chat-alert-prev",
-                "앞 질문 (Alt+↑)",
+                "앞 알림 (Alt+↑)",
                 Lucide::ChevronUp,
             ))
             .child(arrow(
                 1,
                 "chat-alert-next",
-                "다음 질문 (Alt+↓)",
+                "다음 알림 (Alt+↓)",
                 Lucide::ChevronDown,
             ))
     }

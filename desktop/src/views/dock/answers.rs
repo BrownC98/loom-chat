@@ -98,6 +98,13 @@ enum Slot {
     Field,
 }
 
+pub(crate) fn in_alert_strip(wait: &ScreenWait) -> bool {
+    matches!(
+        wait.wait.kind,
+        WaitKind::Question | WaitKind::Done | WaitKind::Reply
+    )
+}
+
 fn drop_absent_slots(fields: &mut HashMap<(u32, Slot), Draft>, id: u32, prompt: Option<&Prompt>) {
     fields.retain(|&(wait_id, slot), _| {
         wait_id != id
@@ -137,23 +144,16 @@ impl Answers {
     }
 
     fn sync(&mut self, cx: &mut Context<Self>) {
-        let waits: Vec<(NodeId, ScreenWait)> = self
+        let live: HashSet<_> = self
             .store
             .read(cx)
             .snapshot()
-            .map(|s| {
-                s.nodes
-                    .iter()
-                    .flat_map(|n| {
-                        n.waits
-                            .iter()
-                            .filter(|wait| wait.wait.kind == WaitKind::Question)
-                            .map(|w| (n.id, w.clone()))
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
-        let live: HashSet<u32> = waits.iter().map(|(_, w)| w.wait.id.0).collect();
+            .into_iter()
+            .flat_map(|snapshot| &snapshot.nodes)
+            .flat_map(|node| &node.waits)
+            .filter(|wait| in_alert_strip(wait))
+            .map(|wait| wait.wait.id.0)
+            .collect();
         self.shown.retain(|id, _| live.contains(id));
         self.fields.retain(|(id, _), _| live.contains(id));
         self.notes.retain(|id, _| live.contains(id));
@@ -527,6 +527,16 @@ impl Answers {
         true
     }
 
+    fn confirm(&mut self, id: WaitId, cx: &mut Context<Self>) {
+        if self.store.read(cx).is_busy(id.0) {
+            return;
+        }
+        let task = self
+            .store
+            .update(cx, |store, cx| store.dismiss_wait(id, cx));
+        self.run(id.0, None, task, cx);
+    }
+
     fn reply(&mut self, wait: u32, text: String, cx: &mut Context<Self>) {
         if self.store.read(cx).is_busy(wait) {
             return;
@@ -682,6 +692,24 @@ fn wait_content(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &mut A
             }),
         ));
     }
+    if done {
+        let owner = answers.clone();
+        let busy = answers.read(cx).store.read(cx).is_busy(id);
+        body = body.child(
+            div().flex().child(
+                crate::views::widgets::btn::button("alert-confirm", cx)
+                    .child(ui::say(cx, Str::InboxConfirm))
+                    .when(busy, |button| {
+                        crate::views::widgets::btn::inert(button).opacity(0.55)
+                    })
+                    .when(!busy, |button| {
+                        button.on_click(move |_, _, cx| {
+                            owner.update(cx, |answers, cx| answers.confirm(WaitId(id), cx))
+                        })
+                    }),
+            ),
+        );
+    }
     body.children(screen_keys(answers, wait, z, cx))
 }
 
@@ -789,6 +817,11 @@ pub(crate) fn composer(
     }
     let id = wait.wait.id.0;
     let c = ui::colors(cx);
+    let ink = entry::tone_of(wait.tone, &c);
+    let label = match wait.tone {
+        WaitTone::Ask => format!("{name}에게 답"),
+        WaitTone::Done => format!("{name}에게 이어서 맡기기"),
+    };
     let field = scaled(answers, id, Slot::Answer, wait.tone, z, cx)?;
     let pictures = answers.read(cx).attached.get(&id)?.pictures.clone();
     let owner = answers.clone();
@@ -806,7 +839,7 @@ pub(crate) fn composer(
     let attach = crate::views::widgets::btn::ghost(("answer-attach", id as usize), cx)
         .aria_label("그림 붙이기")
         .tooltip(tip("그림 붙이기".into()))
-        .child(icon(Lucide::Paperclip, px(14.0 * z), c.warn))
+        .child(icon(Lucide::Paperclip, px(14.0 * z), ink))
         .on_click(move |_, _, cx| clip.update(cx, |pictures, cx| pictures.pick_files(cx)));
     Some(
         div()
@@ -826,8 +859,8 @@ pub(crate) fn composer(
                             .rounded(px(5.0 * z))
                             .px(px(8.0 * z))
                             .py(px(4.0 * z))
-                            .bg(mix(c.warn, 0.12, c.surface))
-                            .child(format!("{name}에게 답")),
+                            .bg(mix(ink, 0.12, c.surface))
+                            .child(label),
                     )
                     .child(attach)
                     .child(div().flex_1().min_w_0().child(send_row(

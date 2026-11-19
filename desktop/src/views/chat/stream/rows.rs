@@ -11,7 +11,8 @@ use api::repos::RepoView;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, div, radians, relative,
+    Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, Window, div, radians,
+    relative,
 };
 
 use super::{Quote, Stream, StreamEvent, tr};
@@ -19,14 +20,19 @@ use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::views::icons::{Lucide, icon};
 use crate::views::prose::prose;
-use crate::views::tooltip::tip;
+use crate::views::tooltip::{self, tip};
 use crate::views::ui;
 use crate::views::widgets::btn;
 
 const MESSAGE_GROUP: &str = "stream-message";
 
 impl Stream {
-    pub(super) fn row(&mut self, index: usize, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn row(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let Some(item) = self
             .rows
             .visible
@@ -36,20 +42,23 @@ impl Stream {
             return div().into_any_element();
         };
         let cursor = item.cursor;
-        let body = match &item.entry {
-            ChatEntry::Message { message } => self.message(&item, message, cx),
+        let key = format!(
+            "stream-{}-{}-{}",
+            cursor.source as u8, cursor.id, cursor.part
+        );
+        let body = window.with_element_namespace(key.clone(), |window| match &item.entry {
+            ChatEntry::Message { message } => self.message(&item, message, window, cx),
             ChatEntry::Wait { .. } => self.wait_card(item, cx),
             ChatEntry::Notice { event } => {
                 let (label, detail) = notice(event, cx);
                 self.folded(cursor, label, detail, cx)
             }
-            ChatEntry::Transcript { item: transcript } => self.transcript(&item, transcript, cx),
-        };
+            ChatEntry::Transcript { item: transcript } => {
+                self.transcript(&item, transcript, window, cx)
+            }
+        });
         div()
-            .id(format!(
-                "stream-{}-{}-{}",
-                cursor.source as u8, cursor.id, cursor.part
-            ))
+            .id(key)
             .group(MESSAGE_GROUP)
             .w_full()
             .px(px(14.0))
@@ -128,7 +137,13 @@ impl Stream {
         )
     }
 
-    fn message(&self, item: &Arc<ChatItem>, message: &ChatMessage, cx: &mut Context<Self>) -> Div {
+    fn message(
+        &self,
+        item: &Arc<ChatItem>,
+        message: &ChatMessage,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let c = ui::colors(cx);
         let mine = message.origin == ChatOrigin::Human;
         let display = match message.origin {
@@ -264,6 +279,7 @@ impl Stream {
                 item,
                 text,
                 if mine { c.accent_wash } else { c.surface },
+                window,
                 cx,
             ))
             .children(receipts)
@@ -274,6 +290,7 @@ impl Stream {
         &self,
         row: &Arc<ChatItem>,
         item: &ChatTranscriptItem,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
         let c = ui::colors(cx);
@@ -301,6 +318,7 @@ impl Stream {
                         row,
                         text,
                         if mine { c.accent_wash } else { c.surface },
+                        window,
                         cx,
                     ))
             }
@@ -470,9 +488,20 @@ pub(super) fn badge(text: impl Into<String>, ink: Rgba, cx: &App) -> Div {
         .bg(ui::colors(cx).accent_wash)
 }
 
-fn bubble(item: &Arc<ChatItem>, text: &str, fill: Rgba, cx: &mut Context<Stream>) -> Div {
+fn bubble(
+    item: &Arc<ChatItem>,
+    text: &str,
+    fill: Rgba,
+    window: &mut Window,
+    cx: &mut Context<Stream>,
+) -> Div {
     let c = ui::colors(cx);
     let label = tr(cx, "전하기", "Forward");
+    let focus = window.use_keyed_state("forward-focus", cx, |_, cx| {
+        cx.focus_handle().tab_stop(true)
+    });
+    let focus = focus.read(cx);
+    let focused = focus.is_focused(window);
     let quote = Quote(item.clone());
     let body = div()
         .min_w_0()
@@ -492,6 +521,8 @@ fn bubble(item: &Arc<ChatItem>, text: &str, fill: Rgba, cx: &mut Context<Stream>
         .child(body)
         .child(
             btn::ghost("stream-forward", cx)
+                .track_focus(focus)
+                .relative()
                 .flex_none()
                 .size(px(26.0))
                 .px(px(0.0))
@@ -500,7 +531,17 @@ fn bubble(item: &Arc<ChatItem>, text: &str, fill: Rgba, cx: &mut Context<Stream>
                 .group_hover(MESSAGE_GROUP, |style| style.opacity(1.0))
                 .focus(|style| style.opacity(1.0))
                 .aria_label(label)
-                .tooltip(tip(label.to_owned()))
+                .when(!focused, |button| button.tooltip(tip(label.to_owned())))
+                .when(focused, |button| {
+                    button.child(
+                        tooltip::label(label, cx)
+                            .whitespace_nowrap()
+                            .absolute()
+                            .right_0()
+                            .bottom_full()
+                            .mb(px(4.0)),
+                    )
+                })
                 .child(
                     icon(Lucide::CornerLeftUp, px(14.0), c.ink_2).with_transformation(
                         Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)),

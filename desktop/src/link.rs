@@ -58,6 +58,7 @@ enum Cmd {
     Add(usize, Box<Conn>),
     Out(usize, Out),
     Close(usize),
+    Pace(Pace),
     Opened(usize, u64, Box<Result<WebSocket<TcpStream>, String>>),
 }
 
@@ -84,6 +85,7 @@ fn hub() -> &'static Hub {
             queue,
             cmds: cmds.clone(),
             conns: HashMap::new(),
+            pace: Pace::Front,
         };
         std::thread::Builder::new()
             .name("link".to_owned())
@@ -95,6 +97,10 @@ fn hub() -> &'static Hub {
             keys: AtomicUsize::new(0),
         }
     })
+}
+
+pub fn pace(pace: Pace) {
+    hub().send(Cmd::Pace(pace));
 }
 
 pub struct Pty {
@@ -845,6 +851,7 @@ struct Worker {
     queue: mpsc::Receiver<Cmd>,
     cmds: mpsc::Sender<Cmd>,
     conns: HashMap<usize, Conn>,
+    pace: Pace,
 }
 
 impl Worker {
@@ -890,6 +897,17 @@ impl Worker {
                 self.settle(key, fate);
             }
             Cmd::Close(key) => self.forget(key),
+            Cmd::Pace(pace) => {
+                self.pace = pace;
+                let keys: Vec<_> = self.conns.keys().copied().collect();
+                for key in keys {
+                    let fate = self
+                        .conns
+                        .get_mut(&key)
+                        .and_then(|conn| conn.push(frame(&pace)));
+                    self.settle(key, fate);
+                }
+            }
             Cmd::Opened(key, generation, result) => self.opened(key, generation, *result),
         }
     }
@@ -948,7 +966,7 @@ impl Worker {
             conn.retry = now + RECONNECT;
             return;
         }
-        let _ = socket.send(frame(&Pace::Front));
+        let _ = socket.send(frame(&self.pace));
         conn.socket = Some(socket);
         conn.heard = now;
         conn.limit = CONNECT_LIMIT;

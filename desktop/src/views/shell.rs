@@ -1,17 +1,18 @@
 mod status;
 mod title;
 
+use api::graph::pty::Pace;
 use gpui::{
     AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
     MouseDownEvent, ParentElement, Render, Styled, Subscription, Window, div,
 };
 
 use super::chat::Chat;
-use crate::fonts;
 use crate::settings::{Dialog, DialogEvent};
 use crate::store::Store;
 use crate::strings::Lang;
 use crate::theme::Theme;
+use crate::{fonts, link};
 
 gpui::actions!(loom, [OpenSettings]);
 
@@ -27,6 +28,14 @@ impl Shell {
         let chat = cx.new(|cx| Chat::new(store.clone(), window, cx));
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
         cx.observe(&chat, |_, _, cx| cx.notify()).detach();
+        cx.observe_window_activation(window, |_, window, _| {
+            link::pace(if window.is_window_active() {
+                Pace::Front
+            } else {
+                Pace::Back
+            });
+        })
+        .detach();
         Self {
             store,
             chat,

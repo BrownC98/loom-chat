@@ -438,7 +438,7 @@ impl Render for Stream {
             self.bar
                 .reserved(list(
                     self.list.clone(),
-                    cx.processor(|stream, index, _, cx| stream.row(index, cx)),
+                    cx.processor(|stream, index, window, cx| stream.row(index, window, cx)),
                 ))
                 .flex_1()
                 .min_h_0()

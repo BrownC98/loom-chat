@@ -13,13 +13,13 @@ use api::repos::{PlaceView, RepoView};
 use api::settings::places::ReachView;
 use api::settings::{ArrangeDirection, GraphScope, SettingsView};
 use gpui::{
-    App, AppContext, Bounds, Context, EventEmitter, Image, ImageFormat, Pixels, Task, Window,
-    WindowAppearance,
+    AnyWindowHandle, App, AppContext, Bounds, Context, EventEmitter, Image, ImageFormat, Pixels,
+    Task, Window, WindowAppearance,
 };
 
 use crate::canvas::drag::Arrange;
 use crate::canvas::repos::{chosen_repo, groups_of};
-use crate::link::{self, Fresh, Graph, Loaded, Snapshot};
+use crate::link::{self, Fresh, Graph, GraphRead, Loaded, Snapshot};
 use crate::problem::Failure;
 use crate::{scale, strings, theme};
 
@@ -37,6 +37,9 @@ pub enum SentPart {
 pub struct Store {
     base: Option<String>,
     status: String,
+    watch: Option<link::Watch>,
+    window: AnyWindowHandle,
+    repo_watch: Option<Task<()>>,
     snapshot: Option<Snapshot>,
     revision: u64,
     loaded: u64,
@@ -120,12 +123,13 @@ fn newer(at: &mut u64, order: u64) -> bool {
     newer
 }
 
-fn unreached_of(base: &str, hosts: Vec<String>) -> HashSet<String> {
+fn unreached_of(base: &str, hosts: Vec<String>, graph: &GraphRead) -> HashSet<String> {
     hosts
         .into_iter()
+        .take_while(|_| graph.is_current())
         .filter(|host| {
             matches!(
-                link::read::<Option<ReachView>>(base, &format!("/api/ssh/{}", link::escape(host))),
+                graph.read::<Option<ReachView>>(base, &format!("/api/ssh/{}", link::escape(host))),
                 Ok(Some(reach)) if !matches!(reach, ReachView::Reached { .. })
             )
         })
@@ -164,10 +168,13 @@ impl Store {
     ) -> Self {
         let settings = SettingsView::default();
         apply_settings(&settings, cx);
-        let (base, status, failure) = match started {
+        let (base, status, failure, watch) = match started {
             Ok(base) => {
                 let (graph, inbox) = async_channel::unbounded();
-                let failure = link::watch(&base, graph).err();
+                let (watch, failure) = match link::watch(&base, graph) {
+                    Ok(watch) => (Some(watch), None),
+                    Err(error) => (None, Some(error)),
+                };
                 let status = failure.clone().unwrap_or_else(|| base.clone());
                 cx.spawn_in(window, async move |this, cx| {
                     while let Ok(event) = inbox.recv().await {
@@ -180,58 +187,17 @@ impl Store {
                     }
                 })
                 .detach();
-                let reach_base = base.clone();
-                cx.spawn_in(window, async move |this, cx| {
-                    loop {
-                        cx.background_executor().timer(REPOS_EVERY).await;
-                        let Ok(visible) = this.update_in(cx, |_, window, _| window.is_visible())
-                        else {
-                            break;
-                        };
-                        let base = reach_base.clone();
-                        let order = link::order();
-                        let repos: Option<Vec<RepoView>> = match visible {
-                            true => cx
-                                .background_spawn(async move { link::read(&base, "/api/repos") })
-                                .await
-                                .ok(),
-                            false => None,
-                        };
-                        let Ok(hosts) = this.update(cx, |store, cx| {
-                            if let Some(repos) = repos {
-                                store.keep_repos(order, repos, cx);
-                            }
-                            store.ssh_hosts()
-                        }) else {
-                            break;
-                        };
-                        if hosts.is_empty() {
-                            continue;
-                        }
-                        let base = reach_base.clone();
-                        let down = cx
-                            .background_spawn(async move { unreached_of(&base, hosts) })
-                            .await;
-                        let kept = this.update(cx, |store, cx| {
-                            if store.unreached != down {
-                                store.unreached = down;
-                                cx.notify();
-                            }
-                        });
-                        if kept.is_err() {
-                            break;
-                        }
-                    }
-                })
-                .detach();
-                (Some(base), status, failure)
+                (Some(base), status, failure, watch)
             }
-            Err(error) => (None, error.clone(), Some(error)),
+            Err(error) => (None, error.clone(), Some(error), None),
         };
         let notice = failure.map(|text| Notice { text });
-        Self {
+        let mut store = Self {
             base,
             status,
+            watch,
+            window: window.window_handle(),
+            repo_watch: None,
             snapshot: None,
             revision: 0,
             loaded: 0,
@@ -255,7 +221,80 @@ impl Store {
             drafts: HashMap::new(),
             busy: HashSet::new(),
             unreached: HashSet::new(),
+        };
+        store.watch_repos(cx);
+        store
+    }
+
+    pub fn set_graph_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let Some(watch) = &self.watch else {
+            return;
+        };
+        if watch.graph_visible() == visible {
+            return;
         }
+        watch.set_graph_visible(visible);
+        if visible {
+            watch.reload();
+            self.watch_repos(cx);
+        } else {
+            self.repo_watch = None;
+        }
+    }
+
+    fn watch_repos(&mut self, cx: &Context<Self>) {
+        let Some((base, graph)) = self
+            .base
+            .clone()
+            .zip(self.watch.as_ref().and_then(link::Watch::graph_read))
+        else {
+            return;
+        };
+        let window = self.window;
+        self.repo_watch = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(REPOS_EVERY).await;
+                let Ok(visible) = window.update(cx, |_, window, _| window.is_visible()) else {
+                    break;
+                };
+                let order = link::order();
+                let repos = if visible {
+                    let read_base = base.clone();
+                    let reading = graph.clone();
+                    cx.background_spawn(async move { reading.read(&read_base, "/api/repos").ok() })
+                        .await
+                } else {
+                    None
+                };
+                let Ok(hosts) = this.update(cx, |store, cx| {
+                    if let Some(repos) = repos {
+                        store.keep_repos(order, repos, cx);
+                    }
+                    store.ssh_hosts()
+                }) else {
+                    break;
+                };
+                if hosts.is_empty() {
+                    continue;
+                }
+                let read_base = base.clone();
+                let reading = graph.clone();
+                let down = cx
+                    .background_spawn(async move { unreached_of(&read_base, hosts, &reading) })
+                    .await;
+                if this
+                    .update(cx, |store, cx| {
+                        if store.unreached != down {
+                            store.unreached = down;
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
     }
 
     fn ssh_hosts(&self) -> Vec<String> {
@@ -595,16 +634,18 @@ impl Store {
         cx.notify();
     }
 
-    fn take_settings(&mut self, settings: SettingsView, cx: &mut Context<Self>) {
+    fn take_settings(&mut self, settings: SettingsView, cx: &mut Context<Self>) -> bool {
         let key = serde_json::to_string(&settings).unwrap_or_default();
-        if key != self.settings_key {
-            apply_settings(&settings, cx);
-            if settings.closed_panes.dock {
-                self.picked = None;
-            }
-            self.settings = settings;
-            self.settings_key = key;
+        if key == self.settings_key {
+            return false;
         }
+        apply_settings(&settings, cx);
+        if settings.closed_panes.dock {
+            self.picked = None;
+        }
+        self.settings = settings;
+        self.settings_key = key;
+        true
     }
 
     pub fn set_pane_open(&mut self, pane: &str, open: bool, cx: &mut Context<Self>) {
@@ -642,56 +683,66 @@ impl Store {
         }
     }
 
-    pub fn reload(&self, cx: &mut Context<Self>) {
-        let Some(base) = self.base.clone() else {
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            let event = cx.background_spawn(async move { link::load(&base) }).await;
-            let _ = this.update(cx, |store, cx| store.apply(event, cx));
-        })
-        .detach();
+    pub fn reload(&self, _: &mut Context<Self>) {
+        if let Some(watch) = &self.watch {
+            watch.reload();
+        }
     }
 
     fn apply(&mut self, event: Graph, cx: &mut Context<Self>) {
+        let accepts_graph = |order| {
+            self.watch
+                .as_ref()
+                .is_some_and(|watch| watch.accepts_graph(order))
+        };
         match event {
-            Graph::Loaded(loaded) => self.load(*loaded, cx),
-            Graph::Nodes(fresh) => self.refresh(*fresh),
+            Graph::Loaded(loaded) if accepts_graph(loaded.order) => self.load(*loaded),
+            Graph::Nodes(fresh) if accepts_graph(fresh.order) => self.refresh(*fresh),
+            Graph::Settings { order, result } => match result {
+                Ok(settings) => self.keep_settings(order, *settings, cx),
+                Err(error) if order > self.settings_from => self.fail(error, cx),
+                Err(_) => return,
+            },
             Graph::Feed(event) => {
                 if let GraphEvent::Recorded { record } = event.as_ref()
                     && matches!(&record.entry, Entry::AccountSwitched { why, .. } if *why != SwitchCause::Manual)
                 {
                     self.reload(cx);
                 }
-                cx.emit(*event)
-            }
-            Graph::Link => {}
-            Graph::Failed { order, error } => {
-                if order <= self.loaded.max(self.nodes_at) {
+                let nodes = matches!(*event, GraphEvent::Nodes);
+                cx.emit(*event);
+                if nodes || !self.watch.as_ref().is_some_and(link::Watch::graph_visible) {
                     return;
                 }
-                let text = error.text(*cx.global::<strings::Lang>());
-                let text = if text.is_empty() {
-                    "connection closed".to_owned()
-                } else {
-                    text
-                };
-                self.notice = Some(Notice { text });
             }
+            Graph::Failed { order, error }
+                if accepts_graph(order) && order > self.loaded.max(self.nodes_at) =>
+            {
+                self.fail(error, cx);
+            }
+            _ => return,
         }
         cx.notify();
     }
 
-    fn load(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
+    fn fail(&mut self, error: Failure, cx: &Context<Self>) {
+        let text = error.text(*cx.global::<strings::Lang>());
+        let text = if text.is_empty() {
+            "connection closed".to_owned()
+        } else {
+            text
+        };
+        self.notice = Some(Notice { text });
+    }
+
+    fn load(&mut self, loaded: Loaded) {
         let Loaded {
             order,
             snapshot: read,
-            settings,
         } = loaded;
         let Some(snapshot) = &mut self.snapshot else {
             self.snapshot = Some(read);
             (self.loaded, self.nodes_at, self.repos_at) = (order, order, order);
-            self.keep_settings(order, settings, cx);
             self.revision += 1;
             self.reselect();
             return;
@@ -708,7 +759,6 @@ impl Store {
         if newer(&mut self.loaded, order) {
             snapshot.layout = read.layout;
             snapshot.sizes = read.sizes;
-            self.keep_settings(order, settings, cx);
             used = true;
         }
         if used {
@@ -719,9 +769,11 @@ impl Store {
 
     fn keep_settings(&mut self, order: u64, settings: SettingsView, cx: &mut Context<Self>) {
         self.status = self.base.clone().unwrap_or_default();
-        if self.unsaved.is_empty() && order > self.settings_from {
+        if self.unsaved.is_empty() && newer(&mut self.settings_from, order) {
             self.confirmed = settings.clone();
-            self.take_settings(settings, cx);
+            if self.take_settings(settings, cx) && self.snapshot.is_some() {
+                self.revision += 1;
+            }
         }
     }
 
@@ -802,13 +854,13 @@ impl Store {
 
     pub(crate) fn call<T: Send + 'static>(
         &self,
-        cx: &mut Context<Self>,
+        cx: &App,
         work: impl FnOnce(&str) -> Result<T, Failure> + Send + 'static,
     ) -> Task<Result<T, String>> {
         let Some(base) = self.base.clone() else {
             return Task::ready(Err(self.status.clone()));
         };
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |cx| {
             let done = cx.background_spawn(async move { work(&base) }).await;
             done.map_err(|failure| failure.text(cx.update(|app| *app.global::<strings::Lang>())))
         })

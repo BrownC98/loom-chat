@@ -49,7 +49,7 @@ pub(super) fn hidden(item: &ChatItem) -> bool {
                     ))
         }
         ChatEntry::Transcript { item } => match item {
-            ChatTranscriptItem::Assistant { text } | ChatTranscriptItem::User { text } => {
+            ChatTranscriptItem::Assistant { text, .. } | ChatTranscriptItem::User { text } => {
                 text.trim().is_empty()
             }
             ChatTranscriptItem::Thinking { summary } => {
@@ -489,7 +489,7 @@ impl Stream {
     ) -> Div {
         let cursor = row.cursor;
         match item {
-            ChatTranscriptItem::User { text } | ChatTranscriptItem::Assistant { text } => {
+            ChatTranscriptItem::User { text } | ChatTranscriptItem::Assistant { text, .. } => {
                 let mine = matches!(item, ChatTranscriptItem::User { .. });
                 let name = if mine {
                     tr(cx, "나", "Me").to_owned()

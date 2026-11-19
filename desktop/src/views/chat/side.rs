@@ -93,10 +93,7 @@ impl SideSlot {
                 }
             }),
             cx.observe(&graph, |this, _, cx| {
-                if matches!(
-                    this.panel,
-                    Some(Panel::Members | Panel::Terminal | Panel::Docs(_))
-                ) {
+                if this.panel.is_some() {
                     cx.notify();
                 }
             }),

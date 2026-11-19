@@ -406,11 +406,6 @@ pub fn issued() -> u64 {
     LOADS.load(Ordering::Relaxed)
 }
 
-pub struct Loaded {
-    pub order: u64,
-    pub snapshot: Snapshot,
-}
-
 pub fn read<T: serde::de::DeserializeOwned>(base: &str, path: &str) -> Result<T, Failure> {
     serde_json::from_str(&get(base, path)?).map_err(|e| Failure::Other(format!("GET {path}: {e}")))
 }
@@ -443,7 +438,16 @@ fn frame(request: &impl Serialize) -> Message {
 pub struct Fresh {
     pub order: u64,
     pub nodes: Vec<NodeView>,
-    pub repos: Option<Vec<RepoView>>,
+    pub view: Option<GraphView>,
+}
+
+pub enum GraphView {
+    Repos(Vec<RepoView>),
+    Full {
+        repos: Vec<RepoView>,
+        layout: Layout,
+        sizes: Vec<CardSize>,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -488,34 +492,32 @@ impl Seen {
     }
 }
 
-fn reread(
+fn read_view(
     base: &str,
     wanted: Read,
-    order: u64,
+    nodes: &[NodeView],
     graph: &GraphRead,
     seen: &mut Option<Seen>,
-) -> Result<Graph, Failure> {
+) -> Result<Option<GraphView>, Failure> {
     let Some(was) = seen.as_mut().filter(|_| wanted == Read::Nodes) else {
-        let snapshot = Snapshot {
-            nodes: graph.read(base, "/api/nodes")?,
-            repos: graph.read(base, "/api/repos")?,
-            layout: graph.read(base, "/api/spots")?,
-            sizes: graph.read(base, "/api/sizes")?,
-        };
-        *seen = Some(Seen::of(&snapshot.nodes, &snapshot.repos));
-        return Ok(Graph::Loaded(Box::new(Loaded { order, snapshot })));
+        let repos: Vec<RepoView> = graph.read(base, "/api/repos")?;
+        let layout = graph.read(base, "/api/spots")?;
+        let sizes = graph.read(base, "/api/sizes")?;
+        *seen = Some(Seen::of(nodes, &repos));
+        return Ok(Some(GraphView::Full {
+            repos,
+            layout,
+            sizes,
+        }));
     };
-    let nodes: Vec<NodeView> = graph.read(base, "/api/nodes")?;
-    let repos = match was.wants_repos(&nodes) {
-        true => Some(graph.read(base, "/api/repos")?),
-        false => None,
-    };
-    was.note(&nodes, repos.as_deref());
-    Ok(Graph::Nodes(Box::new(Fresh {
-        order,
-        nodes,
-        repos,
-    })))
+    if was.wants_repos(nodes) {
+        let repos: Vec<RepoView> = graph.read(base, "/api/repos")?;
+        was.note(nodes, Some(&repos));
+        Ok(Some(GraphView::Repos(repos)))
+    } else {
+        was.note(nodes, None);
+        Ok(None)
+    }
 }
 
 const GRAPH_HIDDEN: u64 = 0;
@@ -552,7 +554,6 @@ impl GraphRead {
 }
 
 pub enum Graph {
-    Loaded(Box<Loaded>),
     Nodes(Box<Fresh>),
     Settings {
         order: u64,
@@ -630,17 +631,34 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
                             return;
                         }
                     }
-                    if let Some(reading) = reading.filter(GraphRead::is_current) {
-                        let result = reread(&base, requested, order, &reading, &mut seen);
-                        if reading.is_current() {
-                            let event = result.unwrap_or_else(|error| {
-                                failed = true;
-                                Graph::Failed { order, error }
-                            });
-                            if sink.send_blocking(event).is_err() {
-                                return;
+                    let result = read::<Vec<NodeView>>(&base, "/api/nodes");
+                    let event = match result {
+                        Ok(nodes) => {
+                            let mut view = None;
+                            if let Some(graph) = reading.filter(GraphRead::is_current) {
+                                match read_view(&base, requested, &nodes, &graph, &mut seen) {
+                                    Ok(fresh) => view = fresh,
+                                    Err(error) if graph.is_current() => {
+                                        failed = true;
+                                        if sink
+                                            .send_blocking(Graph::Failed { order, error })
+                                            .is_err()
+                                        {
+                                            return;
+                                        }
+                                    }
+                                    Err(_) => {}
+                                }
                             }
+                            Graph::Nodes(Box::new(Fresh { order, nodes, view }))
                         }
+                        Err(error) => {
+                            failed |= reading.is_some_and(|graph| graph.is_current());
+                            Graph::Failed { order, error }
+                        }
+                    };
+                    if sink.send_blocking(event).is_err() {
+                        return;
                     }
                     if !failed {
                         break;

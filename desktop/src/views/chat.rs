@@ -94,6 +94,12 @@ impl Chat {
         let terminal = cx.new(|cx| SessionTerminal::new(graph.clone(), inputs, cx));
 
         cx.observe(&data, |this, _, cx| this.sync(cx)).detach();
+        cx.observe(&graph, |this, _, cx| {
+            if this.placement != Placement::Hidden {
+                cx.notify();
+            }
+        })
+        .detach();
         cx.observe(&side, |this, _, cx| this.sync(cx)).detach();
         cx.subscribe_in(&stream, window, |this, _, event, window, cx| match event {
             StreamEvent::FollowUp { node, wait } => this.composer.update(cx, |c, cx| {

@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use api::canvas::{CardSize, Placed};
+use api::canvas::{CardSize, Layout, Placed};
 use api::graph::docs::DocRow;
 use api::graph::events::{Entry, EventLog, SwitchCause};
 use api::graph::waits::{AnswerWait, ChooseOption, ClosedPage, PressKeys, Prompt, TypeText};
@@ -19,7 +19,7 @@ use gpui::{
 
 use crate::canvas::drag::Arrange;
 use crate::canvas::repos::{chosen_repo, groups_of};
-use crate::link::{self, Fresh, Graph, GraphRead, LinkState, Loaded, Snapshot};
+use crate::link::{self, Fresh, Graph, GraphRead, GraphView, LinkState, Snapshot};
 use crate::problem::Failure;
 use crate::{scale, strings, theme};
 
@@ -715,8 +715,14 @@ impl Store {
                 cx.emit(state);
                 return;
             }
-            Graph::Loaded(loaded) if accepts_graph(loaded.order) => self.load(*loaded),
-            Graph::Nodes(fresh) if accepts_graph(fresh.order) => self.refresh(*fresh),
+            Graph::Nodes(mut fresh) => {
+                if !accepts_graph(fresh.order) {
+                    fresh.view = None;
+                }
+                if !self.refresh(*fresh) {
+                    return;
+                }
+            }
             Graph::Settings { order, result } => match result {
                 Ok(settings) => self.keep_settings(order, *settings, cx),
                 Err(error) if order > self.settings_from => self.fail(error, cx),
@@ -754,38 +760,6 @@ impl Store {
         self.notice = Some(Notice { text });
     }
 
-    fn load(&mut self, loaded: Loaded) {
-        let Loaded {
-            order,
-            snapshot: read,
-        } = loaded;
-        let Some(snapshot) = &mut self.snapshot else {
-            self.snapshot = Some(read);
-            (self.loaded, self.nodes_at, self.repos_at) = (order, order, order);
-            self.revision += 1;
-            self.reselect();
-            return;
-        };
-        let mut used = false;
-        if newer(&mut self.nodes_at, order) {
-            snapshot.nodes = read.nodes;
-            used = true;
-        }
-        if newer(&mut self.repos_at, order) {
-            snapshot.repos = read.repos;
-            used = true;
-        }
-        if newer(&mut self.loaded, order) {
-            snapshot.layout = read.layout;
-            snapshot.sizes = read.sizes;
-            used = true;
-        }
-        if used {
-            self.revision += 1;
-            self.reselect();
-        }
-    }
-
     fn keep_settings(&mut self, order: u64, settings: SettingsView, cx: &mut Context<Self>) {
         self.status = self.base.clone().unwrap_or_default();
         if self.unsaved.is_empty() && newer(&mut self.settings_from, order) {
@@ -796,26 +770,48 @@ impl Store {
         }
     }
 
-    fn refresh(&mut self, fresh: Fresh) {
-        let Some(snapshot) = &mut self.snapshot else {
-            return;
-        };
+    fn refresh(&mut self, fresh: Fresh) -> bool {
+        let snapshot = self.snapshot.get_or_insert_with(|| Snapshot {
+            nodes: Vec::new(),
+            repos: Vec::new(),
+            layout: Layout {
+                placed: Vec::new(),
+                arranged: Vec::new(),
+            },
+            sizes: Vec::new(),
+        });
         let mut used = false;
         if newer(&mut self.nodes_at, fresh.order) {
             snapshot.nodes = fresh.nodes;
             used = true;
         }
-        if let Some(repos) = fresh.repos
-            && newer(&mut self.repos_at, fresh.order)
-        {
-            snapshot.repos = repos;
-            used = true;
+        if let Some(view) = fresh.view {
+            let repos = match view {
+                GraphView::Repos(repos) => repos,
+                GraphView::Full {
+                    repos,
+                    layout,
+                    sizes,
+                } => {
+                    if newer(&mut self.loaded, fresh.order) {
+                        snapshot.layout = layout;
+                        snapshot.sizes = sizes;
+                        used = true;
+                    }
+                    repos
+                }
+            };
+            if newer(&mut self.repos_at, fresh.order) {
+                snapshot.repos = repos;
+                used = true;
+            }
         }
         if used {
             self.status = self.base.clone().unwrap_or_default();
             self.revision += 1;
             self.reselect();
         }
+        used
     }
 
     fn keep_repos(&mut self, order: u64, repos: Vec<RepoView>, cx: &mut Context<Self>) {

@@ -258,6 +258,14 @@ impl Graph {
                 ));
             }
         }
+        if let Some(nodes) = &req.attachment_nodes {
+            let uploaded: BTreeSet<_> = nodes.iter().map(|node| node.0).collect();
+            if !targets.outside.is_empty() || !targets.nodes.keys().copied().eq(uploaded) {
+                return Err(Refusal::BadSetting(
+                    "받는 이가 바뀌었습니다. 첨부 파일을 받을 사람을 다시 확인해 주세요.".into(),
+                ));
+            }
+        }
         let text = checked_text(&req.text)?;
         let group = enqueue(&tx, targets, HUMAN, req.mode, text)?;
         let message = group_message(&tx, PINNED, group)?;

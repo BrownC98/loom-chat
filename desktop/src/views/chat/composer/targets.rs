@@ -62,18 +62,16 @@ impl<'a> Catalog<'a> {
 
     pub fn plan(&self, selected: &[Target]) -> Plan {
         let mut plan = Plan::default();
-        let mut paths = 0;
         for target in selected {
             match target {
                 Target::Node(node) if self.node(*node).is_some() => {
                     plan.nodes.insert(node.0);
-                    paths += usize::from(plan.direct.insert(node.0));
+                    plan.direct.insert(node.0);
                 }
                 Target::Room(id) => match self.room(id).filter(|room| group(room)) {
                     Some(room) => {
                         if plan.rooms.insert(id.clone()) {
                             plan.outside_rooms += usize::from(room.members.is_empty());
-                            paths += room.members.len();
                             plan.nodes.extend(room.members.iter().map(|node| node.0));
                         }
                     }
@@ -82,7 +80,6 @@ impl<'a> Catalog<'a> {
                 Target::Node(_) => plan.unavailable = true,
             }
         }
-        plan.overlap = paths > plan.nodes.len();
         plan.queue_only = plan.outside_rooms > 0
             || plan.nodes.iter().any(|&id| {
                 self.node(NodeId(id))
@@ -102,7 +99,6 @@ pub(super) struct Plan {
     direct: BTreeSet<u32>,
     rooms: BTreeSet<String>,
     pub outside_rooms: usize,
-    pub overlap: bool,
     pub queue_only: bool,
     pub unavailable: bool,
 }
@@ -128,6 +124,7 @@ impl Plan {
             room: attach.then(|| current.id.clone()),
             confirmed_nodes: (mode == Kind::Interrupt)
                 .then(|| self.nodes.iter().copied().map(NodeId).collect()),
+            attachment_nodes: None,
         }
     }
 }

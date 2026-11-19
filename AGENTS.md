@@ -20,11 +20,11 @@
 
 ## 개발 환경
 
-호스트(WSL)에서 빌드·실행한다. 사람이 loom을 쓰는 곳과 같다. Rust 판은 `rust-toolchain.toml`, Node 판은 `.nvmrc`가 정한다. 저장소 폴더에서 아래 명령을 쓴다. 무거운 빌드와 cargo 검사·생성 명령은 `memcap -m <예약량>` 아래에서 돌린다. memcap은 메모리가 예약량을 덮을 때만 명령을 띄우고, 아니면 stderr에 대기 줄을 쓰고 차례로 기다린다. 예약량은 그 명령의 상한이기도 하다: 넘으면 그 명령만 끊긴다. 예약량은 처음부터 빌드한 cgroup `memory.peak` 최대값을 512MiB 단위로 올린 값이다. 실측(2026-10-31): clippy 2771MiB, test 4411MiB, Windows clippy 2663MiB, `cargo build` 2289MiB. 그래서 clippy와 빌드는 3G, test는 4608M이다. 병합 관문(`scripts/gate/check.sh`)은 메모리를 보지 않고 cargo 단계를 Linux 갈래와 Windows 갈래로 늘 함께 돌린다. main과 비교해 `desktop/`·`api/`·`fixtures/`·`web/src/`·`rust-toolchain.toml`이 바뀌었으면 데스크톱 갈래(fmt, clippy, 배치 고정값 시험)도 함께 돌린다.
+호스트(WSL)에서 빌드·실행한다. 사람이 loom을 쓰는 곳과 같다. Rust 판은 `rust-toolchain.toml`, Node 판은 `.nvmrc`가 정한다. 저장소 폴더에서 아래 명령을 쓴다. 무거운 빌드와 cargo 검사·생성 명령은 `memcap -m <예약량>` 아래에서 돌린다. memcap은 메모리가 예약량을 덮을 때만 명령을 띄우고, 아니면 stderr에 대기 줄을 쓰고 차례로 기다린다. 예약량은 그 명령의 상한이기도 하다: 넘으면 그 명령만 끊긴다. 예약량은 처음부터 빌드한 cgroup `memory.peak` 최대값을 512MiB 단위로 올린 값이다. 실측(2026-10-31): clippy 2771MiB, test 4411MiB, Windows clippy 2663MiB, `cargo build` 2289MiB. 그래서 clippy와 빌드는 3G, test는 4608M이다. 병합 관문(`scripts/gate/check.sh`)은 Linux·Windows cargo 검사와 화면 검사를 함께 돌린다. 데스크톱 입력이 바뀌면 데스크톱 갈래(fmt, clippy, 배치 고정값 시험)도 함께 돌린다. 단계마다 `CI_TIMING`에 시작 시각과 걸린 시간을 밀리초로 쓴다. `.cargo/config.toml`은 각 크레이트의 개발·시험 빌드에 줄 번호를 남기고 외부 의존성의 디버그 정보는 뺀다.
 
 | 할 일 | 명령 |
 |---|---|
-| 화면 패키지 설치, 화면 빌드 | `bash scripts/worktree/setup.sh`. 새 워크트리에서 loom·Orca가 부르고, 병합 관문이 처음에 부른다. `web/package-lock.json`이 지난 `npm ci` 때의 사본(`web/node_modules/.loom-package-lock.json`)과 같으면 설치를 건너뛰고, 화면은 늘 빌드한다. Rust 빌드 전에 화면 빌드(`web/dist`)가 있어야 한다 |
+| 화면 패키지 설치, 화면 빌드 | `bash scripts/worktree/setup.sh`. 새 워크트리에서 loom·Orca가 부르고, 병합 관문이 처음에 부른다. `web/package-lock.json`이 지난 `npm ci` 때의 사본(`web/node_modules/.loom-package-lock.json`)과 같으면 설치를 건너뛴다. 화면 입력, 판, Node 환경과 `web/dist`의 해시가 지난 빌드와 같으면 화면 빌드도 건너뛴다. Rust를 빌드하려면 `web/dist`가 있어야 한다 |
 | Rust 포맷 | `cargo fmt` |
 | Rust 검사 | `memcap -m 3G cargo clippy --all-targets` |
 | 규칙 검사(주석, 레이어, API 계약), TS 타입 생성 | `memcap -m 4608M cargo test --lib --bin loom --test comments --test layers --test contract`. 단위 시험은 두지 않는다(2026-10-26 사람 지시 "유닛 테스트 즉각 제거해"). `--lib`(`api/`)와 `--bin loom`(데몬)은 ts-rs가 만든 타입 쓰기만 돈다. 실제 배포판 호스트 프로세스를 띄우는 `tests/distro_host`는 관문 밖에 남는다: `memcap -m 4608M cargo test --test distro_host` |
@@ -51,7 +51,7 @@
 
 - `skills/`는 loom이 노드에 넣는 내장 스킬의 원본이다. 사람의 `~/.agents/skills/{user-doc,raptor-3}`와 `ste-orwell/SKILL.md`가 main 체크아웃의 이 폴더를 가리킨다. loom 절차 스킬은 `skills/o-mode`다. 사람의 Orca 판 `~/.agents/skills/o-mode`와 이름이 같고, 실행 환경이 고른다. Claude에서는 `loom:o-mode`와 `orca:o-mode`로 갈린다(docs/design/에이전트-실행.md 「내장 스킬」). 스킬을 고칠 때도 워크트리에서 고치고 병합한다.
 
-- API 타입은 Rust에만 선언한다. 데몬·화면·데스크톱이 함께 읽는 타입은 `api/` 크레이트(serde·serde_json·ts-rs만 쓴다. 데몬만 켜는 기능 `axum`·`clap`·`sqlite`가 `Problem` 응답, `Judgment` 인자, rusqlite 오류 변환을 더한다)에 두고, 데몬은 `api::…` 경로로 직접 읽는다. 루트 `Cargo.toml`은 작업 공간이고 기본 멤버는 데몬과 `api/`다. 그래서 위 cargo 명령이 둘을 함께 검사한다. `app/`·`desktop/`은 잠금 파일이 따로인 패키지라 작업 공간에서 뺀다. `web/src/gen/`은 위 `cargo test --lib --bin loom`이 쓴다. 손으로 고치지 않는다. 관문은 쓴 뒤 `web/src/gen/`이 커밋과 다르면 실패한다.
+- API 타입은 Rust에만 선언한다. 데몬·화면·데스크톱이 함께 읽는 타입은 `api/` 크레이트(serde·serde_json·ts-rs만 쓴다. 데몬만 켜는 기능 `axum`·`clap`·`sqlite`가 `Problem` 응답, `Judgment` 인자, rusqlite 오류 변환을 더한다)에 두고, 데몬은 `api::…` 경로로 직접 읽는다. 루트 `Cargo.toml`은 작업 공간이고 기본 멤버는 데몬과 `api/`다. 그래서 위 cargo 명령이 둘을 함께 검사한다. `app/`·`desktop/`은 잠금 파일이 따로인 패키지라 작업 공간에서 뺀다. `web/src/gen/`은 위 `cargo test --lib --bin loom`이 쓴다. 손으로 고치지 않는다. 관문은 임시 사본에 타입을 쓰고 검사 중에 화면과 데스크톱은 커밋한 타입을 읽는다. 원본이 커밋과 다르거나 사본의 결과가 원본과 다르면 관문이 실패한다.
 
 ## 목표
 

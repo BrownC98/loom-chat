@@ -37,6 +37,12 @@ jobs:
       - name: 화면 빌드
         run: npm ci && npm run build
         working-directory: web
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: loom-web-dist
+          path: web/dist
+          include-hidden-files: true
+          if-no-files-found: error
       - name: Linux loom 빌드
         run: |
           sudo apt-get install -y --no-install-recommends musl-tools
@@ -70,6 +76,10 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
       - uses: Swatinem/rust-cache@v2.9.2
+        with:
+          workspaces: |
+            .
+            app
       - name: 판 정하기
         id: version
         run: |
@@ -83,11 +93,10 @@ jobs:
             echo "태그 $GITHUB_REF_NAME 이(가) 판 v$version 과 다르다. 'git tag v\$(sh scripts/version.sh)'로 태그를 붙인다." >&2
             exit 1
           fi
-      - name: 화면 빌드
-        run: npm ci && npm run build
-        working-directory: web
-        env:
-          NPM_CONFIG_SCRIPT_SHELL: bash
+      - uses: actions/download-artifact@v8.0.2
+        with:
+          name: loom-web-dist
+          path: web/dist
       - name: loom 빌드
         run: |
           cargo build --release
@@ -116,6 +125,7 @@ jobs:
       - name: 설치 파일 빌드, Release에 올리기
         uses: tauri-apps/tauri-action@action-v1.0.0
         env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}/app/target
           GITHUB_TOKEN: ${{ github.token }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -186,6 +196,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: desktop
+          shared-key: native-desktop
       - name: 데스크톱 빌드
         run: cargo build --release
         working-directory: desktop

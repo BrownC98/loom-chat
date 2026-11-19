@@ -1,5 +1,11 @@
 [env]
 TS_RS_EXPORT_DIR = { value = "web/src/gen", relative = true }
 
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 [target.x86_64-pc-windows-gnu]
 runner = "scripts/windows/run.sh"

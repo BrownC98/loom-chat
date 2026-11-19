@@ -12,12 +12,18 @@ on:
       - 'web/src/styles.css'
       - 'web/src/terminalThemes.ts'
       - 'web/src/locales/**'
+      - 'Cargo.toml'
+      - '.cargo/config.toml'
       - 'rust-toolchain.toml'
       - '.github/workflows/desktop.yml'
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -31,6 +37,8 @@ jobs:
             artifact: loom-desktop-macos-arm64
             file: loom-desktop
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/desktop/target
     defaults:
       run:
         shell: bash
@@ -47,6 +55,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: desktop
+          shared-key: native-desktop
       - name: 배치 고정값 시험
         if: runner.os == 'Windows'
         run: cargo test

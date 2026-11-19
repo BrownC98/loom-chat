@@ -34,7 +34,7 @@ button { font: inherit; color: inherit; }
 h1 { font-size: 18px; text-wrap: balance; }
 h2 { font-size: 15px; text-wrap: balance; display: flex; gap: 8px; align-items: baseline; }
 h2 .tag { font: 12px var(--mono); color: var(--ink-3); }
-.lead { color: var(--ink-2); max-width: 900px; text-wrap: pretty; }
+.lead { color: var(--ink-2); max-width: 920px; text-wrap: pretty; }
 .fig { display: grid; gap: 16px; }
 .note { font-size: 13px; color: var(--ink-2); max-width: 880px; }
 .note li { margin-left: 18px; }
@@ -81,7 +81,7 @@ code { font-family: var(--mono); font-size: 12px; }
 .flow span { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); }
 .flow i { font-style: normal; color: var(--ink-3); }
 
-.feas { display: grid; gap: 14px; max-width: 1060px; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.feas { display: grid; gap: 14px; max-width: 1080px; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
 .feas h2 { font-size: 15px; }
 .verdict-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 13px; }
 .vpill { padding: 2px 8px; border-radius: 10px; background: color-mix(in oklch, var(--ok) 15%, transparent); color: var(--ok); font-weight: 600; font-size: 12px; }
@@ -89,7 +89,7 @@ code { font-family: var(--mono); font-size: 12px; }
 .ftbl th, .ftbl td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .ftbl th { background: var(--panel); color: var(--ink-2); font-weight: 600; font-size: 12px; white-space: nowrap; }
 .ftbl tr:last-child td { border-bottom: 0; }
-.ftbl td:first-child { font-weight: 600; white-space: nowrap; width: 150px; }
+.ftbl td:first-child { font-weight: 600; white-space: nowrap; width: 160px; }
 .ftbl .ev { display: block; margin-top: 3px; font-size: 12px; color: var(--ink-2); }
 
 .page { width: 1360px; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--bg); box-shadow: 0 2px 10px var(--shadow); font-size: 13px; }
@@ -102,13 +102,12 @@ code { font-family: var(--mono); font-size: 12px; }
 .abtn { display: inline-flex; align-items: center; gap: 5px; height: 26px; padding: 0 9px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 12px; font-weight: 500; white-space: nowrap; color: var(--ink); }
 .abtn.ghost { border-color: transparent; background: none; color: var(--ink-2); }
 .abtn.dark { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 600; }
-.abtn.warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); color: var(--ink); }
-.abtn.err { border-color: var(--err); background: color-mix(in srgb, var(--err) 10%, var(--surface)); color: var(--err); }
 .abtn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 
-.shell { display: grid; grid-template-columns: 200px minmax(0, 1fr) 40px; height: 670px; }
+.shell { display: grid; grid-template-columns: 200px minmax(0, 1fr) 40px; height: 740px; }
+.shell.sess { height: 660px; }
 .shell.with-dock { grid-template-columns: 190px minmax(0, 1fr) 410px; height: 600px; }
-.side { background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px; display: flex; flex-direction: column; gap: 6px; }
+.side { background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px; display: flex; flex-direction: column; gap: 5px; }
 .side-h { font-size: 11px; font-weight: 600; color: var(--ink-3); padding: 4px 8px 2px; }
 .sitem { display: flex; align-items: center; gap: 6px; padding: 5px 8px; border-radius: 6px; font-size: 12px; color: var(--ink-2); }
 .sitem.on { background: var(--accent-wash); color: var(--ink); font-weight: 600; }
@@ -121,7 +120,7 @@ code { font-family: var(--mono); font-size: 12px; }
 .rail { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 10px; color: var(--ink-2); }
 .ricon { width: 26px; height: 26px; border-radius: 6px; display: grid; place-items: center; position: relative; }
 .ricon svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-.ricon .cnt { position: absolute; top: -2px; right: -2px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--warn); color: var(--bg); font-size: 10px; font-weight: 700; text-align: center; line-height: 14px; }
+.ricon .cnt { position: absolute; top: -2px; right: -2px; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--warn); color: var(--bg); font-size: 11px; font-weight: 700; text-align: center; line-height: 14px; }
 
 .chat-main { display: grid; grid-template-columns: 280px minmax(0, 1fr); min-width: 0; background: var(--bg); }
 .tlist { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-width: 0; }
@@ -131,7 +130,7 @@ code { font-family: var(--mono); font-size: 12px; }
 .fchip { padding: 2px 8px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 11px; color: var(--ink-2); }
 .fchip.on { border-color: var(--accent); background: var(--accent); color: var(--bg); font-weight: 600; }
 .tgroup { font-size: 11px; font-weight: 600; color: var(--ink-3); padding: 8px 12px 4px; }
-.trow { display: grid; gap: 3px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.trow { display: grid; gap: 3px; padding: 7px 12px; border-bottom: 1px solid var(--line); }
 .trow.on { background: var(--accent-wash); }
 .trow-top { display: flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; }
 .trow-top .time { margin-left: auto; font-size: 11px; font-weight: 400; color: var(--ink-3); }
@@ -144,14 +143,15 @@ code { font-family: var(--mono); font-size: 12px; }
 .pill.run { border-color: color-mix(in oklch, var(--run) 50%, transparent); color: var(--run); }
 
 .conv { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; background: var(--surface); }
-.conv-head { display: flex; align-items: center; gap: 8px; padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.conv-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 9px 14px; border-bottom: 1px solid var(--line); background: var(--panel); }
 .conv-head b { font-size: 13px; }
 .conv-head .spacer { flex: 1; }
+.members { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 5px; font-size: 11px; color: var(--ink-2); }
 .state { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 7px; border-radius: 10px; background: var(--accent-wash); font-size: 11px; font-weight: 600; }
 .state i { width: 6px; height: 6px; border-radius: 50%; background: var(--run); }
 
-.msgs { display: flex; flex-direction: column; gap: 22px; padding: 18px 20px; overflow: hidden; background: var(--bg); }
-.mrow { display: flex; flex-direction: column; gap: 3px; max-width: 48%; }
+.msgs { display: flex; flex-direction: column; gap: 18px; padding: 16px 20px; overflow: hidden; background: var(--bg); }
+.mrow { display: flex; flex-direction: column; gap: 3px; max-width: 50%; }
 .mrow.left { align-self: flex-start; align-items: flex-start; }
 .mrow.right { align-self: flex-end; align-items: flex-end; }
 .mhead { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-2); font-weight: 600; }
@@ -162,14 +162,19 @@ code { font-family: var(--mono); font-size: 12px; }
 .bubble.me { background: var(--accent); color: var(--bg); border-bottom-right-radius: 3px; }
 .mmeta { font-size: 11px; color: var(--ink-3); }
 
-.compose { display: grid; gap: 14px; padding: 14px 14px 12px; border-top: 1px solid var(--line); background: var(--panel); }
-.cbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 12px; }
+.tstack { display: flex; flex-direction: column; gap: 6px; align-self: flex-start; max-width: 52%; }
+.tcard { display: flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); font-size: 12px; color: var(--ink-2); }
+.tcard b { color: var(--ink); font-weight: 600; }
+.tcard .tstat { margin-left: auto; font-size: 11px; color: var(--ok); font-weight: 600; }
+.think { display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border-radius: 10px; background: var(--accent-wash); font-size: 12px; color: var(--ink-2); align-self: flex-start; }
+
+.compose { display: grid; gap: 12px; padding: 12px 14px; border-top: 1px solid var(--line); background: var(--panel); }
+.cbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px; }
 .clabel { color: var(--ink-2); font-weight: 600; font-size: 11px; }
 .chips { display: inline-flex; gap: 4px; }
 .chip { padding: 2px 8px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 12px; color: var(--ink-2); }
 .chip.on { border-color: var(--accent); background: var(--accent-wash); color: var(--ink); font-weight: 600; }
 .chip.warn-on { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, var(--surface)); color: var(--ink); font-weight: 600; }
-.csep { width: 1px; height: 16px; background: var(--line-strong); margin: 0 4px; }
 .cbox { min-height: 44px; padding: 7px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; line-height: 1.45; }
 .crow { display: flex; align-items: center; gap: 8px; }
 .crow .hint { flex: 1; font-size: 11px; color: var(--ink-3); }
@@ -191,9 +196,8 @@ code { font-family: var(--mono); font-size: 12px; }
 .sbar .spacer { flex: 1; }
 </style>
 </head>
-<body data-ui=".abtn, .seg, .fchip, .chip, .trow, .sitem, .bubble, .cbox, .dtab, .dock-pick, .ncard">
+<body data-ui=".abtn, .seg, .fchip, .chip, .trow, .sitem, .bubble, .tcard, .think, .cbox, .dtab, .dock-pick, .ncard">
 <svg width="0" height="0" style="position:absolute">
-  <symbol id="chat" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
   <symbol id="bell" viewBox="0 0 24 24"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></symbol>
   <symbol id="log" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h14"/></symbol>
   <symbol id="doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
@@ -202,15 +206,15 @@ code { font-family: var(--mono); font-size: 12px; }
 </svg>
 
 <main class="doc">
-  <div class="who"><span class="doc-id">문서 ID: <b>M162</b></span><span>연 담당: <b>UI/UX 설계자 · UI/UX 설계자 채팅모드</b></span><span>v1 · 2026-11-19</span></div>
+  <div class="who"><span class="doc-id">문서 ID: <b>M162</b></span><span>연 담당: <b>UI/UX 설계자 · UI/UX 설계자 채팅모드</b></span><span>v2 · 2026-11-19</span></div>
   <h1>loom 채팅 모드: 타당성 검토와 화면 목업</h1>
-  <p class="lead">사람 요청(2026-11-19): “loom에 chat 모드 추가했으면 한다. 에이전트간 통신과 loom 외부와의 통신도 chat 형태로 보이는 기능을 추가하고 싶음, 중간에 사람이 개입도 가능하게, 현실성 따져보고 목업 만들어봐”. 기존 DB와 채팅방 구조를 조사한 결과, 새 저장소를 복제하지 않고 1차 웹 버전을 2.5~4일 규모로 구현할 수 있습니다. 아래에 타당성 근거와 두 화면 시안(D1-A·D1-B), 결정 사항 4건(D1~D4)을 정리합니다.</p>
+  <p class="lead">사람 수정 요청(v2): “채팅모드에서는 각 에이전트의 세션도 cli 형식이 아닌 chat ui로 표시되며, 에이전트간 통신은 둘(또는 더 많이) 사이의 채팅방으로 표현되는 방식으로 목업수정”. v2에서는 ① 둘 이상이 함께 대화하는 그룹 채팅방(외부 에이전트 포함), ② 각 에이전트의 개별 세션을 말풍선·접힌 도구 호출 카드로 보여주는 1:1 세션 채팅 화면(터미널 전환 포함), ③ 세션 기록 출처·입력 전달 방식별 타당성과 결정 사항 5건(D1~D5)을 반영했습니다.</p>
 
   <section class="feas" aria-label="타당성 검토 요약">
-    <h2>타당성 검토 요약 <span class="tag">코드베이스 실측 근거</span></h2>
+    <h2>타당성 검토 요약 <span class="tag">v2 · 에이전트 세션 채팅 UI 포함</span></h2>
     <div class="verdict-row">
-      <span class="vpill">구현 가능 · 1차 웹 2.5~4일</span>
-      <span>에이전트 간 메시지(<code>messages</code>)와 외부 에이전트 방(<code>doc_talk</code>)이 이미 SQLite에 있습니다. 별도 채팅 테이블을 복제하지 않고 통합 조회 모델과 사람 개입 API만 더합니다.</span>
+      <span class="vpill">단계 구현 가능 · 1단계 그룹방 2.5~4일 / 2단계 세션 UI +4~6일</span>
+      <span>에이전트 간 통신(<code>messages</code>)과 외부 방(<code>doc_talk</code>)은 즉시 통합할 수 있고, 주요 에이전트(Claude·Codex·Cursor·Pi/OMP)는 이미 loom이 세션 기록 경로 또는 서버 연결을 쥐고 있습니다.</span>
     </div>
     <table class="ftbl">
       <thead>
@@ -221,41 +225,47 @@ code { font-family: var(--mono); font-size: 12px; }
       </thead>
       <tbody>
         <tr>
-          <td>1. DB 저장 현황과<br>누락·삭제 지점</td>
+          <td>1. 에이전트 간 통신 DB와<br>그룹 채팅방</td>
           <td>
-            에이전트 간 메시지는 <code>messages</code> 테이블에 본문(<code>body</code>), 보낸 노드(<code>sender</code>·<code>sender_name</code>), 받는 노드(<code>recipient</code>), 전달 방식(<code>kind</code>: queue/steer/interrupt), 메시지 종류·답장 연결(<code>what</code> JSON 안 <code>Answer.question</code>), 읽음(<code>delivered</code>)이 들어 있습니다.
-            <span class="ev">근거: <code>src/db.rs:38-55, 206, 299, 397</code>, <code>api/src/graph/messages.rs:88-175</code></span>
-            단, 세 가지 빈틈이 있습니다. ① <strong>생성 시각 컬럼이 없습니다</strong>: <code>messages.sent_at</code>은 생성 시각이 아니라 노드에 넘긴 시각입니다(<code>INSERT</code> 시 <code>NULL</code>, <code>src/graph/mailbox.rs:332, 930</code>). <code>created_at</code> 컬럼 1개를 더해야 합니다. ② <strong>노드를 지우면 받은 메시지가 연쇄 삭제됩니다</strong>: <code>recipient</code>가 <code>ON DELETE CASCADE</code>입니다(<code>src/db.rs:40</code>, <code>src/graph/nodes.rs:271, 1108</code>). ③ <code>events</code> 테이블은 10,000건에서 오래된 행을 지우고(<code>src/graph/events.rs:13, 116-119</code>) 본문은 <code>LEFT JOIN messages</code>로 읽으므로 노드 삭제 시 본문이 함께 사라집니다.
+            <code>messages</code> 테이블에 본문(<code>body</code>), 발신(<code>sender</code>·<code>sender_name</code>), 수신(<code>recipient</code>), 방식(<code>kind</code>), 종류·답장(<code>what</code> JSON)이 들어 있습니다(<code>src/db.rs:38-55, 206, 397</code>).
+            작업 트리(부모-자식-검토자)와 <code>doc_talk</code>(<code>room/&lt;노드&gt;</code>)을 묶으면 <strong>2명 이상이 참여하는 그룹 채팅방</strong>을 새 테이블 없이 조회할 수 있습니다.
+            <span class="ev">보강 필요: ① <code>messages.sent_at</code>은 넘긴 시각이라 생성 시각(<code>created_at</code>) 컬럼 1개가 필요합니다(<code>src/graph/mailbox.rs:332, 930</code>). ② <code>recipient</code>가 <code>ON DELETE CASCADE</code>여서 노드 삭제 시 메시지가 지워집니다(<code>src/db.rs:40</code>, <code>src/graph/nodes.rs:271, 1108</code>). ③ <code>events</code>는 10,000건 상한이 있고 본문을 <code>LEFT JOIN messages</code>로 읽습니다(<code>src/graph/events.rs:13, 104-119</code>).</span>
           </td>
         </tr>
         <tr>
-          <td>2. 기존 채팅방과의<br>관계 (단일 상태)</td>
+          <td>2. 에이전트 1:1 세션<br>채팅 UI 기록 출처</td>
           <td>
-            기존 채팅방(<code>/rooms/&lt;노드&gt;</code>)과 외부 에이전트(<code>loom room send</code>, Aside의 <code>POST /api/rooms/{node}/outside</code>)는 <code>doc_talk</code> 테이블(<code>doc = 'room/&lt;노드&gt;'</code>)을 씁니다.
-            <span class="ev">근거: <code>src/daemon/rooms.rs:5-62</code>, <code>src/graph/doc_talk.rs:51-210</code>, <code>src/cli/room.rs:23-74</code></span>
-            새 채팅 테이블을 만들지 않습니다. 채팅 모드는 <code>messages</code>와 <code>doc_talk</code>을 한 번에 읽어 병합합니다(<code>doc_talk.message</code>로 중복 제거). 기존 <code>/rooms/&lt;노드&gt;</code> 주소와 외부 에이전트 연동 계약은 그대로 유지합니다.
+            loom은 이미 <code>nodes.session</code>에 각 에이전트의 세션 기록 경로 또는 ID를 저장합니다(<code>docs/design/에이전트-실행.md:211</code>).
+            <span class="ev">• <strong>Claude Code · OpenClaude</strong>: <code>transcript_path</code> JSONL과 훅(<code>last_assistant_message</code>) (<code>src/profile/claude.rs:509-545</code>)<br>
+            • <strong>Codex · Trae</strong>: <code>codex app-server</code>의 <code>thread/read</code>·턴/항목 목록·스트리밍 알림 (<code>src/profile/codex/server.rs:481</code>, <code>src/profile/codex.rs:309</code>)<br>
+            • <strong>Cursor</strong>: <code>agent-transcripts/&lt;id&gt;.jsonl</code>(<code>transcript_path</code>)과 훅 (<code>src/profile/cursor.rs:439, 479</code>)<br>
+            • <strong>Pi · OMP</strong>: <code>--session</code> JSONL 파일과 확장 이벤트 (<code>src/profile/pi-loom.ts:137</code>)<br>
+            • <strong>OpenCode 2 계열</strong>: 전용 서버 HTTP·SSE 이벤트 (<code>src/profile/opencode2/</code>)<br>
+            • <strong>미지원 프로필</strong>(Crush SQLite, Hermes DB, DSH zstd, Vibe 저널, Antigravity·Copilot ID 전용, 셸 노드): 구조화 기록이 없으므로 기존 <strong>터미널 보기</strong>로 자동 폴백합니다.</span>
+            <strong>누락된 부품</strong>: 프로필별 JSONL·서버 항목을 공통 항목(사람·응답·도구 호출·생각·상태)으로 바꾸는 파서와 파일 변경 테일러(대용량 세션 가상 스크롤 포함)가 필요합니다.
           </td>
         </tr>
         <tr>
-          <td>3. 사람의 중간 개입</td>
+          <td>3. 사람 입력 전달 방식<br>(PTY 유지 vs 헤드리스)</td>
           <td>
-            현재 사람은 <code>POST /api/rooms/{node}/talk</code>로 일반 메모(<code>queue</code>)만 보낼 수 있고(<code>src/daemon/rooms.rs:33-50</code>), 대기 중 메시지의 <code>steer</code> 승격만 따로 있습니다(<code>src/daemon/nodes.rs:123-128</code>).
-            채팅 모드 입력창은 <strong>받는 노드(1개 또는 양쪽 모두)</strong>와 <strong>전달 방식(일반·조정·중단)</strong>을 명시해 보냅니다. 노드 1개를 고르면 그 노드만 <code>from: human</code> 메시지를 받아 불필요한 토큰을 쓰지 않습니다. 양쪽 모두를 고르면 두 노드 모두 같은 지시와 상대 노드 수신 안내를 받습니다. 외부 에이전트는 pull 방식(<code>loom room read</code>)이므로 사람 말은 loom 노드로 전달되고 방 기록에 남아 다음 <code>read</code> 때 외부 에이전트도 봅니다.
+            현재 노드는 PTY 안의 TUI로 돌고(<code>src/node_host/host.rs</code>), 사람은 터미널 입력·받은편지함·채팅방(<code>POST /api/rooms/{node}/talk</code>)으로 말합니다.
+            채팅 모드 안에서 모든 개입(대상·전달 방식·미읽음 대기 메시지 수정·취소·터미널 전환)을 끝내도록 두어 그래프로 돌아가지 않게 합니다. 기본 전달은 <code>일반</code>(queue)이며, <code>방 전체</code> 전송은 노드마다 1턴씩 소비함을 안내합니다. 외부 에이전트(pull 방식)를 고르면 <code>조정</code>·<code>중단</code>을 비활성화하고 이유를 표시합니다.
+            <span class="ev">• <strong>방식 A (기존 PTY 유지 + 기록 파싱)</strong>: 채팅 입력은 <code>POST /api/chat/send</code>(<code>from: human</code>, <code>queue</code>/<code>steer</code>/<code>interrupt</code>)로 보내고 화면은 JSONL·서버 기록을 읽어 그립니다. 기존 어댑터·PTY 호스트·권한 승인·<code>[터미널 보기]</code> 전환이 그대로 살아 있습니다.<br>
+            • <strong>방식 B (헤드리스 전환)</strong>: <code>claude -p --output-format stream-json</code>, TUI 없는 <code>codex app-server</code>, <code>cursor-agent -p --output-format stream-json</code>으로 띄우면 토큰 단위 실시간 스트리밍이 깔끔하지만, 터미널 폴백과 대화형 슬래시 명령을 잃고 17개 어댑터 수명주기를 새로 짜야 합니다.</span>
           </td>
         </tr>
         <tr>
-          <td>4. API 계약과<br>화면 변경</td>
+          <td>4. 기존 채팅방과의<br>관계와 API 계약</td>
           <td>
-            <strong>API(모두 추가 전용, 기존 계약 깨짐 없음)</strong>: <code>GET /api/chat/threads</code>, <code>GET /api/chat/threads/{key}</code>, <code>POST /api/chat/send</code>(<code>origin::writes_from_page</code> 보호). 실시간 갱신은 기존 <code>GET /api/events</code> WebSocket의 <code>Recorded</code>·<code>NodesChanged</code>를 재사용합니다.
-            <span class="ev">근거: <code>src/daemon.rs:233-250</code>, <code>tests/contract/released.txt</code>, <code>web/src/TalkThread.tsx</code></span>
-            <strong>화면(<code>web/src/</code>)</strong>: 기존 <code>TalkThread.tsx</code> 말풍선(사람=진한 말풍선, 외부 에이전트=연한 말풍선, 노드=흰 말풍선)과 <code>EventConsole.tsx</code> 종류 배지를 그대로 씁니다.
+            기존 <code>/rooms/&lt;노드&gt;</code>, <code>loom room send/read</code>, Aside의 <code>POST /api/rooms/{node}/outside</code>는 그대로 유지합니다(<code>src/daemon/rooms.rs</code>, <code>src/cli/room.rs</code>).
+            새 API는 모두 추가 전용이라 <code>tests/contract</code> 깨짐이 없습니다: <code>GET /api/chat/threads</code>, <code>GET /api/chat/threads/{key}</code>, <code>GET /api/nodes/{id}/session-chat</code>, <code>POST /api/chat/send</code>(<code>origin::writes_from_page</code> 보호).
           </td>
         </tr>
         <tr>
-          <td>5. 예상 규모와<br>주요 리스크</td>
+          <td>5. 단계별 규모와<br>주요 리스크</td>
           <td>
-            <strong>규모</strong>: 1인 워커 기준 <strong>웹 1차 2.5~4일</strong>(DB·조회 1일, API·계약 0.5일, 웹 UI 1~1.5일, 실측·검토 0.5~1일). GPUI 데스크톱(<code>desktop/</code>) 포팅은 별도 2~3일입니다.<br>
-            <strong>리스크</strong>: ① <em>메시지 양</em> — <code>exited</code>·<code>adopted</code>·<code>idle</code> 등 시스템 알림이 많아 기본 필터에서 접고 50건 단위 페이지네이션을 씁니다. ② <em>토큰 비용</em> — 채팅 모드는 사람용 보기이며 에이전트 컨텍스트에 전체 기록을 넣지 않습니다(추가 토큰 0). ③ <em>외부 에이전트(Aside) 프라이버시·신뢰</em> — <code>doc_talk</code>·<code>messages</code>는 로컬 DB에만 남으며, 화면에 <code>외부 에이전트 · Aside</code> 배지를 유지하고 개입 API는 브라우저·앱(<code>Origin</code> 검사)에서만 허용합니다.
+            <strong>규모</strong>: 1단계 그룹 채팅방·개입 <strong>2.5~4일</strong> → 2단계 주요 4종(Claude·Codex·Cursor·Pi/OMP) 세션 채팅 UI <strong>+4~6일</strong> → 3단계 헤드리스 모드 선택 시 <strong>+2~3주</strong>(웹 기준, GPUI 데스크톱 별도 2~3일).<br>
+            <strong>리스크</strong>: ① <em>기록 형식 변경</em> — Claude·Cursor JSONL은 비공개 내부 형식이라 CLI 판이 오르면 파서를 맞춰야 합니다(미지원 시 터미널 폴백으로 안전망 확보). ② <em>대용량 JSONL</em> — 10~80MB 세션은 끝에서 역방향 읽기·테일링이 필요합니다. ③ <em>실시간성</em> — JSONL은 턴·도구 경계에 써져 토큰 단위 스트리밍보다 한 박자 늦습니다(Codex·OpenCode는 즉시 스트리밍). ④ <em>토큰 비용·프라이버시</em> — 채팅방 보기는 사람 전용이며 지정한 노드만 메시지를 받습니다. 외부 에이전트(Aside) 글은 로컬 DB에만 남고 <code>외부 에이전트 · Aside</code> 배지로 구분합니다.
           </td>
         </tr>
       </tbody>
@@ -264,14 +274,14 @@ code { font-family: var(--mono); font-size: 12px; }
 
   <div class="flow">
     <span>상단에서 「채팅」 모드 전환</span><i>→</i>
-    <span>스레드 선택 (에이전트 간 / 외부 에이전트)</span><i>→</i>
-    <span>종류 배지·외부 말풍선으로 흐름 확인</span><i>→</i>
-    <span>받는 대상·방식(일반/조정/중단) 선택 후 개입</span><i>→</i>
-    <span>대상 노드가 즉시 수신·응답</span>
+    <span>그룹 채팅방(2명 이상·외부) 또는 1:1 에이전트 세션 선택</span><i>→</i>
+    <span>말풍선·접힌 도구 카드로 작업 확인</span><i>→</i>
+    <span>대상·방식(일반/조정/중단) 선택 후 개입</span><i>→</i>
+    <span>필요 시 [터미널 보기]로 즉시 전환</span>
   </div>
 
   <div class="fig">
-    <h2>① D1-A 메인 화면 전환(전체 채팅 모드) <span class="tag">그래프 ↔ 채팅 전환 · 2단 목록과 대화</span></h2>
+    <h2>① D1-A 그룹 채팅방 (에이전트 간 다자 통신 + 외부 에이전트) <span class="tag">2명 이상 참여 · 중간 개입</span></h2>
     <div class="page">
       <div class="tbar">
         <span class="logo">loom</span>
@@ -291,42 +301,52 @@ code { font-family: var(--mono); font-size: 12px; }
           <div class="sitem"><i class="dot ok"></i>Aside · 총괄 방</div>
         </aside>
         <div class="chat-main">
-          <section class="tlist" aria-label="스레드 목록">
+          <section class="tlist" aria-label="채팅 목록">
             <div class="tlist-head">
-              <span class="search">스레드·메시지 검색</span>
+              <span class="search">방·세션·메시지 검색</span>
             </div>
             <div class="tfilters">
               <span class="fchip on">전체</span>
-              <span class="fchip">에이전트 간</span>
+              <span class="fchip">그룹방</span>
+              <span class="fchip">1:1 세션</span>
               <span class="fchip">외부</span>
-              <span class="fchip">시스템 숨김</span>
             </div>
-            <div>
-              <div class="tgroup">진행 중인 대화</div>
-              <div class="trow on">
-                <div class="trow-top"><i class="dot run"></i><span>총괄 ↔ 코디 채팅모드</span><span class="time">14:42</span></div>
-                <div class="trow-sub">사람: D4 보존안까지 포함해 목업...</div>
-                <div class="trow-tags"><span class="pill run">질문·답변</span><span class="pill out">Aside 포함</span></div>
-              </div>
-              <div class="trow">
-                <div class="trow-top"><i class="dot ok"></i><span>코디 채팅모드 ↔ 검토자 채팅</span><span class="time">14:21</span></div>
-                <div class="trow-sub">판정 통과 · HEAD 9c4a12e</div>
-                <div class="trow-tags"><span class="pill ok">판정 · 통과</span></div>
-              </div>
-              <div class="trow mk new" data-n="2">
-                <div class="trow-top"><i class="dot ok"></i><span>Aside ↔ 총괄</span><span class="time">14:38</span></div>
-                <div class="trow-sub">외부 에이전트: 사내 위키 문서 확인...</div>
-                <div class="trow-tags"><span class="pill out">외부 에이전트</span></div>
-              </div>
+            <div class="tgroup">그룹 채팅방</div>
+            <div class="trow on">
+              <div class="trow-top"><i class="dot run"></i><span>채팅모드 작업방 (4명)</span><span class="time">14:42</span></div>
+              <div class="trow-sub">사람: 기존 /rooms 링크는 유지해...</div>
+              <div class="trow-tags"><span class="pill run">다자방</span><span class="pill out">Aside 포함</span></div>
+            </div>
+            <div class="trow">
+              <div class="trow-top"><i class="dot ok"></i><span>검토 라운드 · API (3명)</span><span class="time">14:21</span></div>
+              <div class="trow-sub">검토자: 판정 통과 · HEAD 9c4a12e</div>
+              <div class="trow-tags"><span class="pill ok">판정 · 통과</span></div>
+            </div>
+            <div class="tgroup">에이전트 1:1 세션</div>
+            <div class="trow">
+              <div class="trow-top"><i class="dot run"></i><span>총괄</span><span class="time">14:40</span></div>
+              <div class="trow-sub">Claude · 도구 3건 · 대기 중</div>
+            </div>
+            <div class="trow mk new" data-n="2">
+              <div class="trow-top"><i class="dot run"></i><span>코디 채팅모드</span><span class="time">14:42</span></div>
+              <div class="trow-sub">Gemini · 채팅 UI로 보는 중</div>
+              <div class="trow-tags"><span class="pill">세션 채팅</span></div>
             </div>
           </section>
-          <section class="conv" aria-label="선택한 스레드">
+          <section class="conv" aria-label="그룹 채팅방">
             <div class="conv-head">
-              <b>총괄 ↔ 코디 채팅모드</b>
-              <span class="state"><i></i>일하는 중</span>
+              <b>채팅모드 작업방</b>
+              <span class="state"><i></i>4명 참여 중</span>
               <span class="spacer"></span>
               <span class="abtn ghost"><svg><use href="#link"/></svg>방 링크 복사</span>
-              <span class="abtn ghost">시스템 알림 3건 보기</span>
+              <span class="abtn ghost">시스템 알림 3건</span>
+              <div class="members">
+                <span class="pill">총괄</span>
+                <span class="pill run">코디 채팅모드</span>
+                <span class="pill ok">워커 API</span>
+                <span class="pill">검토자 채팅</span>
+                <span class="pill out">외부 · Aside</span>
+              </div>
             </div>
             <div class="msgs">
               <div class="mrow left mk new" data-n="3">
@@ -335,18 +355,18 @@ code { font-family: var(--mono); font-size: 12px; }
                 <span class="mmeta">14:35 · 읽음</span>
               </div>
               <div class="mrow left">
-                <div class="mhead"><span>총괄 → 코디 채팅모드</span><span class="pill">답변</span></div>
-                <div class="bubble ag2">보존안을 기본으로 두고 D4 결정 상자로 사람에게 확인을 받으십시오.</div>
-                <span class="mmeta">14:36 · 읽음</span>
+                <div class="mhead"><span>워커 API → 코디 채팅모드</span><span class="pill ok">완료</span></div>
+                <div class="bubble ag2">통합 조회 초안과 계약 검사를 마쳤습니다.</div>
+                <span class="mmeta">14:37 · 읽음</span>
               </div>
               <div class="mrow right mk new" data-n="4">
                 <div class="mhead"><span class="pill out">외부 에이전트 · Aside</span><span>→ 총괄</span></div>
-                <div class="bubble out">브라우저에서 기존 채팅방(M152)과 외부 에이전트(M153) 문서를 확인했습니다.</div>
+                <div class="bubble out">브라우저에서 M152·M153 문서와 경쟁 제품 사례를 확인했습니다.</div>
                 <span class="mmeta">14:38 · 읽음</span>
               </div>
               <div class="mrow right mk new" data-n="5">
                 <div class="mhead"><span>사람 → 코디 채팅모드</span><span class="pill warn">조정</span></div>
-                <div class="bubble me">좋습니다. 채팅 모드에서도 기존 /rooms 링크는 깨지지 않게 유지하고 목업에 반영해 주세요.</div>
+                <div class="bubble me">좋습니다. 기존 /rooms 링크는 유지하고 1:1 세션도 채팅 UI로 보여 주세요.</div>
                 <span class="mmeta">14:42 · 읽음</span>
               </div>
             </div>
@@ -355,20 +375,20 @@ code { font-family: var(--mono); font-size: 12px; }
                 <span class="clabel">받는 대상</span>
                 <span class="chips mk new" data-n="6">
                   <span class="chip on">코디 채팅모드</span>
-                  <span class="chip">총괄</span>
-                  <span class="chip">양쪽 모두</span>
+                  <span class="chip">워커 API</span>
+                  <span class="chip">방 전체</span>
                 </span>
                 <span style="flex:1"></span>
                 <span class="clabel">전달 방식</span>
                 <span class="chips mk new" data-n="7">
-                  <span class="chip">일반</span>
-                  <span class="chip warn-on">조정</span>
+                  <span class="chip on">일반</span>
+                  <span class="chip">조정</span>
                   <span class="chip">중단</span>
                 </span>
               </div>
-              <div class="cbox">코디 채팅모드에게 보낼 말 (다음 도구 호출 사이에 전달됩니다)</div>
+              <div class="cbox">코디 채팅모드에게 보낼 말 (기본 일반 대기 · 대기 중 수정·취소·조정 승격 가능)</div>
               <div class="crow">
-                <span class="hint">Enter로 보내기 · Shift+Enter로 줄 바꾸기 · 선택한 대상만 메시지를 받습니다</span>
+                <span class="hint">Enter로 보내기 · 방 전체는 노드당 1턴 소비 · 외부 에이전트는 pull 방식이라 조정·중단 비활성</span>
                 <span class="abtn dark">보내기</span>
               </div>
             </div>
@@ -391,17 +411,132 @@ code { font-family: var(--mono); font-size: 12px; }
     </div>
     <div class="calls">
       <div><b>1</b><span>그래프와 채팅 모드를 전환합니다.</span></div>
-      <div><b>2</b><span>노드 쌍·외부 방 스레드 목록</span></div>
-      <div><b>3</b><span>에이전트 간 종류 배지</span></div>
+      <div><b>2</b><span>그룹 채팅방과 1:1 세션을 한 목록에 둡니다.</span></div>
+      <div><b>3</b><span>여러 노드의 메시지에 종류 배지를 붙입니다.</span></div>
       <div><b>4</b><span>외부 에이전트 말풍선입니다.</span></div>
       <div><b>5</b><span>사람 개입 말풍선과 대상·방식입니다.</span></div>
-      <div><b>6</b><span>받는 노드를 1개 또는 양쪽 모두로 고릅니다.</span></div>
+      <div><b>6</b><span>1명(기본) 또는 방 전체를 고릅니다.</span></div>
       <div><b>7</b><span>일반·조정·중단 전달 방식을 고릅니다.</span></div>
     </div>
   </div>
 
   <div class="fig">
-    <h2>② D1-B 오른쪽 도크 탭으로 추가 <span class="tag">그래프 캔버스 유지 · 도크 안에 [채팅] 탭 추가</span></h2>
+    <h2>② D1-A 에이전트 1:1 세션 채팅 <span class="tag">CLI 터미널 대신 말풍선·접힌 도구 카드 · 터미널 전환 유지</span></h2>
+    <div class="page">
+      <div class="tbar">
+        <span class="logo">loom</span>
+        <span style="color:var(--ink-3)">/</span>
+        <span>loom 저장소</span>
+        <span class="spacer"></span>
+        <span class="seg"><span class="si">그래프</span><span class="si on">채팅</span></span>
+      </div>
+      <div class="shell sess">
+        <aside class="side">
+          <div class="side-h">저장소 · 노드</div>
+          <div class="sitem"><i class="dot run"></i>총괄</div>
+          <div class="sitem sub on"><i class="dot run"></i>코디 채팅모드</div>
+          <div class="sitem sub"><i class="dot ok"></i>워커 API</div>
+          <div class="sitem sub"><i class="dot warn"></i>검토자 채팅</div>
+        </aside>
+        <div class="chat-main">
+          <section class="tlist" aria-label="채팅 목록">
+            <div class="tlist-head">
+              <span class="search">방·세션·메시지 검색</span>
+            </div>
+            <div class="tfilters">
+              <span class="fchip">전체</span>
+              <span class="fchip">그룹방</span>
+              <span class="fchip on">1:1 세션</span>
+              <span class="fchip">외부</span>
+            </div>
+            <div class="tgroup">에이전트 1:1 세션</div>
+            <div class="trow">
+              <div class="trow-top"><i class="dot run"></i><span>총괄</span><span class="time">14:40</span></div>
+              <div class="trow-sub">Claude · 세션 채팅</div>
+            </div>
+            <div class="trow on">
+              <div class="trow-top"><i class="dot run"></i><span>코디 채팅모드</span><span class="time">14:42</span></div>
+              <div class="trow-sub">Gemini · 도구 2건 실행 완료</div>
+              <div class="trow-tags"><span class="pill run">일하는 중</span></div>
+            </div>
+            <div class="trow">
+              <div class="trow-top"><i class="dot ok"></i><span>워커 API</span><span class="time">14:37</span></div>
+              <div class="trow-sub">Codex · 완료</div>
+            </div>
+            <div class="trow">
+              <div class="trow-top"><i class="dot"></i><span>셸 노드</span><span class="time">14:10</span></div>
+              <div class="trow-sub">터미널 전용 (기록 없음)</div>
+            </div>
+          </section>
+          <section class="conv" aria-label="코디 채팅모드 1:1 세션">
+            <div class="conv-head">
+              <b>코디 채팅모드</b>
+              <span class="pill">Gemini</span>
+              <span class="state"><i></i>일하는 중</span>
+              <span class="spacer"></span>
+              <span class="abtn mk new" data-n="8"><svg><use href="#term"/></svg>터미널 보기</span>
+            </div>
+            <div class="msgs">
+              <div class="mrow right">
+                <div class="mhead"><span>사람</span></div>
+                <div class="bubble me">각 에이전트 세션도 채팅 UI로 보여주고, 에이전트 간 통신은 다자 채팅방으로 목업을 고쳐 주세요.</div>
+                <span class="mmeta">14:43 · 읽음</span>
+              </div>
+              <div class="tstack mk new" data-n="9">
+                <span class="think">생각 요약 · 4초 · 프로필별 기록 경로 확인</span>
+                <div class="tcard"><span>▸</span><b>파일 검색</b><span>src/profile/*.rs · 14개</span><span class="tstat">완료</span></div>
+                <div class="tcard"><span>▸</span><b>명령 실행</b><span>show.sh chat-mode.html</span><span class="tstat">통과</span></div>
+              </div>
+              <div class="mrow left mk new" data-n="10">
+                <div class="mhead"><span>코디 채팅모드</span><span class="pill">응답</span></div>
+                <div class="bubble ag">Claude·Codex·Cursor·Pi 기록 출처를 확인해 v2 목업에 1:1 세션 채팅과 그룹 채팅방을 반영했습니다.</div>
+                <span class="mmeta">14:45</span>
+              </div>
+            </div>
+            <div class="compose">
+              <div class="cbar">
+                <span class="clabel">받는 대상</span>
+                <span class="chips"><span class="chip on">코디 채팅모드</span></span>
+                <span style="flex:1"></span>
+                <span class="clabel">전달 방식</span>
+                <span class="chips">
+                  <span class="chip on">일반</span>
+                  <span class="chip">조정</span>
+                  <span class="chip">중단</span>
+                </span>
+              </div>
+              <div class="cbox">코디 채팅모드에게 보낼 말 (채팅처럼 바로 입력합니다)</div>
+              <div class="crow">
+                <span class="hint">Enter로 보내기 · 기록 형식이 없는 에이전트는 [터미널 보기]로 전환됩니다</span>
+                <span class="abtn dark">보내기</span>
+              </div>
+            </div>
+          </section>
+        </div>
+        <aside class="rail">
+          <span class="ricon"><svg><use href="#bell"/></svg><span class="cnt">1</span></span>
+          <span class="ricon"><svg><use href="#log"/></svg></span>
+          <span class="ricon"><svg><use href="#doc"/></svg></span>
+          <span class="ricon"><svg><use href="#term"/></svg></span>
+        </aside>
+      </div>
+      <div class="sbar">
+        <span>Claude 34%</span>
+        <span>Codex 12%</span>
+        <span>Cursor 21%</span>
+        <span class="spacer"></span>
+        <span>v0.26.11</span>
+      </div>
+    </div>
+    <div class="calls">
+      <div><b>8</b><span>언제든 기존 터미널 화면으로 전환합니다.</span></div>
+      <div><b>9</b><span>생각 상태와 도구 호출을 접힌 카드로 보여줍니다.</span></div>
+      <div><b>10</b><span>CLI 출력 대신 에이전트 응답을 말풍선으로 그립니다.</span></div>
+    </div>
+  </div>
+
+  <div class="fig">
+    <h2>③ D1-B 오른쪽 도크 탭으로 추가 <span class="tag">그래프 캔버스 유지 · 도크 안에 [채팅] 탭 추가</span></h2>
     <div class="page">
       <div class="tbar">
         <span class="logo">loom</span>
@@ -425,7 +560,7 @@ code { font-family: var(--mono); font-size: 12px; }
           <div class="ncard-row">
             <div class="ncard">
               <div class="ncard-h"><i class="dot run"></i>코디 채팅모드<span style="margin-left:auto;color:var(--ink-3);font-weight:400">Gemini</span></div>
-              <div class="ncard-b">타당성 검토와 목업 작성 중</div>
+              <div class="ncard-b">타당성 검토와 v2 목업 작성 중</div>
             </div>
             <div class="ncard">
               <div class="ncard-h"><i class="dot ok"></i>워커 API<span style="margin-left:auto;color:var(--ink-3);font-weight:400">완료</span></div>
@@ -437,12 +572,12 @@ code { font-family: var(--mono); font-size: 12px; }
           <div class="dock-tabs">
             <span class="dtab">받은편지함</span>
             <span class="dtab">기록</span>
-            <span class="dtab on mk new" data-n="8">채팅</span>
+            <span class="dtab on mk new" data-n="11">채팅</span>
             <span class="dtab">문서</span>
             <span class="dtab">터미널</span>
           </div>
           <div class="dock-pick">
-            <span class="sel">총괄 ↔ 코디 채팅모드 ▾</span>
+            <span class="sel">채팅모드 작업방 (4명) ▾</span>
             <span class="abtn ghost">필터</span>
           </div>
           <section class="conv" aria-label="도크 채팅 스레드">
@@ -459,13 +594,13 @@ code { font-family: var(--mono); font-size: 12px; }
               </div>
               <div class="mrow right" style="max-width:86%">
                 <div class="mhead"><span>사람 → 코디</span><span class="pill warn">조정</span></div>
-                <div class="bubble me">기존 /rooms 링크를 유지해 주세요.</div>
+                <div class="bubble me">1:1 세션도 채팅 UI로 보여 주세요.</div>
                 <span class="mmeta">14:42 · 읽음</span>
               </div>
             </div>
-            <div class="compose" style="padding:8px 10px">
+            <div class="compose" style="padding:8px 10px;gap:8px">
               <div class="cbar">
-                <span class="chips"><span class="chip on">코디</span><span class="chip">총괄</span><span class="chip">양쪽</span></span>
+                <span class="chips"><span class="chip on">코디</span><span class="chip">워커</span><span class="chip">방 전체</span></span>
                 <span class="chips"><span class="chip">일반</span><span class="chip warn-on">조정</span></span>
               </div>
               <div class="cbox" style="min-height:36px">코디에게 보낼 말</div>
@@ -483,52 +618,65 @@ code { font-family: var(--mono); font-size: 12px; }
       </div>
     </div>
     <div class="calls">
-      <div><b>8</b><span>그래프와 나란히 열리지만 목록이 접히고 폭이 좁습니다.</span></div>
+      <div><b>11</b><span>그래프와 나란히 열리지만 목록이 접히고 폭이 좁습니다.</span></div>
     </div>
   </div>
 
-  <section class="decision" id="D1" data-for="1 8">
+  <section class="decision" id="D1" data-for="1 11">
     <h3><span class="did">D1</span>채팅 모드를 화면 어디에 둘까요?</h3>
     <div class="opts">
-      <div class="opt" data-recommended><span class="key">A</span><span class="label">메인 화면 전환(그래프 ↔ 채팅 전체 모드)<span class="mark">권장</span><span class="sub">지금: 그래프와 별도 /rooms 탭 오가기 → 바뀐 뒤: 한 창에서 2단 스레드 목록·대화·개입 · 비용 보통(1~1.5일) · 위험 낮음 · 되돌리기: 전환 버튼 제거</span></span></div>
-      <div class="opt"><span class="key">B</span><span class="label">오른쪽 도크에 [채팅] 탭으로 추가<span class="sub">지금: 도크 4개 탭 → 바뀐 뒤: 그래프와 나란히 채팅 확인(스레드 목록은 드롭다운) · 비용 작음(1일) · 위험: 긴 대화·다수 스레드 읽기 불편 · 되돌리기: 탭 제거</span></span></div>
+      <div class="opt" data-recommended><span class="key">A</span><span class="label">메인 화면 전환(그래프 ↔ 채팅 전체 모드)<span class="mark">권장</span><span class="sub">지금: 그래프와 별도 /rooms 탭 오가기 → 바뀐 뒤: 한 창에서 그룹방·1:1 세션·도구 카드 읽기 · 비용 보통 · 위험 낮음 · 되돌리기: 전환 버튼 제거</span></span></div>
+      <div class="opt"><span class="key">B</span><span class="label">오른쪽 도크에 [채팅] 탭으로 추가<span class="sub">지금: 도크 4개 탭 → 바뀐 뒤: 그래프와 나란히 확인(목록은 드롭다운) · 비용 작음 · 위험: 도구 카드·긴 세션 대화 읽기 좁음 · 되돌리기: 탭 제거</span></span></div>
     </div>
     <ul class="why">
-      <li>에이전트 간 통신과 외부 에이전트 방을 여러 스레드로 오가며 읽으려면 목록과 대화가 나란히 보여야 합니다.</li>
-      <li>기존 오른쪽 도크(받은편지함·기록·문서·터미널)는 그대로 남아 필요할 때 옆에서 열 수 있습니다.</li>
+      <li>그룹 채팅방과 에이전트 1:1 세션(접힌 도구 카드·긴 응답)을 오가며 읽으려면 넓은 2단 레이아웃이 필요합니다.</li>
+      <li>오른쪽 도크(받은편지함·기록·문서·터미널)는 그대로 남아 필요할 때 함께 열 수 있습니다.</li>
     </ul>
   </section>
 
-  <section class="decision" id="D2" data-for="2">
-    <h3><span class="did">D2</span>스레드 목록을 어떤 기준으로 묶을까요?</h3>
+  <section class="decision" id="D2" data-for="2 3">
+    <h3><span class="did">D2</span>에이전트 간 채팅방을 어떤 기준으로 묶을까요?</h3>
     <div class="opts">
-      <div class="opt" data-recommended><span class="key">A</span><span class="label">노드 쌍(A ↔ B) + 외부 에이전트 방 단위<span class="mark">권장</span><span class="sub">지금: 이벤트 콘솔에 모든 메시지가 섞임 → 바뀐 뒤: 대화 당사자별로 분리 · 비용 작음 · 위험: 노드가 많으면 목록이 길어져 필터 필요 · 되돌리기: 조회 그룹 키 변경</span></span></div>
-      <div class="opt"><span class="key">B</span><span class="label">작업(루트 노드 트리) 단위 1개 단체방<span class="sub">지금: 이벤트 콘솔 전체 → 바뀐 뒤: 한 작업의 모든 노드가 1개 방에 모임 · 비용 작음 · 위험: 코디·워커·검토자 대화가 한 방에 섞여 개입 대상이 흐려짐 · 되돌리기: 조회 그룹 키 변경</span></span></div>
+      <div class="opt" data-recommended><span class="key">A</span><span class="label">그룹 채팅방(2명 이상 참여: 작업 트리·검토 라운드 + 외부 에이전트)<span class="mark">권장</span><span class="sub">지금: 이벤트 콘솔에 모든 메시지가 섞임 → 바뀐 뒤: 코디·워커·검토자·외부 에이전트가 한 방에 모여 흐름 파악 · 비용 작음 · 위험: 참여자가 많으면 대상 선택 필요 · 되돌리기: 그룹 키 변경</span></span></div>
+      <div class="opt"><span class="key">B</span><span class="label">1:1 노드 쌍(A ↔ B) 단위로만 분리<span class="sub">지금: 이벤트 콘솔 전체 → 바뀐 뒤: 2명씩만 분리 · 비용 작음 · 위험: 코디-워커-검토자 흐름을 보려면 방 여러 개를 오가야 함 · 되돌리기: 그룹 키 변경</span></span></div>
     </div>
     <ul class="why">
-      <li>노드 쌍 기준이면 대화 맥락과 사람의 개입 대상(A, B, 양쪽)이 바로 대응됩니다.</li>
+      <li>사람 수정 요청(“에이전트간 통신은 둘(또는 더 많이) 사이의 채팅방으로 표현”)에 맞고, 작업 단위 맥락이 끊기지 않습니다.</li>
+      <li>개별 노드와의 1:1 대화는 같은 목록의 「에이전트 1:1 세션」에서 바로 열 수 있습니다.</li>
     </ul>
   </section>
 
   <section class="decision" id="D3" data-for="6 7">
     <h3><span class="did">D3</span>사람 개입 시 대상 선택과 전달 방식을 어디까지 열까요?</h3>
     <div class="opts">
-      <div class="opt" data-recommended><span class="key">A</span><span class="label">대상(노드 1개 또는 양쪽 모두) + 방식(일반·조정·중단)<span class="mark">권장</span><span class="sub">지금: /rooms 일반 메모 1개만 가능 → 바뀐 뒤: 대화 중 바로 조정·중단 개입 · 비용 보통(0.5일 추가) · 위험: 실수로 중단 선택 시 턴 끊김(중단 시 경고색 강조) · 되돌리기: 방식 선택 숨김</span></span></div>
-      <div class="opt"><span class="key">B</span><span class="label">대상 1개 + 일반 메모만(기존 채팅방과 동일)<span class="sub">지금: /rooms와 같음 → 바뀐 뒤: 일하는 중인 노드에 즉시 개입 불가 · 비용 작음 · 위험: 개입 체감이 약함 · 되돌리기: 나중에 확장 가능</span></span></div>
+      <div class="opt" data-recommended><span class="key">A</span><span class="label">단일 대상·일반 대기 기본 + 방 전체(턴 비용 안내)·조정/중단·미읽음 수정/취소<span class="mark">권장</span><span class="sub">지금: /rooms 일반 메모 1명만 가능 → 바뀐 뒤: 그래프 전환 없이 채팅 안에서 개입 완결(외부 에이전트는 조정·중단 비활성) · 비용 보통(+0.5일) · 위험: 중단 오선택 주의 · 되돌리기: 승격 버튼 숨김</span></span></div>
+      <div class="opt"><span class="key">B</span><span class="label">대상 1명 + 일반 메모만(기존 채팅방과 동일)<span class="sub">지금: /rooms와 같음 → 바뀐 뒤: 일하는 중인 노드에 즉시 개입 불가 · 비용 작음 · 위험: 개입 체감이 약함 · 되돌리기: 추후 확장</span></span></div>
     </div>
     <ul class="why">
       <li>에이전트가 잘못된 방향으로 돌 때 채팅을 보다가 바로 조정(<code>--steer</code>)이나 중단(<code>--interrupt</code>)으로 개입할 수 있습니다.</li>
     </ul>
   </section>
 
-  <section class="decision" id="D4" data-for="3">
-    <h3><span class="did">D4</span>병합 후 지운 노드의 대화 기록을 남길까요?</h3>
+  <section class="decision" id="D4" data-for="8 9 10">
+    <h3><span class="did">D4</span>에이전트 1:1 세션 채팅 UI를 어떻게 구현할까요?</h3>
     <div class="opts">
-      <div class="opt" data-recommended><span class="key">A</span><span class="label">남긴다(<code>recipient</code> 연쇄 삭제 해제 + <code>recipient_name</code> 저장)<span class="mark">권장</span><span class="sub">지금: 노드 삭제 시 받은 메시지 전부 소실 → 바뀐 뒤: 끝난 작업 대화도 다시 확인 · 비용 작음(DB 마이그레이션 1개) · 위험: DB 크기 서서히 증가 · 되돌리기: 오래된 기록 정리 작업 추가</span></span></div>
-      <div class="opt"><span class="key">B</span><span class="label">살아 있는 노드의 대화만 보인다(현재 삭제 방식 유지)<span class="sub">지금: 노드 삭제 시 소실 → 바뀐 뒤: DB 변경 최소(<code>created_at</code>만 추가) · 위험: 워커가 자동 회수되면 대화가 사라짐 · 되돌리기: 추후 마이그레이션 가능</span></span></div>
+      <div class="opt" data-recommended><span class="key">A</span><span class="label">기존 PTY 유지 + 세션 기록(.jsonl·서버) 파싱, [터미널 보기] 전환 유지<span class="mark">권장</span><span class="sub">지금: PTY 터미널만 표시 → 바뀐 뒤: 주요 4종(Claude·Codex·Cursor·Pi/OMP)을 채팅 UI로 표시하고 미지원 시 터미널 폴백 · 비용 +4~6일 · 위험: JSONL은 턴/도구 경계 갱신 · 되돌리기: 파서 비활성화</span></span></div>
+      <div class="opt"><span class="key">B</span><span class="label">헤드리스 모드(<code>claude -p stream-json</code>, TUI 없는 <code>codex app-server</code> 등)로 전환<span class="sub">지금: PTY TUI → 바뀐 뒤: 토큰 단위 스트리밍 가능하나 터미널 보기·슬래시 명령 상실 · 비용 +2~3주 · 위험: 17개 어댑터 수명주기 전면 변경 · 되돌리기: 어려움</span></span></div>
     </div>
     <ul class="why">
-      <li>loom은 병합이 끝난 워커 노드를 자동으로 지우므로 연쇄 삭제를 풀지 않으면 작업 직후 대화 기록이 비게 됩니다.</li>
+      <li>방식 A는 기존 PTY 호스트·계정 전환·권한 승인·터미널 폴백을 깨지 않고 점진적으로 채팅 UI를 올릴 수 있습니다.</li>
+      <li>향후 필요하면 어댑터 단위로 헤드리스 스트리밍을 선택 적용할 수 있습니다.</li>
+    </ul>
+  </section>
+
+  <section class="decision" id="D5" data-for="3">
+    <h3><span class="did">D5</span>병합 후 지운 노드의 대화 기록을 남길까요?</h3>
+    <div class="opts">
+      <div class="opt" data-recommended><span class="key">A</span><span class="label">남긴다(<code>recipient</code> 연쇄 삭제 해제 + <code>recipient_name</code> 저장)<span class="mark">권장</span><span class="sub">지금: 노드 삭제 시 받은 메시지 전부 소실 → 바뀐 뒤: 끝난 작업의 그룹 채팅방 기록도 유지 · 비용 작음(마이그레이션 1개) · 위험: DB 크기 서서히 증가 · 되돌리기: 오래된 기록 정리 작업 추가</span></span></div>
+      <div class="opt"><span class="key">B</span><span class="label">살아 있는 노드의 대화만 보인다(현재 삭제 방식 유지)<span class="sub">지금: 노드 삭제 시 소실 → 바뀐 뒤: DB 변경 최소(<code>created_at</code>만 추가) · 위험: 워커가 자동 회수되면 그룹방 대화가 빔 · 되돌리기: 추후 마이그레이션</span></span></div>
+    </div>
+    <ul class="why">
+      <li>loom은 병합이 끝난 워커 노드를 자동으로 지우므로 연쇄 삭제를 풀지 않으면 작업 직후 그룹 채팅방 기록이 비게 됩니다.</li>
     </ul>
   </section>
 </main>

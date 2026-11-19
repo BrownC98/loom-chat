@@ -1,7 +1,7 @@
 mod acts;
-mod add_repo;
-mod calls;
-mod pop;
+pub(crate) mod add_repo;
+pub(crate) mod calls;
+pub(crate) mod pop;
 mod rename;
 mod tree;
 

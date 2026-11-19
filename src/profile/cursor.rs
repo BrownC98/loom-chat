@@ -377,7 +377,7 @@ fn skills_from(value: Option<&str>) -> AlwaysOn {
         .unwrap_or_default()
 }
 
-pub(super) const WAITING: &str = "When no independent work remains, end your turn. loom wakes you with a new message when one arrives. Cursor runs that wake hook only when ~/.cursor/hooks.json has a \"stop\" entry; if it has none, wait for an expected reply with loom wait --reply-to <message-id> --timeout <seconds> before you end your turn. The loom guard line before shell commands is inserted by loom; do not remove it or add it yourself. Do not use your AskQuestion tool: the human answers only loom ask.";
+pub(super) const WAITING: &str = "Mail wakes you if ~/.cursor/hooks.json has a \"stop\" entry. Without it, use loom wait with a reply ID and timeout for expected replies. Leave the loom guard line before shell commands. Only loom adds it. Ask the human with loom ask only.";
 
 const QUESTION_TOOL: &str = "AskQuestion";
 

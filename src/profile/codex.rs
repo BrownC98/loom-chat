@@ -63,7 +63,8 @@ pub const PROMPT: Grammar = Grammar {
 
 pub const PINNED_VERSION: &str = "0.159.2";
 
-pub(super) const WAITING: &str = "When waiting for children and no independent work remains, end your turn. Their messages start a new turn automatically. Do not run an unbounded loom wait.";
+pub(super) const WAITING: &str =
+    "Loom mail starts a new turn when idle. Always set a timeout on loom wait.";
 
 fn usage(launch: Launch) -> String {
     format!(

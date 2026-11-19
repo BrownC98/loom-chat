@@ -87,11 +87,5 @@ serde_json.workspace = true
 schemars = "0.8.22"
 typify = { version = "0.8.0", default-features = false }
 
-[profile.dev]
-debug = "line-tables-only"
-
-[profile.dev.package."*"]
-debug = false
-
 [lints]
 workspace = true

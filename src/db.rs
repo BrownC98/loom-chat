@@ -584,7 +584,8 @@ fn copy_tables(conn: &Connection, moved: impl Fn(&str) -> String) -> rusqlite::R
     let tables: Vec<String> = conn
         .prepare(
             "SELECT name FROM old.sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
-            ORDER BY name != 'repos', name != 'nodes', name",
+            ORDER BY name != 'repos', name != 'nodes', name NOT IN ('messages', 'chat_rooms'),
+                     name = 'chat_members', name",
         )?
         .query_map([], |row| row.get(0))?
         .collect::<rusqlite::Result<_>>()?;
@@ -604,7 +605,11 @@ fn copy_tables(conn: &Connection, moved: impl Fn(&str) -> String) -> rusqlite::R
 }
 
 fn move_linux_paths(conn: &Connection, moved: impl Fn(&str) -> String) -> rusqlite::Result<()> {
-    for (table, column) in [("repos", "path"), ("nodes", "worktree")] {
+    for (table, column) in [
+        ("repos", "path"),
+        ("nodes", "worktree"),
+        ("chat_archived_nodes", "worktree"),
+    ] {
         let rows: Vec<(i64, String)> = conn
             .prepare(&format!(
                 "SELECT rowid, {column} FROM old.{table} WHERE {column} LIKE '/%' AND {column} NOT LIKE '//%'"
@@ -612,9 +617,20 @@ fn move_linux_paths(conn: &Connection, moved: impl Fn(&str) -> String) -> rusqli
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
             .collect::<rusqlite::Result<_>>()?;
         for (rowid, path) in rows {
+            let moved = moved(&path);
+            if column == "worktree" {
+                conn.execute(
+                    &format!(
+                        "UPDATE old.chat_room_messages
+                         SET room = format('work-%d-%s', (SELECT repo FROM old.{table} WHERE rowid = ?1), hex(?3))
+                         WHERE room = format('work-%d-%s', (SELECT repo FROM old.{table} WHERE rowid = ?1), hex(?2))"
+                    ),
+                    (rowid, &path, &moved),
+                )?;
+            }
             conn.execute(
                 &format!("UPDATE old.{table} SET {column} = ?1 WHERE rowid = ?2"),
-                (moved(&path), rowid),
+                (moved, rowid),
             )?;
         }
     }

@@ -1,3 +1,4 @@
+pub mod chat;
 pub mod docs;
 pub mod errors;
 pub mod events;

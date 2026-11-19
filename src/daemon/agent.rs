@@ -102,13 +102,15 @@ impl App {
         node: NodeId,
         prompt: Option<&str>,
     ) -> Result<Option<String>, Refusal> {
-        let injected = self.graph.first_input_taken(node)?;
+        let injected = self.graph.first_input_taken(node, prompt)?;
         if !injected {
             self.graph.human_input(node)?;
         }
         self.graph.limit_cleared(node)?;
         self.draft_ended(node);
-        self.turn_ends.human(node, prompt);
+        if !injected {
+            self.turn_ends.human(node, prompt);
+        }
         if !injected && !prompt.is_some_and(|p| p.trim_start().starts_with('/')) {
             self.graph.instructed(node, prompt.unwrap_or_default())?;
         }
@@ -141,6 +143,7 @@ impl App {
         }
         let nudge = nudge?;
         self.turn_ends.stopped(node, ended.turn.as_deref());
+        self.tools.transcript_changed();
         Ok(nudge)
     }
 
@@ -403,7 +406,9 @@ impl App {
             Report::Model(model) => self.graph.set_model(NodeLaunch { node, token }, &model),
             Report::Session(session) => {
                 self.sessions.started(node, token);
-                self.graph.set_session(token, &session)
+                self.graph
+                    .set_session(token, &session)
+                    .inspect(|()| self.tools.transcript_changed())
             }
             Report::HumanWait(wait) => {
                 let on_screen = wait.as_ref().is_some_and(|(_, _, prompt)| prompt.is_none());
@@ -441,6 +446,7 @@ impl App {
                 self.feed(node, AgentEvent::TurnEnded);
                 self.run_at_turn_end(node, None);
                 self.turn_ends.stopped(node, turn.as_deref());
+                self.tools.transcript_changed();
                 self.turn_stopped(node)
             }
             Report::Busy => {
@@ -482,6 +488,7 @@ impl App {
             Some(session) => self
                 .graph
                 .set_session(token, session)
+                .inspect(|()| self.tools.transcript_changed())
                 .map_err(Refusal::from),
             None => Ok(()),
         }

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use super::events;
 use super::images::SentImage;
 use super::token::{NodeLaunch, current_in};
-use super::turns::TYPED;
+use super::turns::{TYPED, heard_chat};
 use super::{Db, hosts, waits};
 use super::{
     Graph, Hold, REACHABLE, Work, ambiguous, finish_work, from_json, optional_json, parent_of,
@@ -329,11 +329,14 @@ impl Graph {
             )
             .optional()?;
         if let Some(delivery) = &delivery {
-            db.execute(
+            let handed = db.execute(
                 "UPDATE messages SET sent_at = unixepoch()
                  WHERE id = ?1 AND delivered = 0 AND sent_at IS NULL",
                 [delivery.id.0],
             )?;
+            if handed > 0 {
+                self.publish_nodes();
+            }
         }
         Ok(delivery)
     }
@@ -400,9 +403,11 @@ impl Graph {
             taken.push(delivery);
         }
         hand(&tx, &taken)?;
-        let resumed = !taken.is_empty() && resume(&tx, node)?;
+        if !taken.is_empty() {
+            resume(&tx, node)?;
+        }
         tx.commit()?;
-        if resumed {
+        if !taken.is_empty() {
             self.publish_nodes();
         }
         Ok(taken)
@@ -464,8 +469,11 @@ impl Graph {
             }
             return self.ack_in(db, node, &notices);
         }
-        steer(&db, node, "1")?;
+        let changed = steer(&db, node, "1")?;
         drop(db);
+        if changed > 0 {
+            self.publish_nodes();
+        }
         self.mail.notify_waiters();
         Ok(())
     }
@@ -485,18 +493,14 @@ impl Graph {
             .flatten();
         let linked = agent.as_ref().is_some_and(self.linked);
         let tx = db.transaction()?;
-        let read = match linked {
-            true => {
-                print_handed(&tx, node, ids)?;
-                0
-            }
-            false => {
-                print(&tx, node, ids)?;
-                read(&tx, node)?
-            }
+        let changed = if linked {
+            print_handed(&tx, node, ids)?
+        } else {
+            print(&tx, node, ids)?;
+            read(&tx, node)?
         };
         tx.commit()?;
-        if read > 0 {
+        if changed > 0 {
             self.publish_nodes();
         }
         Ok(())
@@ -700,15 +704,18 @@ pub(super) fn read(db: &Connection, node: NodeId) -> rusqlite::Result<usize> {
         .prepare(
             "UPDATE messages SET delivered = 1
              WHERE recipient = ?1 AND delivered = 0 AND printed = 1
-             RETURNING id, kind, sender, sender_name, what",
+             RETURNING id, kind, sender, sender_name, what,
+                CASE WHEN chat_group IS NOT NULL AND sender_node_id IS NULL
+                     AND sender_name = ?2 THEN body END",
         )?
-        .query_map([node.0], |row| {
+        .query_map(params![node.0, HUMAN], |row| {
             Ok((
                 MessageId(row.get(0)?),
                 from_json::<Kind>(row, 1)?,
                 row.get::<_, Option<u32>>(2)?.map(NodeId),
                 row.get::<_, String>(3)?,
                 optional_json::<MessageKind>(row, 4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -716,7 +723,14 @@ pub(super) fn read(db: &Connection, node: NodeId) -> rusqlite::Result<usize> {
         return Ok(0);
     }
     let to = events::who(db, node)?;
-    for (id, how, sender, name, what) in read.iter().cloned() {
+    let count = read.len();
+    let mut last = None;
+    for (id, how, sender, name, what, prompt) in read {
+        if let Some(prompt) = prompt
+            && last.as_ref().is_none_or(|(previous, _)| id.0 > *previous)
+        {
+            last = Some((id.0, prompt));
+        }
         let entry = Entry::Message {
             how,
             what,
@@ -728,7 +742,10 @@ pub(super) fn read(db: &Connection, node: NodeId) -> rusqlite::Result<usize> {
         };
         events::write(db, &entry, Some(id))?;
     }
-    Ok(read.len())
+    if let Some((_, prompt)) = last {
+        heard_chat(db, node, &prompt)?;
+    }
+    Ok(count)
 }
 
 fn id_list(ids: &[MessageId]) -> String {
@@ -772,7 +789,9 @@ pub(super) fn hand_first_input(
 fn print(db: &Connection, node: NodeId, ids: &[MessageId]) -> rusqlite::Result<usize> {
     db.execute(
         "UPDATE messages SET printed = 1
-         WHERE recipient = ?1 AND delivered = 0 AND id IN (SELECT value FROM json_each(?2))",
+         WHERE recipient = ?1 AND delivered = 0 AND printed = 0
+         AND (chat_group IS NULL OR sent_at IS NOT NULL)
+         AND id IN (SELECT value FROM json_each(?2))",
         params![node.0, id_list(ids)],
     )
 }
@@ -784,7 +803,7 @@ pub(super) fn print_handed(
 ) -> rusqlite::Result<usize> {
     db.execute(
         "UPDATE messages SET printed = 1
-         WHERE recipient = ?1 AND delivered = 0 AND sent_at IS NOT NULL
+         WHERE recipient = ?1 AND delivered = 0 AND printed = 0 AND sent_at IS NOT NULL
          AND id IN (SELECT value FROM json_each(?2))",
         params![node.0, id_list(ids)],
     )
@@ -827,7 +846,8 @@ const SWITCHED_INTERRUPT: &str = "(The sender sent this interrupt to the agent t
 
 pub(super) fn queue_interrupts(db: &Connection, node: NodeId) -> rusqlite::Result<usize> {
     db.execute(
-        "UPDATE messages SET kind = ?3, body = ?4 || body
+        "UPDATE messages SET kind = ?3, body = ?4 || body,
+             chat_exposed = CASE WHEN chat_group IS NULL THEN chat_exposed ELSE 1 END
          WHERE recipient = ?1 AND delivered = 0 AND kind = ?2",
         params![
             node.0,
@@ -965,7 +985,7 @@ fn insert(
             to_json(&kind),
             body,
             to_json(what),
-            to.is_none(),
+            to.is_none() && from.id.is_some(),
         ],
     )?;
     Ok(MessageId(db.last_insert_rowid() as u32))
@@ -1015,20 +1035,28 @@ pub(super) fn enqueue_unsigned(
     what: &MessageKind,
     body: &str,
 ) -> Result<MessageId, Refusal> {
-    let recipient = events::who(db, to)?;
-    check_room(db, to, &recipient.name)?;
+    enqueue_unsigned_in(db, Some(to), sender, Kind::Queue, what, body)
+}
+
+pub(super) fn enqueue_unsigned_in(
+    db: &Connection,
+    to: Option<NodeId>,
+    sender: &str,
+    kind: Kind,
+    what: &MessageKind,
+    body: &str,
+) -> Result<MessageId, Refusal> {
+    let recipient = to.map(|to| events::who(db, to)).transpose()?;
+    if let Some(recipient) = &recipient
+        && let Some(to) = recipient.id
+    {
+        check_room(db, to, &recipient.name)?;
+    }
     let sender = Who {
         id: None,
         name: sender.to_owned(),
     };
-    Ok(insert(
-        db,
-        &sender,
-        Some(&recipient),
-        Kind::Queue,
-        what,
-        body,
-    )?)
+    Ok(insert(db, &sender, recipient.as_ref(), kind, what, body)?)
 }
 
 pub(super) fn enqueue_from_loom(

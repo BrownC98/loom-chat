@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-  <a href="https://github.com/BrownC98/loom/releases/latest"><img src="https://img.shields.io/github/v/release/BrownC98/loom?style=flat&color=2E5BD6" alt="최신 릴리스"></a>
+  <a href="https://github.com/BrownC98/loom-chat/releases/latest"><img src="https://img.shields.io/github/v/release/BrownC98/loom-chat?style=flat&color=2E5BD6" alt="최신 릴리스"></a>
   <img src="https://img.shields.io/badge/license-MIT-2E5BD6?style=flat" alt="라이선스: MIT">
   <img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-2E5BD6?style=flat" alt="플랫폼: Windows, macOS, Linux, Android">
 </p>
@@ -23,7 +23,7 @@
 
 ## 설치
 
-[가장 새 릴리스](https://github.com/BrownC98/loom/releases/latest)에서 파일을 받습니다. 그다음 쓸 에이전트 CLI(예: Claude Code, Codex, OpenCode 2)를 설치합니다. loom은 `PATH`에서 찾습니다.
+[가장 새 릴리스](https://github.com/BrownC98/loom-chat/releases/latest)에서 파일을 받습니다. 그다음 쓸 에이전트 CLI(예: Claude Code, Codex, OpenCode 2)를 설치합니다. loom은 `PATH`에서 찾습니다.
 
 ### Windows
 
@@ -33,7 +33,7 @@
 - 설치 프로그램 없이: PowerShell에서 아래 한 줄을 실행합니다. `loom-desktop.exe`를 `%LOCALAPPDATA%\loom\bin`에 넣습니다. 바탕 화면에 **loom** 아이콘을 만들고 창을 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 데스크톱 프로그램이 없으면(옛 릴리스) 브라우저 판을 설치하고, 아이콘은 브라우저에 loom을 엽니다.
 
   ```powershell
-  irm https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.ps1 | iex
+  irm https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.ps1 | iex
   ```
 
 - 지울 때는 Windows **설정 › 앱**을 씁니다.
@@ -43,7 +43,7 @@
 터미널에서 아래 한 줄을 실행합니다. loom 앱을 받아 응용 프로그램 폴더에 넣고 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 네이티브 데스크톱 프로그램이 있으면 `loom-desktop.app`(같은 릴리스의 네이티브 loom 창)도 응용 프로그램 폴더에 넣고 그 앱을 엽니다.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
 - 터미널 없이: `loom_<판>_aarch64.dmg`를 열고 loom을 응용 프로그램 폴더로 끕니다. 앱에 Apple 서명이 없어 macOS가 받은 앱이 「손상되었기 때문에 열 수 없습니다」라고 합니다. 처음 열기 전에 터미널에서 `xattr -cr /Applications/loom.app`을 실행합니다.
@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.
 Linux의 loom은 브라우저에서 돕니다. 터미널에서 아래 한 줄을 실행합니다.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
 `~/loom/bin`에 `loom` 명령을 넣고, 앱 메뉴와 바탕 화면에 **loom**을 더하고, 브라우저에 loom을 엽니다. 다음부터는 **loom** 아이콘을 누릅니다. 다시 실행하면 새 판으로 바꿉니다.

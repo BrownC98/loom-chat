@@ -3,7 +3,7 @@
 </h1>
 
 <p align="center">
-  <a href="https://github.com/BrownC98/loom/releases/latest"><img src="https://img.shields.io/github/v/release/BrownC98/loom?style=flat&color=2E5BD6" alt="Latest release"></a>
+  <a href="https://github.com/BrownC98/loom-chat/releases/latest"><img src="https://img.shields.io/github/v/release/BrownC98/loom-chat?style=flat&color=2E5BD6" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/license-MIT-2E5BD6?style=flat" alt="License: MIT">
   <img src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux%20%7C%20Android-2E5BD6?style=flat" alt="Platforms: Windows, macOS, Linux and Android">
 </p>
@@ -23,7 +23,7 @@
 
 ## Install
 
-Get the files from the [latest release](https://github.com/BrownC98/loom/releases/latest). Then install the agent CLIs that you want to use (for example Claude Code, Codex or OpenCode 2). loom finds them on `PATH`.
+Get the files from the [latest release](https://github.com/BrownC98/loom-chat/releases/latest). Then install the agent CLIs that you want to use (for example Claude Code, Codex or OpenCode 2). loom finds them on `PATH`.
 
 ### Windows
 
@@ -33,7 +33,7 @@ Run `loom_<version>_x64-setup.exe`. The loom window opens.
 - Without the setup program: run this line in PowerShell. It puts `loom-desktop.exe` in `%LOCALAPPDATA%\loom\bin`, puts a **loom** icon on the desktop, and opens the window. Run it again to update. If the release has no desktop program (older releases), it installs the browser version, and the icon opens loom in the browser.
 
   ```powershell
-  irm https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.ps1 | iex
+  irm https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.ps1 | iex
   ```
 
 - To remove loom, use Windows **Settings › Apps**.
@@ -43,7 +43,7 @@ Run `loom_<version>_x64-setup.exe`. The loom window opens.
 Run this line in Terminal. It downloads the loom app, puts it in the Applications folder and opens it. Run it again to update. If the release has the native desktop program, the line also puts `loom-desktop.app` (the native loom window from the same release) in the Applications folder and opens that one.
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
 - Without Terminal: open `loom_<version>_aarch64.dmg` and drag loom to the Applications folder. The app has no Apple signature, so macOS says that the downloaded app "is damaged". Before you open it the first time, run `xattr -cr /Applications/loom.app` in Terminal.
@@ -55,7 +55,7 @@ curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.
 loom on Linux runs in your browser. Run this line in a terminal:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
 It puts the `loom` command in `~/loom/bin`, adds **loom** to the app menu and the desktop, and opens loom in the browser. After that, click the **loom** icon. Run the line again to update.

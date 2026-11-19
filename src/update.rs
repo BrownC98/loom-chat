@@ -60,7 +60,10 @@ impl Install {
                 Some(desktop) => Install::Standalone {
                     exe: exe.to_owned(),
                     asset: desktop.asset,
-                    besides: besides.iter().collect(),
+                    besides: besides
+                        .iter()
+                        .filter(|beside| exe.with_file_name(beside.file).is_file())
+                        .collect(),
                 },
                 None => Install::Unsupported,
             };

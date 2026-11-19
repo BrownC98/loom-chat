@@ -3,7 +3,8 @@ set -eu
 
 bin=$HOME/loom/bin/loom
 port=${LOOM_PORT:-7420}
-raw=https://raw.githubusercontent.com/BrownC98/loom/main
+raw=https://raw.githubusercontent.com/BrownC98/loom-chat/main
+releases=https://github.com/BrownC98/loom-chat/releases
 
 is_web_install() {
   [ -x "$bin" ] && [ "$(head -c 2 "$bin")" != '#!' ]
@@ -43,7 +44,6 @@ if [ "$(uname -s)" = Darwin ]; then
     echo "macOS 앱은 Apple Silicon만 있습니다." >&2
     exit 1
   fi
-  releases=https://github.com/BrownC98/loom/releases
   url=${LOOM_DOWNLOAD_URL:-}
   if [ -z "$url" ]; then
     version=$(curl -fsSL "$releases/latest/download/latest.json" | sed -n 's/^ *"version": *"\([^"]*\)".*/\1/p')
@@ -141,11 +141,11 @@ EOF
 fi
 
 if [ "$(uname -s)/$(uname -m)" != Linux/x86_64 ]; then
-  echo "이 스크립트는 x86-64 Linux·WSL과 Apple Silicon macOS용입니다. Windows는 PowerShell에서 'irm https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.ps1 | iex'를 실행하거나 데스크톱 앱을 씁니다: https://github.com/BrownC98/loom/releases/latest" >&2
+  echo "이 스크립트는 x86-64 Linux·WSL과 Apple Silicon macOS용입니다. Windows는 PowerShell에서 'irm $raw/scripts/install.ps1 | iex'를 실행하거나 데스크톱 앱을 씁니다: $releases/latest" >&2
   exit 1
 fi
 
-url=${LOOM_DOWNLOAD_URL:-https://github.com/BrownC98/loom/releases/latest/download/loom-web-linux-x64}
+url=${LOOM_DOWNLOAD_URL:-$releases/latest/download/loom-web-linux-x64}
 data=$HOME/.loom
 mkdir -p "$(dirname "$bin")" "$data"
 

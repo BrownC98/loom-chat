@@ -1,10 +1,10 @@
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 
-$url = if ($env:LOOM_DOWNLOAD_URL) { $env:LOOM_DOWNLOAD_URL } else { 'https://github.com/BrownC98/loom/releases/latest/download/loom-web-windows-x64.exe' }
+$url = if ($env:LOOM_DOWNLOAD_URL) { $env:LOOM_DOWNLOAD_URL } else { 'https://github.com/BrownC98/loom-chat/releases/latest/download/loom-web-windows-x64.exe' }
 $linux_url = $url -replace 'loom-web-windows-x64\.exe$', 'loom-web-linux-x64'
 $desktop_url = $url -replace 'loom-web-windows-x64\.exe$', 'loom-desktop-windows-x64.zip'
-$raw = 'https://raw.githubusercontent.com/BrownC98/loom/main'
+$raw = 'https://raw.githubusercontent.com/BrownC98/loom-chat/main'
 $home_dir = Join-Path $env:LOCALAPPDATA 'loom'
 $dir = Join-Path $home_dir 'bin'
 $exe = Join-Path $dir 'loom.exe'

@@ -17,7 +17,7 @@ use crate::link_text::bare_link;
 use crate::process_tree::Identity;
 use crate::protocol::{BATCH_SEPARATOR, Delivery, HUMAN, LOOM, MessageId};
 use api::graph::errors::{BRIEF_LIMIT_BYTES, MAILBOX_LIMIT, Refusal, SUMMARY_LIMIT_BYTES};
-use api::graph::events::{Entry, GateTrace, Step, Via};
+use api::graph::events::{Entry, GateTrace, Step, Via, Who};
 use api::graph::messages::{Kind, MessageKind, Question};
 use api::graph::waits::WaitDoc;
 use api::graph::{NodeState, Toward};
@@ -276,7 +276,8 @@ impl Graph {
             }
         };
         let owns: bool = self.lock().query_row(
-            "SELECT EXISTS(SELECT 1 FROM messages WHERE id = ?1 AND sender = ?2)",
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE id = ?1 AND sender = ?2
+             AND (recipient IS NOT NULL OR held = 1))",
             params![request.0, node.0],
             |row| row.get(0),
         )?;
@@ -800,7 +801,7 @@ pub(super) fn requeue_unprinted(db: &Connection, node: NodeId) -> rusqlite::Resu
 pub(super) fn requeue_handed(db: &Connection) -> rusqlite::Result<()> {
     db.execute(
         "UPDATE messages SET sent_at = NULL
-         WHERE delivered = 0 AND printed = 0 AND sent_at IS NOT NULL",
+         WHERE recipient IS NOT NULL AND delivered = 0 AND printed = 0 AND sent_at IS NOT NULL",
         [],
     )?;
     Ok(())
@@ -907,7 +908,7 @@ fn check_room(db: &Connection, to: NodeId, name: &str) -> Result<(), Refusal> {
 
 fn check_held_room(db: &Connection, from: NodeId) -> Result<(), Refusal> {
     let held: u32 = db.query_row(
-        "SELECT count(*) FROM messages WHERE recipient IS NULL AND sender = ?1",
+        "SELECT count(*) FROM messages WHERE recipient IS NULL AND held = 1 AND sender = ?1",
         [from.0],
         |row| row.get(0),
     )?;
@@ -926,29 +927,48 @@ pub(super) fn enqueue(
     body: &str,
     stamp: Stamp,
 ) -> rusqlite::Result<MessageId> {
-    db.execute(
-        "INSERT INTO messages (recipient, sender, sender_name, kind, body, what)
-         VALUES (?1, ?2, (SELECT name FROM nodes WHERE id = ?2), ?3, ?4, ?5)",
-        params![
-            to.map(|to| to.0),
-            from.0,
-            to_json(&kind),
-            body,
-            to_json(what)
-        ],
-    )?;
-    let id = MessageId(db.last_insert_rowid() as u32);
+    let from = events::who(db, from)?;
+    let to = to.map(|to| events::who(db, to)).transpose()?;
+    let id = insert(db, &from, to.as_ref(), kind, what, body)?;
     let entry = Entry::Message {
         how: kind,
         what: Some(what.clone()),
-        from: events::who(db, from)?,
-        to: to.map(|to| events::who(db, to)).transpose()?,
         step: if to.is_some() { Step::Sent } else { Step::Held },
+        from,
+        to,
         via: stamp.via,
         gate: stamp.gate,
     };
     events::write(db, &entry, Some(id))?;
     Ok(id)
+}
+
+fn insert(
+    db: &Connection,
+    from: &Who,
+    to: Option<&Who>,
+    kind: Kind,
+    what: &MessageKind,
+    body: &str,
+) -> rusqlite::Result<MessageId> {
+    db.execute(
+        "INSERT INTO messages (
+            recipient, recipient_node_id, recipient_name, sender, sender_node_id, sender_name,
+            kind, body, what, held
+         )
+         VALUES (?1, ?1, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            to.and_then(|to| to.id).map(|id| id.0),
+            to.map(|to| to.name.as_str()),
+            from.id.map(|id| id.0),
+            from.name,
+            to_json(&kind),
+            body,
+            to_json(what),
+            to.is_none(),
+        ],
+    )?;
+    Ok(MessageId(db.last_insert_rowid() as u32))
 }
 
 fn record_judged_peer(
@@ -995,13 +1015,20 @@ pub(super) fn enqueue_unsigned(
     what: &MessageKind,
     body: &str,
 ) -> Result<MessageId, Refusal> {
-    let name = super::name_of(db, to)?;
-    check_room(db, to, &name)?;
-    db.execute(
-        "INSERT INTO messages (recipient, sender, sender_name, kind, body, what) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
-        params![to.0, sender, to_json(&Kind::Queue), body, to_json(what)],
-    )?;
-    Ok(MessageId(db.last_insert_rowid() as u32))
+    let recipient = events::who(db, to)?;
+    check_room(db, to, &recipient.name)?;
+    let sender = Who {
+        id: None,
+        name: sender.to_owned(),
+    };
+    Ok(insert(
+        db,
+        &sender,
+        Some(&recipient),
+        Kind::Queue,
+        what,
+        body,
+    )?)
 }
 
 pub(super) fn enqueue_from_loom(
@@ -1012,19 +1039,17 @@ pub(super) fn enqueue_from_loom(
     body: &str,
     gate: Option<GateTrace>,
 ) -> rusqlite::Result<MessageId> {
-    db.execute(
-        "INSERT INTO messages (recipient, sender, sender_name, kind, body, what) VALUES (?1, NULL, ?2, ?3, ?4, ?5)",
-        params![to.0, LOOM, to_json(&kind), body, to_json(what)],
-    )?;
-    let id = MessageId(db.last_insert_rowid() as u32);
+    let from = Who {
+        id: None,
+        name: LOOM.to_owned(),
+    };
+    let to = events::who(db, to)?;
+    let id = insert(db, &from, Some(&to), kind, what, body)?;
     let entry = Entry::Message {
         how: kind,
         what: Some(what.clone()),
-        from: api::graph::events::Who {
-            id: None,
-            name: LOOM.to_owned(),
-        },
-        to: Some(events::who(db, to)?),
+        from,
+        to: Some(to),
         step: Step::Sent,
         via: None,
         gate,

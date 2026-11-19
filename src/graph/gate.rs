@@ -273,6 +273,7 @@ impl Graph {
     pub fn ready_sent(&self, owner: NodeId, branch: &str, head: &str) -> rusqlite::Result<bool> {
         self.lock().query_row(
             "SELECT EXISTS(SELECT 1 FROM messages WHERE sender = ?1 AND what ->> 'kind' = 'ready'
+             AND (recipient IS NOT NULL OR held = 1)
              AND what ->> 'branch' = ?2 AND what ->> 'head' = ?3)",
             params![owner.0, branch, head],
             |row| row.get(0),

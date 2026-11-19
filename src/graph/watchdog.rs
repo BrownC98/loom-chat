@@ -64,7 +64,8 @@ pub(super) fn idle_status() -> String {
 fn no_wake_source() -> String {
     format!(
         "{} AND {} IS NULL
-     AND (SELECT m.what ->> 'kind' FROM messages m WHERE m.recipient = n.id OR m.sender = n.id
+     AND (SELECT m.what ->> 'kind' FROM messages m
+         WHERE m.recipient = n.id OR (m.sender = n.id AND (m.recipient IS NOT NULL OR m.held = 1))
          ORDER BY m.id DESC LIMIT 1) IS NOT 'idle'",
         quiet(),
         waited()

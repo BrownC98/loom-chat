@@ -1,4 +1,4 @@
-use std::fs::{File, OpenOptions};
+use std::fs::{File, Metadata, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -51,6 +51,7 @@ pub(crate) struct Item {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ReadPosition {
     path: PathBuf,
+    file: FileIdentity,
     byte: u64,
     line: u64,
     anchor: Vec<u8>,
@@ -127,11 +128,13 @@ impl Source {
     }
 
     pub fn read(&self, after: Option<&ReadPosition>) -> Result<Batch, Fallback> {
-        let mut file = open(&self.path)?;
-        let len = file.metadata()?.len();
+        let (mut file, metadata) = open(&self.path)?;
+        let identity = file_identity(&file, &metadata)?;
+        let len = metadata.len();
         let previous = match after {
             Some(cursor)
                 if cursor.path == self.path
+                    && cursor.file == identity
                     && cursor.byte <= len
                     && cursor.anchor == anchor(&mut file, cursor.byte)? =>
             {
@@ -201,6 +204,7 @@ impl Source {
             items,
             cursor: ReadPosition {
                 path: self.path.clone(),
+                file: identity,
                 byte,
                 line,
                 anchor: tail,
@@ -212,7 +216,7 @@ impl Source {
     }
 }
 
-fn open(path: &Path) -> Result<File, Fallback> {
+fn open(path: &Path) -> Result<(File, Metadata), Fallback> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -221,10 +225,44 @@ fn open(path: &Path) -> Result<File, Fallback> {
         options.custom_flags(libc::O_NONBLOCK);
     }
     let file = options.open(path)?;
-    if !file.metadata()?.is_file() {
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
         return Err(Fallback::Unreadable);
     }
-    Ok(file)
+    Ok((file, metadata))
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FileIdentity {
+    volume: u64,
+    index: u64,
+}
+
+#[cfg(unix)]
+fn file_identity(_: &File, metadata: &Metadata) -> io::Result<FileIdentity> {
+    use std::os::unix::fs::MetadataExt;
+
+    Ok(FileIdentity {
+        volume: metadata.dev(),
+        index: metadata.ino(),
+    })
+}
+
+#[cfg(windows)]
+fn file_identity(file: &File, _: &Metadata) -> io::Result<FileIdentity> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
+
+    let mut info = BY_HANDLE_FILE_INFORMATION::default();
+    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &mut info) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(FileIdentity {
+        volume: info.dwVolumeSerialNumber.into(),
+        index: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+    })
 }
 
 fn extend_anchor(anchor: &mut Vec<u8>, bytes: &[u8]) {

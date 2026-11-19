@@ -1,9 +1,12 @@
 use std::sync::Arc;
 
 use api::graph::chat::{ChatEntry, ChatItem};
-use api::graph::text::Block;
+use api::graph::events::ClosedBy;
 use api::graph::waits::{Closed, Press, ScreenWait, TermKey, WaitTone};
-use gpui::{App, Context, Div, FontWeight, ParentElement, StatefulInteractiveElement, Styled, div};
+use gpui::{
+    App, Context, Div, FontWeight, InteractiveElement, ParentElement, StatefulInteractiveElement,
+    Styled, Window, div,
+};
 
 use super::acts::{Input, WaitAction};
 use super::rows::{badge, column, flow, meta, timestamp};
@@ -11,9 +14,11 @@ use super::{Stream, StreamEvent, tr};
 use crate::scale::{self, px};
 use crate::strings::Str;
 use crate::theme::mix;
+use crate::views::dock::blocks;
 use crate::views::dock::entry::{self, Choice, Look};
 use crate::views::dock::questions::{key_label, kind_label};
 use crate::views::prose::prose;
+use crate::views::tooltip::tip;
 use crate::views::ui;
 use crate::views::widgets::btn;
 
@@ -29,7 +34,12 @@ const SCREEN_KEYS: [(&str, Press); 8] = [
 ];
 
 impl Stream {
-    pub(super) fn wait_card(&mut self, item: Arc<ChatItem>, cx: &mut Context<Self>) -> Div {
+    pub(super) fn wait_card(
+        &mut self,
+        item: Arc<ChatItem>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let ChatEntry::Wait { node, wait, closed } = &item.entry else {
             return div();
         };
@@ -46,23 +56,33 @@ impl Stream {
                     ),
             )
         });
+        let confirmed =
+            matches!(closed, Some(Closed::Confirmed)) && matches!(wait.tone, WaitTone::Done);
         let head = flow()
             .child(
                 div()
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(node.name.clone()),
             )
-            .child(badge(label, entry::tone_of(wait.tone, &c), cx))
-            .child(meta(id.to_string(), cx))
+            .child(
+                badge(label, entry::tone_of(wait.tone, &c), cx)
+                    .id("stream-wait-kind")
+                    .tooltip(tip(id.to_string())),
+            )
+            .children(confirmed.then(|| badge(ui::say(cx, Str::InboxClosedConfirmed), c.ink_2, cx)))
             .child(timestamp(item.cursor, cx))
             .children(source);
-        if let Some(closed) = closed {
+        if let Some(closed) = closed.as_ref().filter(|_| !confirmed) {
             return column()
                 .px(px(8.0))
                 .py(px(6.0))
                 .border_y_1()
                 .border_color(c.line)
                 .child(head)
+                .children(
+                    (matches!(wait.tone, WaitTone::Ask) && !wait.summary.trim().is_empty())
+                        .then(|| prose(wait.summary.clone())),
+                )
                 .child(meta(closed_text(closed, wait, cx), cx));
         }
 
@@ -72,6 +92,8 @@ impl Stream {
             .border_1()
             .border_color(if self.jumped == Some(item.cursor) {
                 c.accent
+            } else if confirmed {
+                c.line
             } else {
                 mix(entry::tone_of(wait.tone, &c), 0.36, c.line)
             })
@@ -96,38 +118,27 @@ impl Stream {
                     .font_family(crate::fonts::TERMINAL_FAMILY)
                     .child(prose(text)),
             );
-        } else if !wait.wait.text.is_empty() {
-            let text = if wait.wait.blocks.is_empty() {
-                wait.wait.text.clone()
-            } else {
-                Block::shown(&wait.wait.blocks)
-            };
-            card = card.child(prose(text));
         }
-
-        if let Some(doc) = &wait.wait.doc {
-            let id = doc.id.clone();
-            card = card.child(
-                flow().child(
-                    btn::ghost("stream-wait-doc", cx)
-                        .child(doc.title.clone())
-                        .on_click(cx.listener(move |stream, _, _, cx| {
-                            let result = stream
-                                .data
-                                .read(cx)
-                                .graph()
-                                .read(cx)
-                                .doc_url(&id)
-                                .and_then(|url| ui::open_url(&url));
-                            if let Err(error) = result {
-                                stream.result = Some((error, true));
-                                cx.notify();
-                            }
-                        })),
-                ),
-            );
+        let plain = if wait.wait.prompt.is_some() {
+            ""
+        } else {
+            &wait.wait.text
+        };
+        if !plain.is_empty() || !wait.wait.blocks.is_empty() || wait.wait.doc.is_some() {
+            let follow = self.follow(cx);
+            card = card.child(blocks::render_selectable(
+                "stream-wait-body",
+                &wait.wait.blocks,
+                plain,
+                wait.wait.doc.as_ref(),
+                c.accent,
+                ui::TEXT * scale::get(),
+                window,
+                cx,
+                follow,
+            ));
         }
-        if !active {
+        if confirmed || !active {
             return card;
         }
         if busy {
@@ -292,16 +303,22 @@ fn closed_text(closed: &Closed, wait: &ScreenWait, cx: &App) -> String {
                     || text.clone(),
                     |choice| format!("{} · {}", choice.key, choice.label),
                 );
-            format!("{} · {answer}", tr(cx, "답함", "Answered"))
+            format!("{} · {answer}", ui::say(cx, Str::InboxClosedAnswered))
         }
-        Closed::Instructed { text } => format!("{} · {text}", tr(cx, "이어서 맡김", "Followed up")),
-        Closed::Confirmed => tr(cx, "확인함", "Confirmed").to_owned(),
-        Closed::Unanswered { .. } => tr(cx, "답 없이 닫힘", "Closed without an answer").to_owned(),
-        Closed::NodeRemoved => tr(
+        Closed::Instructed { text } => {
+            format!("{} · {text}", ui::say(cx, Str::InboxClosedInstructed))
+        }
+        Closed::Confirmed => ui::say(cx, Str::InboxClosedConfirmed).to_owned(),
+        Closed::Unanswered { by } => ui::say(
             cx,
-            "에이전트 삭제로 닫힘",
-            "Closed when the agent was removed",
+            match by {
+                ClosedBy::Human => Str::InboxClosedByHuman,
+                ClosedBy::Agent => Str::InboxClosedByAgent,
+                ClosedBy::Restart => Str::InboxClosedByRestart,
+                ClosedBy::Exit => Str::InboxClosedByExit,
+            },
         )
         .to_owned(),
+        Closed::NodeRemoved => ui::say(cx, Str::InboxClosedNodeRemoved).to_owned(),
     }
 }

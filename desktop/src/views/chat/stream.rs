@@ -1,25 +1,30 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Duration;
 
-use api::graph::chat::{ChatCursor, ChatEntry, ChatItem, ChatOrigin, ChatRoomKind};
-use api::graph::messages::{MessageKind, Question};
+use api::graph::Status;
+use api::graph::chat::{
+    ChatCursor, ChatEntry, ChatItem, ChatOrigin, ChatRoomKind, ChatTranscriptItem,
+};
 use api::graph::waits::WaitTone;
 use api::ids::{NodeId, WaitId};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, Context, Div, Entity, EventEmitter, InteractiveElement, IntoElement, KeyDownEvent,
     ListAlignment, ListOffset, ListState, ParentElement, Render, StatefulInteractiveElement,
-    Styled, Subscription, Window, div, list,
+    Styled, Subscription, Task, Window, div, list,
 };
 
 use super::data::ChatData;
 use crate::scale::px;
 use crate::store::BusyChanged;
-use crate::strings::Lang;
+use crate::strings::{Lang, Str};
+use crate::views::icons::{Lucide, icon};
 use crate::views::scrollbar::Bar;
-use crate::views::ui;
 use crate::views::widgets::btn;
+use crate::views::{status, ui};
 
+mod activity;
 mod acts;
 mod rows;
 mod waits;
@@ -27,6 +32,7 @@ mod waits;
 use acts::{Draft, Input, Target};
 
 const OVERDRAW: f32 = 240.0;
+const RESULT_TIME: Duration = Duration::from_millis(2500);
 
 pub(super) enum StreamEvent {
     FollowUp { node: NodeId, wait: WaitId },
@@ -71,17 +77,37 @@ impl Filter {
         match self {
             Self::All => tr(cx, "전체", "All"),
             Self::Questions => tr(cx, "질문", "Questions"),
-            Self::Done => tr(cx, "완료", "Done"),
-            Self::Notices => tr(cx, "알림", "Notices"),
+            Self::Done => ui::say(cx, Str::EventsTypeDone),
+            Self::Notices => ui::say(cx, Str::EventsCategoryNotice),
             Self::Mine => tr(cx, "내가 보낸 말", "Sent by me"),
         }
     }
 }
 
-#[derive(Clone, Copy)]
 struct Row {
     cursor: ChatCursor,
-    item: usize,
+    content: RowContent,
+}
+
+enum RowContent {
+    Item(usize),
+    Activity(Vec<usize>),
+}
+
+impl Row {
+    fn item(&self) -> Option<usize> {
+        match self.content {
+            RowContent::Item(index) => Some(index),
+            RowContent::Activity(_) => None,
+        }
+    }
+
+    fn last(&self, items: &[Arc<ChatItem>]) -> ChatCursor {
+        match &self.content {
+            RowContent::Activity(steps) => items[*steps.last().unwrap()].cursor,
+            RowContent::Item(_) => self.cursor,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -95,12 +121,17 @@ struct Rows {
 impl Rows {
     fn new(items: &[Arc<ChatItem>], filter: Filter) -> Self {
         let mut rows = Self::default();
-        for (item, entry) in items.iter().enumerate() {
-            if matches!(&entry.entry, ChatEntry::Message { message }
-            if message.origin == ChatOrigin::Human && matches!(
-                message.what,
-                Some(MessageKind::Answer { question: Question::Inbox { .. } })
-            )) {
+        let mut ordered: Vec<_> = items.iter().enumerate().collect();
+        if !ordered.is_sorted_by_key(|(_, entry)| entry.cursor) {
+            ordered.sort_unstable_by_key(|(_, entry)| entry.cursor);
+        }
+        let mut in_activity = false;
+        for (index, entry) in ordered {
+            if rows::turn_boundary(entry) {
+                in_activity = false;
+                continue;
+            }
+            if rows::hidden(entry) {
                 continue;
             }
             let kind = Filter::of(entry);
@@ -109,28 +140,49 @@ impl Rows {
                 Filter::Mine => rows.mine += 1,
                 _ => {}
             }
-            if filter == Filter::All || filter == kind {
-                rows.visible.push(Row {
-                    cursor: entry.cursor,
-                    item,
-                });
+            if filter != Filter::All && filter != kind {
+                continue;
             }
+            let activity = matches!(
+                &entry.entry,
+                ChatEntry::Transcript {
+                    item: ChatTranscriptItem::Thinking { .. }
+                        | ChatTranscriptItem::ToolCall { .. }
+                        | ChatTranscriptItem::ToolResult { .. },
+                }
+            );
+            if in_activity
+                && activity
+                && let Some(Row {
+                    content: RowContent::Activity(steps),
+                    ..
+                }) = rows.visible.last_mut()
+            {
+                steps.push(index);
+                continue;
+            }
+            in_activity = activity;
+            if matches!(&entry.entry, ChatEntry::Wait { wait, closed: None, .. }
+                if matches!(wait.tone, WaitTone::Ask))
+            {
+                rows.pending.push(rows.visible.len());
+            }
+            rows.visible.push(Row {
+                cursor: entry.cursor,
+                content: if activity {
+                    RowContent::Activity(vec![index])
+                } else {
+                    RowContent::Item(index)
+                },
+            });
         }
-        if !rows.visible.is_sorted_by_key(|row| row.cursor) {
-            rows.visible.sort_unstable_by_key(|row| row.cursor);
-        }
-        rows.pending.extend(
-            rows.visible
-                .iter()
-                .enumerate()
-                .filter(|(_, row)| {
-                    matches!(&items[row.item].entry, ChatEntry::Wait { wait, closed: None, .. }
-                        if matches!(wait.tone, WaitTone::Ask))
-                })
-                .map(|(index, _)| index),
-        );
         rows
     }
+}
+
+enum Banner {
+    Success { text: String, _clear: Task<()> },
+    Error(String),
 }
 
 pub(super) struct Stream {
@@ -147,8 +199,9 @@ pub(super) struct Stream {
     paged: bool,
     drafts: HashMap<Input, Draft>,
     busy: HashSet<Target>,
-    result: Option<(String, bool)>,
-    _subs: [Subscription; 2],
+    result: Option<Banner>,
+    new_messages: usize,
+    _subs: [Subscription; 3],
 }
 
 impl Stream {
@@ -171,6 +224,7 @@ impl Stream {
         let subs = [
             cx.observe(&data, |stream, _, cx| stream.sync(cx)),
             cx.subscribe(&graph, |_, _, _: &BusyChanged, cx| cx.notify()),
+            cx.observe(&graph, |_, _, cx| cx.notify()),
         ];
         let mut stream = Self {
             data,
@@ -187,6 +241,7 @@ impl Stream {
             drafts: HashMap::new(),
             busy: HashSet::new(),
             result: None,
+            new_messages: 0,
             _subs: subs,
         };
         stream.sync(cx);
@@ -206,6 +261,7 @@ impl Stream {
             self.jump_before = None;
             self.paged = false;
             self.result = None;
+            self.new_messages = 0;
         }
         if changed_room || self.revision != Some(revision) {
             self.revision = Some(revision);
@@ -224,12 +280,42 @@ impl Stream {
         cx.notify();
     }
 
+    fn at_bottom(&self) -> bool {
+        self.list.logical_scroll_top().item_ix >= self.rows.visible.len()
+            || self.list.is_scrolled_to_end() == Some(true)
+    }
+
     fn rebuild(&mut self, keep_position: bool, cx: &App) {
         let top = self.list.logical_scroll_top();
-        let anchor = keep_position
+        let anchor = (keep_position && !self.at_bottom())
             .then(|| self.rows.visible.get(top.item_ix).map(|row| row.cursor))
             .flatten();
-        let next = Rows::new(self.data.read(cx).items(), self.filter);
+        let items = self.data.read(cx).items();
+        let next = Rows::new(items, self.filter);
+        if let (Some(_), Some(last)) = (anchor, self.rows.visible.last()) {
+            self.new_messages += next
+                .visible
+                .iter()
+                .skip(
+                    next.visible
+                        .partition_point(|row| row.cursor <= last.cursor),
+                )
+                .filter_map(Row::item)
+                .filter(|&index| {
+                    items[index].cursor.id >= 0
+                        && matches!(
+                            &items[index].entry,
+                            ChatEntry::Message { .. }
+                                | ChatEntry::Transcript {
+                                    item: ChatTranscriptItem::Assistant { .. }
+                                        | ChatTranscriptItem::User { .. },
+                                }
+                        )
+                })
+                .count();
+        } else {
+            self.new_messages = 0;
+        }
         if keep_position
             && self.rows.visible.len() == next.visible.len()
             && self
@@ -243,7 +329,7 @@ impl Stream {
         } else {
             self.list.reset(next.visible.len());
             if let Some(cursor) = anchor {
-                let item_ix = next.visible.partition_point(|row| row.cursor < cursor);
+                let item_ix = next.visible.partition_point(|row| row.last(items) < cursor);
                 let offset_in_item = next
                     .visible
                     .get(item_ix)
@@ -315,9 +401,86 @@ impl Stream {
         self.jumped = None;
         self.jump_before = None;
         self.paged = false;
+        self.new_messages = 0;
         self.list.scroll_to_end();
         self.data.update(cx, |data, cx| data.select(room, cx));
         cx.notify();
+    }
+
+    fn show_result(&mut self, result: Result<String, String>, cx: &mut Context<Self>) {
+        self.result = Some(match result {
+            Ok(text) => Banner::Success {
+                text,
+                _clear: cx.spawn(async move |this, cx| {
+                    cx.background_executor().timer(RESULT_TIME).await;
+                    let _ = this.update(cx, |stream, cx| {
+                        stream.result = None;
+                        cx.notify();
+                    });
+                }),
+            },
+            Err(text) => Banner::Error(text),
+        });
+        cx.notify();
+    }
+
+    fn follow(
+        &self,
+        cx: &Context<Self>,
+    ) -> impl Fn(crate::views::dock::body::Target, &mut App) + 'static {
+        let graph = self.data.read(cx).graph().clone();
+        let stream = cx.weak_entity();
+        let room = self.room.clone();
+        move |target, cx| {
+            let task = crate::views::dock::body::open(&graph, target, cx);
+            let (stream, room) = (stream.clone(), room.clone());
+            cx.spawn(async move |cx| {
+                if let Err(error) = task.await {
+                    let _ = stream.update(cx, |stream, cx| {
+                        if stream.room == room {
+                            stream.show_result(Err(error), cx);
+                        }
+                    });
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn working(&self, cx: &App) -> Option<Div> {
+        let data = self.data.read(cx);
+        let room = data.room().filter(|room| !room.archived)?;
+        let snapshot = data.graph().read(cx).snapshot()?;
+        let mut working = snapshot.nodes.iter().filter(|node| {
+            room.members.contains(&node.id) && matches!(node.status, Status::Working { .. })
+        });
+        let node = working.next()?;
+        let extra = working.count();
+        let mut text = format!(
+            "{}{}",
+            node.name,
+            tr(cx, " 님이 작업 중입니다…", " is working…"),
+        );
+        if let Some(tool) = status::line(node, None, *cx.global::<Lang>()) {
+            text.push_str(&format!(" · {tool}"));
+        }
+        if extra > 0 {
+            text.push_str(&format!(" · +{extra}"));
+        }
+        let c = ui::colors(cx);
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(14.0))
+                .py(px(5.0))
+                .text_color(c.ink_2)
+                .text_size(px(ui::SMALL))
+                .child(div().flex_none().size(px(6.0)).rounded_full().bg(c.run))
+                .child(div().min_w_0().truncate().child(text)),
+        )
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Option<Div> {
@@ -333,7 +496,11 @@ impl Stream {
             Filter::Mine => self.rows.mine,
         };
         let c = ui::colors(cx);
-        let chips = pinned.then(|| {
+        let chips = (pinned
+            && (self.filter != Filter::All
+                || !self.rows.visible.is_empty()
+                || Filter::ALL.into_iter().any(|filter| count(filter) > 0)))
+        .then(|| {
             Filter::ALL
                 .into_iter()
                 .enumerate()
@@ -414,6 +581,9 @@ impl EventEmitter<Quote> for Stream {}
 
 impl Render for Stream {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.at_bottom() {
+            self.new_messages = 0;
+        }
         let toolbar = self.toolbar(cx);
         let data = self.data.read(cx);
         let c = ui::colors(cx);
@@ -443,6 +613,51 @@ impl Render for Stream {
                 .flex_1()
                 .min_h_0()
         };
+        let jump_to_new = (self.new_messages > 0).then(|| {
+            let text = match *cx.global::<Lang>() {
+                Lang::Ko => format!("새 말 {}", self.new_messages),
+                Lang::En => format!("{} new", self.new_messages),
+            };
+            btn::button("stream-new-messages", cx)
+                .absolute()
+                .right(px(28.0))
+                .bottom(px(10.0))
+                .child(text)
+                .child(icon(Lucide::ArrowDown, px(14.0), c.ink_2))
+                .on_click(cx.listener(|stream, _, _, cx| stream.latest(cx)))
+        });
+        let banner = self.result.as_ref().map(|result| {
+            let (text, error) = match result {
+                Banner::Success { text, .. } => (text, false),
+                Banner::Error(text) => (text, true),
+            };
+            div()
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .px(px(14.0))
+                .py(px(6.0))
+                .border_t_1()
+                .border_color(c.line)
+                .text_color(if error { c.err } else { c.ink_2 })
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(crate::views::prose::prose(text.clone())),
+                )
+                .children(error.then(|| {
+                    let label = ui::say(cx, Str::CommonClose);
+                    btn::ghost("stream-dismiss-result", cx)
+                        .aria_label(label)
+                        .child(icon(Lucide::X, px(14.0), c.ink_2))
+                        .on_click(cx.listener(|stream, _, _, cx| {
+                            stream.result = None;
+                            cx.notify();
+                        }))
+                }))
+        });
         div()
             .flex_1()
             .min_h_0()
@@ -467,17 +682,18 @@ impl Render for Stream {
                 cx.stop_propagation();
             })
             .children(toolbar)
-            .child(content)
-            .children(self.result.as_ref().map(|(text, failed)| {
+            .child(
                 div()
-                    .flex_none()
-                    .px(px(14.0))
-                    .py(px(6.0))
-                    .border_t_1()
-                    .border_color(c.line)
-                    .text_color(if *failed { c.err } else { c.ink_2 })
-                    .child(text.clone())
-            }))
+                    .relative()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_h_0()
+                    .child(content)
+                    .children(jump_to_new),
+            )
+            .children(self.working(cx))
+            .children(banner)
     }
 }
 

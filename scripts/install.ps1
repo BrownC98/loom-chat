@@ -13,7 +13,7 @@ $linux = Join-Path $dir 'loom-linux'
 $unpack = Join-Path $home_dir 'desktop.new'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-function Remove-InstalledFile($to) {
+function Install-File($from, $to) {
   if (Test-Path $to) {
     try {
       Remove-Item $to -Force
@@ -21,10 +21,6 @@ function Remove-InstalledFile($to) {
       Rename-Item $to "$(Split-Path $to -Leaf).$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).old"
     }
   }
-}
-
-function Install-File($from, $to) {
-  Remove-InstalledFile $to
   Move-Item $from $to
 }
 

@@ -17,9 +17,10 @@ use crate::views::icons::{Lucide, agent_mark, icon};
 use crate::views::ui::colors;
 use crate::views::widgets::btn;
 
-use super::{ChatData, WIDTH, note};
+use super::{ChatData, note};
 
 const PANEL_WIDTH: f32 = 380.0;
+const PANEL_LEFT: f32 = 288.0;
 const PICKER_ROW: f32 = 31.0;
 const PICKER_MAX_ROWS: usize = 6;
 
@@ -422,7 +423,7 @@ impl Render for CreateRoom {
             anchored()
                 .anchor(Anchor::TopLeft)
                 .position_mode(AnchoredPositionMode::Local)
-                .position(point(px(WIDTH + 8.0), px(8.0)))
+                .position(point(px(PANEL_LEFT), px(8.0)))
                 .snap_to_window_with_margin(px(8.0))
                 .child(panel),
         )

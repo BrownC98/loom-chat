@@ -278,6 +278,7 @@ impl Composer {
         self.focus_input(window, cx);
     }
 
+    #[expect(dead_code)]
     pub(super) fn quote(&mut self, item: &ChatItem, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_room(window, cx);
         if !self.writable(cx) {

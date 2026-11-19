@@ -5,12 +5,11 @@ use std::sync::Arc;
 use api::graph::text::TextPart;
 use api::graph::waits::WaitDoc;
 use gpui::{
-    AnyElement, App, Context, Div, ElementId, Entity, FontStyle, FontWeight, HighlightStyle,
+    AnyElement, App, Div, ElementId, Entity, FontStyle, FontWeight, HighlightStyle,
     InteractiveElement, IntoElement, MouseButton, ParentElement, Rgba, Stateful,
     StatefulInteractiveElement, Styled, Task, UnderlineStyle, div,
 };
 
-use super::Dock;
 use super::find::Find;
 use super::ui;
 use crate::scale::fixed as px;
@@ -47,21 +46,6 @@ impl Built {
         self.shown.push_str(text);
         self.styles.push((start..self.shown.len(), style));
     }
-}
-
-pub fn text(
-    id: impl Into<ElementId>,
-    parts: &[TextPart],
-    plain: &str,
-    doc: Option<&WaitDoc>,
-    color: Rgba,
-    find: Option<&Find>,
-    cx: &mut Context<Dock>,
-) -> AnyElement {
-    let owner = cx.entity();
-    render(id, parts, plain, doc, color, find, cx, move |target, cx| {
-        owner.update(cx, |dock, cx| dock.follow(target, cx));
-    })
 }
 
 pub fn open(store: &Entity<Store>, target: Target, cx: &mut App) -> Task<Result<(), String>> {

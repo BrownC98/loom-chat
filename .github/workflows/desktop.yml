@@ -57,6 +57,8 @@ jobs:
       - name: 화면 빌드
         run: bash scripts/worktree/setup.sh
         working-directory: .
+        env:
+          npm_config_script_shell: bash
       - uses: Swatinem/rust-cache@v2.9.2
         with:
           workspaces: desktop

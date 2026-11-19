@@ -15,6 +15,65 @@ pub const DEFAULT_LISTEN: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr
 const ANY_PORT: u16 = 0;
 const READY_PREFIX: &str = "loom: ";
 
+#[derive(Clone, Copy)]
+pub enum Executable {
+    Cli,
+    Desktop,
+}
+
+#[cfg(windows)]
+pub fn attach_console() {
+    use windows_sys::Win32::Storage::FileSystem::{FILE_TYPE_UNKNOWN, GetFileType};
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE,
+        STD_OUTPUT_HANDLE, SetStdHandle,
+    };
+
+    let handles = [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE].map(|which| unsafe {
+        let handle = GetStdHandle(which);
+        (
+            which,
+            (GetFileType(handle) != FILE_TYPE_UNKNOWN).then_some(handle),
+        )
+    });
+    if handles.iter().all(|(_, handle)| handle.is_some())
+        || unsafe { AttachConsole(ATTACH_PARENT_PROCESS) } == 0
+    {
+        return;
+    }
+    for (which, handle) in handles {
+        if let Some(handle) = handle {
+            unsafe { SetStdHandle(which, handle) };
+        }
+    }
+}
+
+#[cfg(windows)]
+pub const CLI_EXE_ENV: &str = "LOOM_CLI_EXE";
+
+pub fn write_command_shim(dir: &Path, exe: &Path) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        let batch = format!("@setlocal DisableDelayedExpansion\r\n@\"%{CLI_EXE_ENV}%\" %*\r\n");
+        crate::distro::replace(&dir.join("loom.cmd"), batch.as_bytes())?;
+    }
+    let path = exe.to_string_lossy();
+    let shell_path = if cfg!(windows) {
+        path.replace('\\', "/")
+    } else {
+        path.into_owned()
+    };
+    let script = format!("#!/bin/sh\nexec {} \"$@\"\n", crate::wsl::word(&shell_path));
+    let shim = dir.join("loom");
+    crate::distro::replace(&shim, script.as_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(shim, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DaemonFile {
     pub url: String,

@@ -30,7 +30,9 @@ if [ -n "${WSL_DISTRO_NAME:-}" ]; then
   rm -f "$HOME/.loom/serve.pid"
   export WSLENV="${WSLENV:+$WSLENV:}LOOM_DOWNLOAD_URL:LOOM_DESKTOP/p"
   (cd /mnt/c && powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [Text.Encoding]::UTF8; irm $raw/scripts/install.ps1 | iex")
-  exe=$(wslpath "$(cd /mnt/c && cmd.exe /c 'echo %LOCALAPPDATA%' | tr -d '\r')")/loom/bin/loom.exe
+  windows_bin=$(wslpath "$(cd /mnt/c && cmd.exe /c 'echo %LOCALAPPDATA%' | tr -d '\r')")/loom/bin
+  exe=$windows_bin/loom.exe
+  if [ ! -x "$exe" ]; then exe=$windows_bin/loom-desktop.exe; fi
   point_bin_to "$exe"
   if [ -n "$carry" ]; then "$bin" carry "$carry"; fi
   exit 0
@@ -60,13 +62,15 @@ if [ "$(uname -s)" = Darwin ]; then
   tar -xzf "$tmp/loom.app.tar.gz" -C "$tmp"
   xattr -cr "$tmp/loom.app"
   with_desktop=
-  if curl -fsL -o "$tmp/desktop.tar.gz" "${url%/*}/loom-desktop-macos-arm64.tar.gz" && tar -xzf "$tmp/desktop.tar.gz" -C "$tmp" && [ -x "$tmp/loom-desktop-macos-arm64/loom-desktop" ] && [ -x "$tmp/loom-desktop-macos-arm64/loom" ]; then
+  desktop_files=$tmp/loom-desktop-macos-arm64
+  if curl -fsL -o "$tmp/desktop.tar.gz" "${url%/*}/loom-desktop-macos-arm64.tar.gz" && tar -xzf "$tmp/desktop.tar.gz" -C "$tmp" && [ -x "$desktop_files/loom-desktop" ]; then
     with_desktop=1
     macos=$tmp/loom-desktop.app/Contents/MacOS
     mkdir -p "$macos"
-    mv "$tmp/loom-desktop-macos-arm64/loom-desktop" "$tmp/loom-desktop-macos-arm64/loom" "$macos/"
+    mv "$desktop_files/loom-desktop" "$macos/"
+    if [ -x "$desktop_files/loom" ]; then mv "$desktop_files/loom" "$macos/"; fi
     mkdir "$tmp/loom-desktop.app/Contents/Resources"
-    mv "$tmp/loom-desktop-macos-arm64/icon.icns" "$tmp/loom-desktop.app/Contents/Resources/" 2>/dev/null || true
+    mv "$desktop_files/icon.icns" "$tmp/loom-desktop.app/Contents/Resources/" 2>/dev/null || true
     cat >"$tmp/loom-desktop.app/Contents/Info.plist" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -84,17 +88,25 @@ EOF
     echo "이 릴리스에는 데스크톱 앱이 없습니다. 지금까지의 loom 앱만 설치합니다."
   fi
   me=$(id -u)
+  desktop_gui_pids() {
+    desktop_exe=$dir/loom-desktop.app/Contents/MacOS/loom-desktop
+    ps -ww -U "$me" -o pid=,command= | LOOM_GUI_EXE="$desktop_exe" awk '
+      { pid = $1; sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "") }
+      $0 == ENVIRON["LOOM_GUI_EXE"] { print pid }
+    '
+  }
   quit_app() {
-    if pkill -xu "$me" "$1"; then
-      deadline=$(($(date +%s) + 10))
-      while pgrep -qxu "$me" "$1"; do
-        if [ "$(date +%s)" -ge "$deadline" ]; then
-          echo "loom 앱이 끝나지 않았습니다. ⌘Q로 앱을 끝내고 다시 실행합니다." >&2
-          exit 1
-        fi
-        sleep 0.2
-      done
-    fi
+    pids=$("$@" || true)
+    [ -n "$pids" ] || return 0
+    printf '%s\n' "$pids" | xargs kill 2>/dev/null || true
+    deadline=$(($(date +%s) + 10))
+    while [ -n "$("$@" || true)" ]; do
+      if [ "$(date +%s)" -ge "$deadline" ]; then
+        echo "loom 앱이 끝나지 않았습니다. ⌘Q로 앱을 끝내고 다시 실행합니다." >&2
+        exit 1
+      fi
+      sleep 0.2
+    done
   }
   put_app() {
     if [ -e "$dir/$1" ]; then mv "$dir/$1" "$tmp/old-$1"; fi
@@ -106,10 +118,10 @@ EOF
       exit 1
     fi
   }
-  quit_app loom-app
+  quit_app pgrep -xu "$me" loom-app
   put_app loom.app
   if [ -n "$with_desktop" ]; then
-    quit_app loom-desktop
+    quit_app desktop_gui_pids
     put_app loom-desktop.app
     echo "loom 데스크톱 앱을 설치했습니다: $dir/loom-desktop.app"
   fi

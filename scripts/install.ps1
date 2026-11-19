@@ -13,7 +13,7 @@ $linux = Join-Path $dir 'loom-linux'
 $unpack = Join-Path $home_dir 'desktop.new'
 New-Item -ItemType Directory -Force -Path $dir | Out-Null
 
-function Install-File($from, $to) {
+function Remove-InstalledFile($to) {
   if (Test-Path $to) {
     try {
       Remove-Item $to -Force
@@ -21,6 +21,10 @@ function Install-File($from, $to) {
       Rename-Item $to "$(Split-Path $to -Leaf).$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds()).old"
     }
   }
+}
+
+function Install-File($from, $to) {
+  Remove-InstalledFile $to
   Move-Item $from $to
 }
 
@@ -34,14 +38,17 @@ if ($desktop_url -ne $url) {
   try {
     Invoke-WebRequest -Uri $desktop_url -OutFile "$unpack.zip" -UseBasicParsing
     Expand-Archive -Path "$unpack.zip" -DestinationPath $unpack -Force
-    $with_desktop = (Test-Path (Join-Path $unpack '*\loom-desktop.exe')) -and (Test-Path (Join-Path $unpack '*\loom.exe'))
+    $with_desktop = Test-Path (Join-Path $unpack '*\loom-desktop.exe')
   } catch {
     $with_desktop = $false
   }
   Remove-Item "$unpack.zip" -Force -ErrorAction SilentlyContinue
 }
+$with_web = !$with_desktop
 if ($with_desktop) {
-  Move-Item -Force (Join-Path $unpack '*\loom.exe') "$exe.new"
+  $web = Join-Path $unpack '*\loom.exe'
+  $with_web = Test-Path $web
+  if ($with_web) { Move-Item -Force $web "$exe.new" }
   Move-Item -Force (Join-Path $unpack '*\loom-desktop.exe') "$app.new"
 } else {
   Write-Output '이 릴리스에는 데스크톱 앱이 없습니다. 브라우저 판 loom만 설치합니다.'
@@ -50,8 +57,9 @@ if ($with_desktop) {
 Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($with_linux) { Move-Item -Force "$linux.new" $linux }
-Install-File "$exe.new" $exe
+if ($with_web) { Install-File "$exe.new" $exe }
 if ($with_desktop) { Install-File "$app.new" $app }
+if (!$with_web) { Remove-InstalledFile $exe }
 
 $icon = Join-Path $home_dir 'icon.ico'
 try { Invoke-WebRequest -Uri "$raw/app/icons/icon.ico" -OutFile $icon -UseBasicParsing } catch { $icon = $null }

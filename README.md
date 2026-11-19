@@ -30,7 +30,7 @@ Get the files from the [latest release](https://github.com/BrownC98/loom/release
 Run `loom_<version>_x64-setup.exe`. The loom window opens.
 
 - loom also works in a browser: **loom (browser)** in the Start menu opens the same loom in your default browser.
-- Without the setup program: run this line in PowerShell. It puts `loom-desktop.exe` (the native loom window) and `loom.exe` of the same release in `%LOCALAPPDATA%\loom\bin`, puts a **loom** icon on the desktop that opens the window, and opens it. Run it again to update. If the release has no desktop program (older releases), it installs the browser version, and the icon opens loom in the browser.
+- Without the setup program: run this line in PowerShell. It puts `loom-desktop.exe` in `%LOCALAPPDATA%\loom\bin`, puts a **loom** icon on the desktop, and opens the window. Run it again to update. If the release has no desktop program (older releases), it installs the browser version, and the icon opens loom in the browser.
 
   ```powershell
   irm https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.ps1 | iex
@@ -40,7 +40,7 @@ Run `loom_<version>_x64-setup.exe`. The loom window opens.
 
 ### macOS (Apple Silicon)
 
-Run this line in Terminal. It downloads the loom app, puts it in the Applications folder and opens it. Run it again to update. If the release has the native desktop program, the line also puts `loom-desktop.app` (the native loom window with its own `loom`, same release) in the Applications folder and opens that one.
+Run this line in Terminal. It downloads the loom app, puts it in the Applications folder and opens it. Run it again to update. If the release has the native desktop program, the line also puts `loom-desktop.app` (the native loom window from the same release) in the Applications folder and opens that one.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/BrownC98/loom/main/scripts/install.sh | sh
@@ -68,7 +68,7 @@ One Windows loom runs agents on Windows and in WSL. To work on a repository in W
 
 ### loom desktop (native window)
 
-loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead of a web view. It shows the same screen as the loom app and the browser version. Its goal is a faster screen. It is a viewer, like the app: it starts or joins the loom daemon, and the daemon runs the agents. So the app, the browser tab and loom desktop can show the same loom at the same time.
+loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead of a web view. It shows the same screen as the loom app and the browser version. Its goal is a faster screen. The executable starts or joins the loom daemon. Run the same executable with arguments to use the Loom CLI. So the app, the browser tab and loom desktop can show the same loom at the same time.
 
 | | loom app | loom desktop | Browser version |
 |---|---|---|---|
@@ -82,20 +82,22 @@ loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead o
 **Install by hand:**
 
 1. Download the file for your system from the release.
-2. Unpack it. You get one folder with `loom-desktop` and `loom` of the same release. Keep the two files together: `loom-desktop` starts the `loom` next to it (else the `loom` on `PATH`).
+2. Unpack it. `loom-desktop` contains the window, daemon and CLI.
 3. Run `loom-desktop`.
    - Windows: double-click `loom-desktop.exe`. If SmartScreen stops it, click **More info › Run anyway**.
-   - macOS: the files have no Apple signature. First run `xattr -cr <folder>` in Terminal, then `<folder>/loom-desktop`.
+   - macOS: the file has no Apple signature. First run `xattr -cr <folder>` in Terminal, then `<folder>/loom-desktop`.
 
 **First use.** The window starts the loom daemon and shows the graph. If a loom daemon already runs, the window joins it. If that daemon is older, the newer `loom` replaces it, and the agents continue. Then add a repository and start an agent, as in the app.
 
-**Close and stop.** When you close the window, the daemon and the agents continue. To stop the daemon, run `stop` with the `loom` next to `loom-desktop`. The install does not put it on `PATH`:
+**Close and stop.** When you close the window, the daemon and the agents continue. Run the desktop executable with `stop` to stop the daemon.
 
-- Windows (one line): `%LOCALAPPDATA%\loom\bin\loom.exe stop`
-- macOS (one line): `/Applications/loom-desktop.app/Contents/MacOS/loom stop` (or `~/Applications/…`)
-- Hand install: `<folder>/loom stop`
+- Windows (one line): `& "$env:LOCALAPPDATA\loom\bin\loom-desktop.exe" stop | Out-Host`
+- macOS (one line): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop` (or `~/Applications/…`)
+- Hand install: `<folder>/loom-desktop stop`
 
-**Update.** Open Settings › About and click **Check for updates**, then **Update**. The daemon replaces `loom` and the `loom-desktop` next to it with the new release, and starts again. Then quit the window program and open it again: the window shows this hint. If your installed loom is from a release before this feature, the button replaces only `loom`; run the install line once more. The update button replaces `loom-desktop` only when the running daemon is the `loom` next to it.
+**Update.** Open Settings › About and click **Check for updates**, then **Update**. When `loom-desktop` runs the daemon, the update replaces that executable and restarts the daemon. Quit the window and open it again to use the new version.
+
+**WSL.** The Windows install line downloads the separate Linux CLI for WSL nodes. For a manual install, put the same release's `loom-web-linux-x64` next to `loom-desktop.exe` as `loom-linux`. Run the WSL install line again if an earlier install left a `~/loom/bin/loom` wrapper that points to `loom.exe`.
 
 **Limits.** The release has loom desktop only for Windows x64 and macOS Apple Silicon. On Linux, use the browser version. Releases before v0.1.2825 do not have it; for those, the install lines install the browser version (Windows) or only the app (macOS).
 

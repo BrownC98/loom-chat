@@ -9,7 +9,7 @@ use crate::protocol::{NODE_CALLS, NODE_CALLS_HEADER, Session};
 use crate::tunnel::ENDPOINT_ENV;
 use api::graph::events::Entry;
 
-const LINUX_LOOM_MISSING: &str = "loom-linux is not next to loom.exe";
+const LINUX_LOOM_MISSING: &str = "loom-linux is not next to the Windows executable";
 const EARLIER_LAUNCH: &str = "This process is from an earlier launch of this node. loom gives mail and agent state only to the current launch. Verbs such as loom note and loom done still work.";
 
 impl App {
@@ -630,6 +630,11 @@ impl App {
             }
             Machine::Pc => {
                 env.extend(self.daemon_urls());
+                #[cfg(windows)]
+                env.push((
+                    launch::CLI_EXE_ENV,
+                    std::env::current_exe().map_err(internal)?.into_os_string(),
+                ));
                 (self.pc_site(), None)
             }
             Machine::Ssh(at) => {
@@ -809,10 +814,10 @@ impl App {
     }
 
     fn node_env(&self, token: &str) -> Result<[(&'static str, OsString); 2], Problem> {
-        Ok([
-            (open::NODE_TOKEN_ENV, token.into()),
-            ("PATH", node_path().map_err(internal)?),
-        ])
+        let searched = crate::search_path::current();
+        let dirs = std::iter::once(self.native_bin.clone()).chain(std::env::split_paths(&searched));
+        let path = std::env::join_paths(dirs).map_err(internal)?;
+        Ok([(open::NODE_TOKEN_ENV, token.into()), ("PATH", path)])
     }
 
     fn daemon_urls(&self) -> [(&'static str, OsString); 2] {

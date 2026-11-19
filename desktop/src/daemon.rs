@@ -3,36 +3,23 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use crate::platform::hide_console;
-
 const READY_PREFIX: &str = "loom: ";
-const LOOM: &str = "loom";
 const START_LIMIT: Duration = Duration::from_secs(30);
 const VERSION_LIMIT: Duration = Duration::from_secs(5);
 const REAP_POLL: Duration = Duration::from_millis(200);
 
-fn sibling() -> Option<std::path::PathBuf> {
-    let exe = std::env::current_exe()
-        .ok()?
-        .with_file_name(format!("{LOOM}{}", std::env::consts::EXE_SUFFIX));
-    exe.is_file().then_some(exe)
-}
-
-fn command() -> Command {
-    match sibling() {
-        Some(exe) => Command::new(exe),
-        None => Command::new(LOOM),
-    }
-}
-
-pub fn version() -> Option<String> {
-    let mut command = command();
+fn command(arg: &str) -> std::io::Result<Command> {
+    let mut command = Command::new(std::env::current_exe()?);
     command
-        .arg("--version")
+        .arg(arg)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
-    hide_console(&mut command);
+    Ok(command)
+}
+
+pub fn version() -> Option<String> {
+    let mut command = command("--version").ok()?;
     let mut child = command.spawn().ok()?;
     let mut stdout = child.stdout.take()?;
     let (sent, received) = mpsc::channel();
@@ -50,13 +37,8 @@ pub fn version() -> Option<String> {
 }
 
 pub fn start() -> Result<String, String> {
-    let mut command = command();
-    command
-        .arg("start")
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    hide_console(&mut command);
+    let mut command =
+        command("start").map_err(|e| format!("could not find the executable: {e}"))?;
     let mut child = command
         .spawn()
         .map_err(|e| format!("could not run `loom start`: {e}"))?;

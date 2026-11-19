@@ -70,7 +70,7 @@ rm -f target/.rustc_info.json target/*/.rustc_info.json desktop/target/.rustc_in
 step fmt cargo fmt --check
 step db-files db_files
 groups=(linux windows)
-desktop_changes=$(git diff --name-only origin/main...HEAD -- desktop api fixtures web/src web/package-lock.json rust-toolchain.toml .cargo/config.toml Cargo.toml)
+desktop_changes=$(git diff --name-only origin/main...HEAD -- desktop api fixtures src web app/icons/icon.ico rust-toolchain.toml .cargo/config.toml Cargo.toml build.rs)
 if [ -n "$desktop_changes" ]; then
   groups+=(desktop)
 fi

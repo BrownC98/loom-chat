@@ -20,6 +20,9 @@ ts-rs = { version = "12.0.1", features = ["no-serde-warnings"] }
 [workspace.lints.rust]
 warnings = "deny"
 
+[features]
+embedded-web = ["rust-embed/debug-embed"]
+
 [dependencies]
 api = { path = "api", features = ["axum", "clap", "sqlite"] }
 axum = { workspace = true, features = ["ws"] }

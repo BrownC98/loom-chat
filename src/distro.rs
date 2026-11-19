@@ -16,7 +16,7 @@ use crate::{process_tree, tunnel};
 
 pub const LINUX_LOOM: &str = "loom-linux";
 const LINUX_HASH_HEX: usize = 12;
-const LINUX_MISSING: &str = "loom-linux is not next to loom.exe";
+const LINUX_MISSING: &str = "loom-linux is not next to the Windows executable";
 const SSH_FILE: &str = "ssh-";
 const MAGIC: &[u8] = b"loom-distro";
 const READY: &str = "loom distro-host ready";

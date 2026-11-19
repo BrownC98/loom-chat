@@ -651,7 +651,7 @@ printf '\036%s\036' "$bin""#,
     Ok(inside)
 }
 
-fn word(text: &str) -> String {
+pub fn word(text: &str) -> String {
     format!("'{}'", text.replace('\'', r"'\''"))
 }
 
@@ -976,7 +976,7 @@ exec "$(wslpath -u '{exe}')" "$@"
     if std::fs::read_to_string(&shim).is_ok_and(|old| old == text) {
         return Ok(());
     }
-    std::fs::write(shim, text)
+    distro::replace(&shim, text.as_bytes())
 }
 
 pub fn shell(line: &str) -> Vec<OsString> {

@@ -31,7 +31,10 @@ use windows as platform;
 
 use gpui::{App, AppContext};
 
-fn main() {
+fn main() -> std::process::ExitCode {
+    if std::env::args_os().nth(1).is_some() {
+        return unsafe { loom::run_desktop_cli() };
+    }
     program::remember();
     let started = daemon::start();
     gpui_platform::application()
@@ -49,4 +52,5 @@ fn main() {
             .expect("could not open the window");
             cx.activate(true);
         });
+    std::process::ExitCode::SUCCESS
 }

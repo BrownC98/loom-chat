@@ -146,6 +146,7 @@ struct App {
     tidying: tokio::sync::Mutex<()>,
     ptys_changed: tokio::sync::Notify,
     plugin: skills::Plugin,
+    native_bin: PathBuf,
     shim: PathBuf,
     linux_loom: Option<PathBuf>,
     distros: Arc<crate::distro::Distros>,
@@ -184,7 +185,11 @@ const NODE_IP: Ipv4Addr = Ipv4Addr::new(127, 76, 77, 1);
 
 const OLD_IMAGES_LIMIT: Duration = Duration::from_secs(10);
 
-pub async fn serve(listen: SocketAddr, ready_to: Option<SocketAddr>) -> std::io::Result<()> {
+pub async fn serve(
+    listen: SocketAddr,
+    ready_to: Option<SocketAddr>,
+    executable: launch::Executable,
+) -> std::io::Result<()> {
     let claim = launch::Claim::take()?;
     let listener = tokio::net::TcpListener::bind(listen).await?;
     let listen = listener.local_addr()?;
@@ -199,6 +204,7 @@ pub async fn serve(listen: SocketAddr, ready_to: Option<SocketAddr>) -> std::io:
     let app = Arc::new(App::new(
         db::open(&db_path)?,
         &db_path,
+        executable,
         listen,
         node_door_addr,
         links,
@@ -340,20 +346,11 @@ fn node_url(listen: SocketAddr) -> String {
     format!("http://{}", SocketAddr::new(ip, listen.port()))
 }
 
-fn node_path() -> std::io::Result<OsString> {
-    let exe_dir = std::env::current_exe()?
-        .parent()
-        .map(PathBuf::from)
-        .unwrap_or_default();
-    let searched = crate::search_path::current();
-    let dirs = std::iter::once(exe_dir).chain(std::env::split_paths(&searched));
-    std::env::join_paths(dirs).map_err(std::io::Error::other)
-}
-
 impl App {
     fn new(
         database: db::Database,
         db_path: &std::path::Path,
+        executable: launch::Executable,
         listen: SocketAddr,
         node_door: Option<SocketAddr>,
         links: node_host::Links<NodeId>,
@@ -363,7 +360,16 @@ impl App {
             Graph::open(database.clone(), profile::linked).map_err(std::io::Error::other)?,
         );
         let pty_dir = db_path.with_file_name("pty");
-        let update = Arc::new(Updater::new(listen, {
+        let exe = std::env::current_exe()?;
+        let native_bin = match executable {
+            launch::Executable::Cli => exe.parent().map(PathBuf::from).unwrap_or_default(),
+            launch::Executable::Desktop => {
+                let bin = db_path.with_file_name("bin");
+                launch::write_command_shim(&bin, &exe)?;
+                bin
+            }
+        };
+        let update = Arc::new(Updater::new(&exe, executable, listen, {
             let graph = graph.clone();
             move || graph.publish_view_changed()
         }));
@@ -374,21 +380,18 @@ impl App {
         let idle = idle::IdleWaits::new(graph.clone());
         let shim = db_path.with_file_name("wsl");
         let linux_loom = match cfg!(windows) {
-            true => wsl::install_linux(
-                &shim,
-                &std::env::current_exe()?.with_file_name(crate::distro::LINUX_LOOM),
-            )
-            .unwrap_or_else(|e| {
-                crate::log::logln!("loom: WSL 노드용 Linux loom을 넣지 못했다: {e}");
-                None
-            }),
+            true => wsl::install_linux(&shim, &exe.with_file_name(crate::distro::LINUX_LOOM))
+                .unwrap_or_else(|e| {
+                    crate::log::logln!("loom: WSL 노드용 Linux loom을 넣지 못했다: {e}");
+                    None
+                }),
             false => None,
         };
         if let Some(linux) = &linux_loom {
             wsl::prune_linux(linux);
         }
         if cfg!(windows) {
-            wsl::write_shim(&shim, &std::env::current_exe()?, linux_loom.as_deref())?;
+            wsl::write_shim(&shim, &exe, linux_loom.as_deref())?;
         }
         let linux = match cfg!(target_os = "linux") {
             true => Some(crate::process_tree::own_exe().map_err(std::io::Error::other)?),
@@ -451,6 +454,7 @@ impl App {
                 }
                 plugin
             },
+            native_bin,
             shim,
             linux_loom,
             distros,

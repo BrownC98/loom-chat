@@ -1,5 +1,3 @@
-use std::process::Command;
-
 use gpui::{AnyElement, App, Div, Pixels, TitlebarOptions, Window, WindowOptions, point};
 
 use crate::frame;
@@ -9,8 +7,6 @@ use crate::theme::Colors;
 
 const TRAFFIC_LIGHT: f32 = 13.0;
 const TRAFFIC_LIGHT_GAP: f32 = 64.0;
-
-pub fn hide_console(_: &mut Command) {}
 
 pub fn window_options(cx: &App) -> WindowOptions {
     WindowOptions {

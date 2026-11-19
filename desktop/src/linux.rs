@@ -1,13 +1,9 @@
-use std::process::Command;
-
 use gpui::{AnyElement, App, Div, Pixels, TitlebarOptions, Window, WindowOptions};
 
 use crate::frame;
 use crate::scale::fixed as px;
 use crate::strings::Lang;
 use crate::theme::Colors;
-
-pub fn hide_console(_: &mut Command) {}
 
 pub fn window_options(cx: &App) -> WindowOptions {
     WindowOptions {

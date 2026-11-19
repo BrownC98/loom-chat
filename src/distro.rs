@@ -901,6 +901,7 @@ impl Drop for Running {
 
 async fn run_until_hung_up(stream: &mut tunnel::Stream, command: &Command) -> Option<Answer> {
     let spawned = process(command).and_then(|mut cmd| {
+        crate::timed::hide_console(cmd.as_std_mut());
         cmd.stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
             .spawn()

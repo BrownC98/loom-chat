@@ -298,6 +298,7 @@ async fn logout(
 ) -> Result<Json<()>, Problem> {
     let cli = accounted(provider)?.cli;
     let mut cmd = app.site_of(at.distro.as_deref()).await?.logout(cli)?;
+    crate::timed::hide_console(&mut cmd);
     let out = tokio::task::spawn_blocking(move || cmd.stdin(std::process::Stdio::null()).output())
         .await
         .map_err(internal)?

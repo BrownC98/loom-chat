@@ -31,7 +31,7 @@ class Hook:
 
     def open(self):
         child = subprocess.Popen(
-            ["loom", "hook", ENTRY],
+            [os.environ.get("LOOM_CLI_EXE") or "loom", "hook", ENTRY],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

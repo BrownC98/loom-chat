@@ -59,7 +59,6 @@ Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
 if ($with_linux) { Move-Item -Force "$linux.new" $linux }
 if ($with_web) { Install-File "$exe.new" $exe }
 if ($with_desktop) { Install-File "$app.new" $app }
-if (!$with_web) { Remove-InstalledFile $exe }
 
 $icon = Join-Path $home_dir 'icon.ico'
 try { Invoke-WebRequest -Uri "$raw/app/icons/icon.ico" -OutFile $icon -UseBasicParsing } catch { $icon = $null }

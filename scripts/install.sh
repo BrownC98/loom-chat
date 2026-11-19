@@ -30,10 +30,15 @@ if [ -n "${WSL_DISTRO_NAME:-}" ]; then
   fi
   rm -f "$HOME/.loom/serve.pid"
   export WSLENV="${WSLENV:+$WSLENV:}LOOM_DOWNLOAD_URL:LOOM_DESKTOP/p"
-  (cd /mnt/c && powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Console]::OutputEncoding = [Text.Encoding]::UTF8; irm $raw/scripts/install.ps1 | iex")
-  windows_bin=$(wslpath "$(cd /mnt/c && cmd.exe /c 'echo %LOCALAPPDATA%' | tr -d '\r')")/loom/bin
-  exe=$windows_bin/loom.exe
-  if [ ! -x "$exe" ]; then exe=$windows_bin/loom-desktop.exe; fi
+  windows_exe=$(
+    cd /mnt/c
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+      \$ErrorActionPreference = 'Stop'
+      [Console]::OutputEncoding = [Text.Encoding]::UTF8
+      irm $raw/scripts/install.ps1 | iex | ForEach-Object { [Console]::Error.WriteLine(\$_) }
+      [Console]::WriteLine(\$shortcut.TargetPath)"
+  )
+  exe=$(wslpath "$(printf '%s' "$windows_exe" | tr -d '\r')")
   point_bin_to "$exe"
   if [ -n "$carry" ]; then "$bin" carry "$carry"; fi
   exit 0
@@ -68,7 +73,12 @@ if [ "$(uname -s)" = Darwin ]; then
     macos=$tmp/loom-desktop.app/Contents/MacOS
     mkdir -p "$macos"
     mv "$desktop_files/loom-desktop" "$macos/"
-    if [ -x "$desktop_files/loom" ]; then mv "$desktop_files/loom" "$macos/"; fi
+    legacy_cli=$dir/loom-desktop.app/Contents/MacOS/loom
+    if [ -x "$desktop_files/loom" ]; then
+      mv "$desktop_files/loom" "$macos/"
+    elif [ -x "$legacy_cli" ]; then
+      cp -p "$legacy_cli" "$macos/"
+    fi
     mkdir "$tmp/loom-desktop.app/Contents/Resources"
     mv "$desktop_files/icon.icns" "$tmp/loom-desktop.app/Contents/Resources/" 2>/dev/null || true
     cat >"$tmp/loom-desktop.app/Contents/Info.plist" <<EOF

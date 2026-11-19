@@ -446,7 +446,9 @@ pub fn version_warnings(versions: &HashMap<Profile, String>) -> HashMap<Profile,
 }
 
 fn installed_version(cmd: &str) -> Option<String> {
-    let out = crate::process_tree::command(cmd)
+    let mut cmd = crate::process_tree::command(cmd);
+    crate::timed::hide_console(&mut cmd);
+    let out = cmd
         .arg("--version")
         .stdin(std::process::Stdio::null())
         .output()

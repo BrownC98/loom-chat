@@ -200,7 +200,9 @@ pub async fn allow_firewall(port: u16) -> std::io::Result<()> {
         "$p = Start-Process -FilePath powershell.exe -ArgumentList @('-NoProfile','-NonInteractive','-EncodedCommand','{encoded}') \
          -Verb RunAs -Wait -PassThru -WindowStyle Hidden; exit $p.ExitCode"
     );
-    let status = tokio::process::Command::new("powershell.exe")
+    let mut cmd = tokio::process::Command::new("powershell.exe");
+    crate::timed::hide_console(cmd.as_std_mut());
+    let status = cmd
         .args(["-NoProfile", "-NonInteractive", "-Command", &outer])
         .status()
         .await?;

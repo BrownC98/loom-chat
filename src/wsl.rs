@@ -156,7 +156,9 @@ async fn list(args: &[&str]) -> Vec<String> {
     if !cfg!(windows) {
         return Vec::new();
     }
-    let out = tokio::process::Command::new("wsl.exe")
+    let mut cmd = tokio::process::Command::new("wsl.exe");
+    crate::timed::hide_console(cmd.as_std_mut());
+    let out = cmd
         .args(args)
         .env("WSL_UTF8", "1")
         .stdin(std::process::Stdio::null())

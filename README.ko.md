@@ -95,9 +95,11 @@ loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom �
 - macOS(한 줄 설치): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop`(또는 `~/Applications/…`)
 - 손으로 설치: `<폴더>/loom-desktop stop`
 
+Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전에 프롬프트가 돌아올 수 있습니다. 명령이 끝날 때까지 기다리고 종료 코드를 받으려면 PowerShell에서 `| Out-Host`를 붙입니다. 명령 프롬프트에서는 `start "" /wait "%LOCALAPPDATA%\loom\bin\loom-desktop.exe" stop`을 씁니다.
+
 **업데이트.** 설정 › 정보에서 **업데이트 확인**, 이어서 **업데이트**를 누릅니다. `loom-desktop`이 데몬을 돌리면 그 실행 파일을 바꾸고 데몬을 다시 띄웁니다. 새 판의 창을 보려면 창 프로그램을 끝내고 다시 엽니다.
 
-**WSL.** Windows 설치 명령은 WSL 노드용 Linux CLI를 따로 받습니다. 손으로 설치하면 같은 릴리스의 `loom-web-linux-x64`를 `loom-linux`로 이름을 바꿔 `loom-desktop.exe` 옆에 둡니다. 옛 `~/loom/bin/loom`이 `loom.exe`를 부르면 WSL 설치 명령을 다시 실행합니다.
+**WSL.** Windows 설치 명령은 WSL 노드용 Linux CLI를 따로 받습니다. 손으로 설치하면 같은 릴리스의 `loom-web-linux-x64`를 `loom-linux`로 이름을 바꿔 `loom-desktop.exe` 옆에 둡니다. WSL 설치 명령은 Windows 설치가 고른 실행 파일을 `~/loom/bin/loom`에 연결합니다.
 
 **한계.** 릴리스에는 Windows x64와 macOS Apple Silicon용 loom desktop만 있습니다. Linux는 브라우저 판을 씁니다. v0.1.2825보다 옛 릴리스에는 없습니다. 그때 설치 한 줄은 브라우저 판(Windows) 또는 앱만(macOS) 설치합니다.
 

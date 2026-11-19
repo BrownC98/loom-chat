@@ -48,7 +48,8 @@ impl Tailscale {
     }
 
     pub async fn serve(&self, port: u16) -> Result<Served, String> {
-        let mut child = Command::new(&self.program)
+        let mut cmd = self.command();
+        let mut child = cmd
             .args(["serve", "--bg", &port.to_string()])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -99,7 +100,8 @@ impl Tailscale {
     }
 
     async fn run(&self, args: &[&str]) -> Result<String, String> {
-        let out = Command::new(&self.program)
+        let out = self
+            .command()
             .args(args)
             .output()
             .await
@@ -108,6 +110,12 @@ impl Tailscale {
             return Err(String::from_utf8_lossy(&out.stderr).trim().to_owned());
         }
         Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+    }
+
+    fn command(&self) -> Command {
+        let mut cmd = Command::new(&self.program);
+        crate::timed::hide_console(cmd.as_std_mut());
+        cmd
     }
 }
 

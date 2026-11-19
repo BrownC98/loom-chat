@@ -38,7 +38,9 @@ function parse(line: string): Reply | undefined {
 }
 
 function open(ctx: Context, signal: AbortSignal, entry: Harness<Context>["entry"]): Hook {
-  const child = spawn("loom", ["hook", entry], { stdio: ["pipe", "pipe", "pipe"], signal, windowsHide: true });
+  const child = spawn(process.env.LOOM_CLI_EXE || "loom", ["hook", entry], {
+    stdio: ["pipe", "pipe", "pipe"], signal, windowsHide: true,
+  });
   const hook: Hook = { child, pending: new Map(), open: true };
   let out = "";
   let err = "";

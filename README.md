@@ -95,9 +95,11 @@ loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead o
 - macOS (one line): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop` (or `~/Applications/…`)
 - Hand install: `<folder>/loom-desktop stop`
 
+At a Windows command prompt, a direct call to `loom-desktop.exe` can return before the command exits. To wait and get the exit code, pipe to `Out-Host` in PowerShell or use `start "" /wait "%LOCALAPPDATA%\loom\bin\loom-desktop.exe" stop` in Command Prompt.
+
 **Update.** Open Settings › About and click **Check for updates**, then **Update**. When `loom-desktop` runs the daemon, the update replaces that executable and restarts the daemon. Quit the window and open it again to use the new version.
 
-**WSL.** The Windows install line downloads the separate Linux CLI for WSL nodes. For a manual install, put the same release's `loom-web-linux-x64` next to `loom-desktop.exe` as `loom-linux`. Run the WSL install line again if an earlier install left a `~/loom/bin/loom` wrapper that points to `loom.exe`.
+**WSL.** The Windows install line downloads the separate Linux CLI for WSL nodes. For a manual install, put the same release's `loom-web-linux-x64` next to `loom-desktop.exe` as `loom-linux`. Run the WSL install line to point the `~/loom/bin/loom` wrapper to the executable that the Windows installer selects.
 
 **Limits.** The release has loom desktop only for Windows x64 and macOS Apple Silicon. On Linux, use the browser version. Releases before v0.1.2825 do not have it; for those, the install lines install the browser version (Windows) or only the app (macOS).
 

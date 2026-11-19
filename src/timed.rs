@@ -9,7 +9,9 @@ pub fn own_group(cmd: &mut Command) {
 }
 
 #[cfg(windows)]
-pub fn own_group(_: &mut Command) {}
+pub fn own_group(cmd: &mut Command) {
+    hide_console(cmd);
+}
 
 #[cfg(unix)]
 pub fn own_session(cmd: &mut Command) {
@@ -25,6 +27,14 @@ pub fn own_session(cmd: &mut Command) {
 
 #[cfg(windows)]
 pub fn own_session(cmd: &mut Command) {
+    hide_console(cmd);
+}
+
+#[cfg(unix)]
+pub fn hide_console(_: &mut Command) {}
+
+#[cfg(windows)]
+pub fn hide_console(cmd: &mut Command) {
     use std::os::windows::process::CommandExt;
     cmd.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
 }

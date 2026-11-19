@@ -2,7 +2,9 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { joinSession } from "@github/copilot-sdk/extension";
 
-const child = spawn("loom", ["hook", "copilot"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+const child = spawn(process.env.LOOM_CLI_EXE || "loom", ["hook", "copilot"], {
+  stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+});
 const pending = new Map();
 let next = 0;
 let state = {};

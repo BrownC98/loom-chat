@@ -347,8 +347,13 @@ def server():
     args = [sys.executable, "-c", "from vibe.app_server.stdio import main; main()"]
     child = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, encoding="utf-8")
     try:
-        hook = subprocess.Popen(["loom", "hook", "vibe-bridge"], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, text=True, encoding="utf-8")
+        hook = subprocess.Popen(
+            [os.environ.get("LOOM_CLI_EXE") or "loom", "hook", "vibe-bridge"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+        )
         try:
             Bridge(child, hook).run()
         finally:

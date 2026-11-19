@@ -1,5 +1,5 @@
 use api::graph::NodeView;
-use api::graph::chat::{ChatEntry, ChatOrigin, ChatPage, ChatRoomKind};
+use api::graph::chat::{ChatCursor, ChatEntry, ChatOrigin, ChatPage, ChatRoomKind, ChatSource};
 use api::graph::waits::{ScreenWait, WaitTone};
 use api::ids::{NodeId, WaitId};
 use gpui::prelude::FluentBuilder;
@@ -10,6 +10,7 @@ use gpui::{
 
 use super::Composer;
 use crate::link;
+use crate::problem::Failure;
 use crate::scale::{self, px};
 use crate::store::Store;
 use crate::theme::mix;
@@ -170,27 +171,36 @@ impl Composer {
             return;
         };
         let path = format!("/api/chat/rooms/{}/stream", link::escape(&room.id));
-        let task = data
-            .graph()
-            .read(cx)
-            .call(cx, move |base| link::read::<ChatPage>(base, &path));
-        let before = wait.wait.since.saturating_mul(1000);
+        let before = ChatCursor {
+            at_ms: wait.wait.since.saturating_mul(1000),
+            source: ChatSource::Wait,
+            id: i64::from(id.0),
+            part: 0,
+        };
+        let task = data.graph().read(cx).call(cx, move |base| {
+            let cursor = serde_json::to_string(&before)
+                .map_err(|error| Failure::Other(error.to_string()))?;
+            let query = link::query(&[("before", Some(&cursor))]);
+            link::read::<ChatPage>(base, &format!("{path}{query}"))
+        });
         self.alerts.reading = Some(cx.spawn(async move |this, cx| {
             let Ok(page) = task.await else {
                 return;
             };
             let mut context = AlertContext::default();
-            for item in page
-                .items
-                .into_iter()
-                .rev()
-                .filter(|item| item.cursor.at_ms <= before)
-            {
+            for item in page.items.into_iter().rev().filter(|item| {
+                item.cursor.at_ms < before.at_ms || item.cursor.source == ChatSource::Wait
+            }) {
                 match item.entry {
                     ChatEntry::Message { message } if message.origin == ChatOrigin::Human => {
                         context.last_message.get_or_insert(message.text);
                     }
-                    ChatEntry::Message { message } if message.from.id == Some(node) => {
+                    ChatEntry::Message { message }
+                        if message.from.id == Some(node)
+                            && message.receipts.iter().all(|receipt| {
+                                receipt.to.name == "human" && receipt.to.id.is_none()
+                            }) =>
+                    {
                         context.previous_reply.get_or_insert(message.text);
                     }
                     ChatEntry::Wait { wait, .. }
@@ -250,7 +260,6 @@ impl Composer {
             });
             (repo.map(|repo| repo.name.clone()), task)
         };
-        let reply = notice.node.reply.clone();
         if self.alerts.expanded {
             self.read_context(node, &wait, cx);
         }
@@ -294,7 +303,7 @@ impl Composer {
         let info = [
             ("하던 일", task.as_deref()),
             ("내 마지막 말", last),
-            ("앞선 답", previous.or(reply.as_deref())),
+            ("앞선 답", previous),
         ];
         let details = div()
             .flex()

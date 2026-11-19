@@ -1,0 +1,920 @@
+<!doctype html>
+<html lang="ko" style="color-scheme: light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R469 loom 채팅 플랫폼: 사용자 흐름과 GPUI 화면 목업</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+
+:root {
+  --bg: light-dark(oklch(97% 0 0), oklch(20.5% 0 0));
+  --panel: light-dark(oklch(98.5% 0 0), oklch(23.5% 0 0));
+  --surface: light-dark(oklch(100% 0 0), oklch(26.9% 0 0));
+  --surface-hover: light-dark(oklch(93.7% 0 0), oklch(32.9% 0 0));
+  --line: light-dark(oklch(92.2% 0 0), oklch(33% 0 0));
+  --line-strong: light-dark(oklch(87% 0 0), oklch(40% 0 0));
+  --ink: light-dark(oklch(20.5% 0 0), oklch(98.5% 0 0));
+  --ink-2: light-dark(oklch(37.1% 0 0), oklch(80% 0 0));
+  --ink-3: light-dark(oklch(50% 0 0), oklch(70.9% 0 0));
+  --accent: light-dark(oklch(20.5% 0 0), oklch(92.2% 0 0));
+  --accent-wash: light-dark(oklch(20.5% 0 0 / 0.07), oklch(92.2% 0 0 / 0.12));
+  --warn: light-dark(oklch(47% 0.12 87), oklch(80% 0.15 87));
+  --err: light-dark(oklch(55% 0.2 27), oklch(70% 0.17 25));
+  --font: 'Pretendard', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --radius: 8px;
+}
+* { box-sizing: border-box; margin: 0; font-variant-ligatures: none !important; }
+html { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); }
+button { font: inherit; color: inherit; }
+.doc { width: 1440px; margin: 0 auto; padding: 32px 40px 64px; display: grid; gap: 28px; }
+.who { display: flex; gap: 16px; font-size: 13px; color: var(--ink-2); }
+.who b { color: var(--ink); }
+h1 { font-size: 18px; text-wrap: balance; }
+h2 { font-size: 15px; text-wrap: balance; display: flex; gap: 8px; align-items: baseline; }
+h2 .tag { font: 12px var(--mono); color: var(--ink-3); }
+.lead { color: var(--ink-2); max-width: 900px; text-wrap: pretty; }
+.fig { display: grid; gap: 10px; }
+.note { font-size: 13px; color: var(--ink-2); max-width: 880px; }
+.note li { margin-left: 18px; }
+
+.decision { display: grid; gap: 6px; max-width: 880px; padding: 10px 12px; border: 1.5px solid var(--warn); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 6%, var(--surface)); }
+.fig + .decision { margin-top: -16px; }
+.decision > h3 { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.did { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border: 1px solid color-mix(in oklch, var(--warn) 55%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--warn) 10%, var(--surface)); color: var(--ink); font: 700 15px/24px var(--mono); }
+.opts { display: grid; gap: 6px; }
+.opt { display: flex; align-items: baseline; gap: 6px; min-height: 26px; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 13px; line-height: 1.4; }
+.opt .key { font: 600 11px var(--mono); color: var(--ink-3); }
+.opt[data-recommended] { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
+.opt .mark { margin-left: 6px; color: var(--warn); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.opt .sub { display: block; color: var(--ink-2); font-size: 12px; }
+.decision .why { font-size: 13px; color: var(--ink-2); }
+.decision .why li { margin-left: 18px; }
+.theme-toggle { position: fixed; top: 16px; right: 16px; height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-size: 13px; cursor: pointer; }
+
+.theme-toggle { z-index: 80; }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fig { position: relative; }
+.co { position: absolute; z-index: 63; max-width: 250px; display: flex; gap: 6px; align-items: flex-start; background: #fff; color: #171B22; border: 1.5px solid #D14343; border-radius: 6px; padding: 4px 8px 4px 5px; font: 12px/1.45 var(--font); box-shadow: 0 2px 8px rgb(0 0 0 / .18); }
+.co .dref { flex: none; height: 22px; margin-top: 1px; padding: 0 5px; border: 1px solid #C08A1E; border-radius: 4px; background: #FDF3DC; color: #171B22; font: 700 12px/20px var(--mono); font-style: normal; }
+.decision > .for { font-size: 13px; font-weight: 600; }
+.co b { flex: none; width: 22px; height: 22px; border-radius: 50%; background: #D14343; color: #fff; font-size: 14px; display: grid; place-items: center; margin-top: 1px; }
+.shotwrap { position: relative; justify-self: start; padding: 16px; border: 1px solid var(--line-strong); border-radius: 10px; background: #fff; }
+.doc { width: auto; max-width: 1440px; }
+.doc > *, .fig > * { min-width: 0; }
+.flow { width: auto; max-width: 1200px; }
+.fig > .xlwin { margin-bottom: 8px; }
+.lead-svg { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 61; }
+.ov-box { position: absolute; box-sizing: border-box; border: 2px solid #D14343; border-radius: 6px; pointer-events: none; z-index: 60; }
+.ov-box.new { border-style: dashed; }
+.ov-badge { position: absolute; z-index: 62; width: 28px; height: 28px; border-radius: 50%; background: #D14343; color: #fff; font: 700 15px/28px var(--font); text-align: center; pointer-events: none; }
+.lead-svg polyline { fill: none; stroke: #D14343; stroke-width: 1.5; }
+.lead-svg circle { fill: #D14343; }
+.shotwrap .mk { position: absolute; }
+
+code { font-family: var(--mono); font-size: 12px; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.flow span { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); }
+.flow i { font-style: normal; color: var(--ink-2); }
+.part { display: grid; gap: 12px; max-width: 1180px; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.part > h2 { font-size: 15px; }
+.part > p { font-size: 13px; color: var(--ink-2); max-width: 900px; text-wrap: pretty; }
+.ftbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ftbl th, .ftbl td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.ftbl th { background: var(--panel); color: var(--ink-2); font-weight: 600; font-size: 12px; white-space: nowrap; }
+.ftbl tr:last-child td { border-bottom: 0; }
+.ftbl td:first-child { font-weight: 600; white-space: nowrap; }
+.ftbl .fx { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 12px; font-weight: 600; background: var(--accent-wash); color: var(--ink); white-space: nowrap; }
+.ftbl .fx.fixed { background: var(--accent); color: var(--bg); }
+.flows { display: grid; gap: 10px; }
+.frow { display: grid; grid-template-columns: 190px minmax(0, 1fr) 74px; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.frow:last-child { border-bottom: 0; }
+.frow > b { font-weight: 600; }
+.frow .where { font: 600 12px var(--mono); color: var(--ink-2); text-align: right; white-space: nowrap; }
+
+.page { --line-strong: light-dark(oklch(80% 0 0), oklch(43.9% 0 0)); --term: light-dark(oklch(99.4% 0 0), oklch(14.5% 0 0)); --accent-ink: light-dark(oklch(98.5% 0 0), oklch(20.5% 0 0));
+  --run: light-dark(oklch(54.6% 0.245 263), oklch(70.7% 0.165 255)); --ok: light-dark(oklch(50% 0.13 149), oklch(76% 0.15 149)); --warn: light-dark(oklch(54% 0.12 87), oklch(80% 0.15 87)); --warn-ink: light-dark(oklch(100% 0 0), oklch(20.5% 0 0));
+  --err: light-dark(oklch(55% 0.22 28), oklch(70.4% 0.188 22)); --err-ink: light-dark(oklch(98.5% 0 0), oklch(20.5% 0 0)); --shadow: light-dark(oklch(0% 0 0 / 0.16), oklch(0% 0 0 / 0.55));
+  --lane-1: light-dark(oklch(58% 0.14 76), oklch(81.2% 0.17 76)); --lane-2: light-dark(oklch(55% 0.2 358), oklch(59.5% 0.222 358)); --lane-3: light-dark(oklch(50.8% 0.124 56), oklch(71% 0.083 43)); --lane-4: light-dark(oklch(52% 0.1 187), oklch(69.2% 0.101 187)); --lane-5: light-dark(oklch(52% 0.2 304), oklch(67.9% 0.212 304));
+  width: 1200px; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--bg); box-shadow: 0 2px 10px var(--shadow); font-size: 13px; color: var(--ink); word-break: keep-all; }
+.page .i { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.page .i.closed { transform: rotate(-90deg); }
+.page .spacer { flex: 1; }
+.page .area { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.tbar { display: flex; align-items: stretch; height: 36px; background: var(--panel); border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.tbar .mark { width: 16px; height: 16px; margin: 0 10px 0 14px; align-self: center; fill: var(--ink-2); }
+.tbar .crumb { align-self: center; font-weight: 600; color: var(--ink); margin-right: 14px; }
+.seg { align-self: center; display: inline-flex; padding: 2px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg); gap: 2px; }
+.seg .si { display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; line-height: 16px; border-radius: 5px; font-size: 12px; color: var(--ink-2); font-weight: 500; }
+.seg .si.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px var(--shadow); }
+.tbar .cap { width: 46px; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+.tbar .cap .i { stroke-width: 1.5; }
+.sbar { display: flex; align-items: center; gap: 16px; height: 28px; padding: 0 14px; border-top: 1px solid var(--line); background: var(--panel); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.app { display: grid; grid-template-columns: 280px minmax(0, 1fr) 64px; height: 800px; position: relative; }
+.app.open { grid-template-columns: 280px minmax(0, 1fr) 360px; }
+.app.graph { grid-template-columns: 220px minmax(0, 1fr) 420px; }
+.abtn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 12px; font-weight: 500; white-space: nowrap; color: var(--ink); }
+.abtn.sm { height: 24px; padding: 0 8px; }
+.abtn.ghost { border-color: transparent; background: none; color: var(--ink-2); }
+.abtn.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.abtn.danger { border-color: var(--err); background: var(--err); color: var(--err-ink); font-weight: 600; }
+.abtn.pressed { background: var(--accent-wash); border-color: var(--accent); }
+.abtn.off { opacity: 0.55; }
+.pill { display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap; flex: none; }
+.pill.warn { border-color: var(--warn); background: var(--warn); color: var(--warn-ink); }
+.pill.out { background: var(--accent-wash); color: var(--ink); }
+.pill.gone { color: var(--ink-3); text-decoration: line-through; }
+.unread { flex: none; height: 18px; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); }
+.dot.waiting { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in oklch, var(--warn) 25%, transparent); }
+.dot.running { background: var(--run); }
+.dot.done { background: var(--ok); }
+.dot.stopped { background: var(--err); }
+.av { flex: none; width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 700; color: var(--bg); }
+.av { --lane: var(--ink-3); background: color-mix(in oklch, var(--lane) 80%, light-dark(black, white)); }
+.av.l1 { --lane: var(--lane-1); } .av.l2 { --lane: var(--lane-2); } .av.l3 { --lane: var(--lane-3); } .av.l4 { --lane: var(--lane-4); } .av.l5 { --lane: var(--lane-5); }
+.av.out { border-radius: 50%; }
+
+.rooms { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.rhead { display: flex; align-items: center; padding: 10px 12px 6px 16px; }
+.rsearch { display: flex; align-items: center; gap: 6px; height: 28px; margin: 0 12px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--ink-3); font-size: 12px; }
+.views { display: flex; gap: 3px; margin: 8px 12px 0; align-self: flex-start; }
+.vchip { height: 24px; padding: 0 6px; border-radius: 12px; border: 1px solid var(--line-strong); font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.vchip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.vchip.on { background: var(--accent-wash); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+.rsort { display: flex; align-items: center; gap: 6px; margin: 8px 12px 2px 16px; align-self: flex-start; font-size: 12px; color: var(--ink-3); }
+.rsort .sel { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-2); font-weight: 600; }
+.rgroup { padding: 10px 12px 3px 10px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.rg { display: inline-flex; align-items: center; gap: 4px; }
+.rrow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; margin: 0 8px; padding: 5px 8px; border-radius: 6px; }
+.rrow.in { margin-left: 22px; }
+.rrow.on { background: var(--accent-wash); }
+.r1 { display: flex; align-items: center; gap: 6px; height: 20px; color: var(--ink-3); }
+.rname { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cnt { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.rname { min-width: 0; }
+.rtime { margin-left: auto; flex: none; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.r2 { display: flex; align-items: center; gap: 4px; height: 20px; padding-left: 13px; }
+.rsub { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rfold { display: flex; align-items: center; gap: 4px; margin: 0 8px 0 22px; padding: 4px 8px; font-size: 12px; color: var(--ink-2); align-self: flex-start; }
+.rhidden { margin: 10px 16px; font-size: 12px; color: var(--ink-2); align-self: flex-start; }
+.rhidden u { color: var(--ink); font-weight: 600; margin-left: 4px; }
+
+.conv { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; background: var(--bg); }
+.chead { display: grid; gap: 6px; padding: 9px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.ch1 { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--ink-3); }
+.ch1 b { font-size: 14px; color: var(--ink); }
+.state { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); }
+.members { display: flex; flex-wrap: wrap; gap: 5px; }
+.mchip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px 0 3px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.mchip.gone { color: var(--ink-3); text-decoration: line-through; }
+.banner > span { flex: 1; }
+.banner { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); font-size: 12px; color: var(--ink); }
+.msgs { display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; padding: 16px 20px; min-height: 0; }
+.mrow { display: flex; flex-direction: column; gap: 3px; max-width: 74%; }
+.mrow.left { align-self: flex-start; align-items: flex-start; }
+.mrow.right { align-self: flex-end; align-items: flex-end; }
+.mhead { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.mhead b { color: var(--ink); font-weight: 600; }
+.kind { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; background: var(--accent-wash); font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.kind.warn { background: color-mix(in srgb, var(--warn) 16%, var(--surface)); color: var(--ink); }
+.kind.ok { background: color-mix(in srgb, var(--ok) 14%, var(--surface)); color: var(--ink); }
+.kind.err { background: color-mix(in srgb, var(--err) 13%, var(--surface)); color: var(--ink); }
+.kind.run { background: color-mix(in srgb, var(--run) 13%, var(--surface)); color: var(--ink); }
+.bubble { padding: 7px 11px; border-radius: 10px; line-height: 1.5; font-size: 13px; }
+.bubble.ag { border: 1px solid var(--line-strong); background: var(--surface); border-top-left-radius: 3px; }
+.bubble.outb { border: 1px solid var(--line-strong); background: var(--accent-wash); border-top-left-radius: 3px; }
+.bubble.me { background: var(--accent); color: var(--accent-ink); border-top-right-radius: 3px; }
+.bubble.wait { background: var(--surface); color: var(--ink); border: 1px dashed var(--line-strong); }
+.bubble.fail { background: var(--surface); color: var(--ink); border: 1px solid var(--err); }
+.bubble.dim { color: var(--ink-2); }
+.bubble .caret { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: -2px; background: var(--ink-3); }
+.mmeta { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.macts { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--ink-2); }
+.macts.err { color: var(--err); font-weight: 600; }
+.sysline { align-self: center; font-size: 12px; color: var(--ink-3); }
+.sysline span { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 10px; background: var(--accent-wash); }
+.work { align-self: flex-start; display: grid; gap: 5px; min-width: 380px; }
+.wline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.tcard { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); font-size: 12px; color: var(--ink-2); }
+.tcard b { color: var(--ink); font-weight: 600; }
+.tcard code { color: var(--ink-2); }
+.tcard .ts { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--ink-2); display: inline-flex; align-items: center; gap: 5px; }
+.dcard { display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.dcard b { color: var(--ink); font-weight: 600; }
+.dcard .go { margin-left: 8px; color: var(--ink); font-weight: 600; white-space: nowrap; }
+.plus { color: var(--ok); font-weight: 600; } .minus { color: var(--err); font-weight: 600; }
+.qcard { align-self: flex-start; width: 520px; display: grid; gap: 8px; padding: 10px 12px; border: 1.5px solid var(--warn); border-radius: 10px; background: var(--surface); }
+.qcard.appr { border-color: var(--line-strong); }
+.qtext { font-size: 13px; line-height: 1.5; }
+.qopts { display: grid; gap: 5px; }
+.qopt { display: flex; align-items: baseline; gap: 8px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 13px; }
+.qopt .k { font: 600 11px var(--mono); color: var(--ink-3); }
+.qopt .rec { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.qfree { display: flex; gap: 6px; }
+.qfree .cbox { flex: 1; min-height: 28px; padding: 4px 9px; }
+.qcmd { padding: 6px 10px; border-radius: 6px; background: var(--term); border: 1px solid var(--line); font: 12px/1.5 var(--mono); color: var(--ink); }
+.qacts { display: flex; gap: 6px; }
+.receipt { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; color: var(--ink-2); }
+.receipt b { color: var(--ink); font-weight: 600; }
+.receipt .i { color: var(--ok); }
+
+.compose { display: grid; gap: 8px; padding: 10px 16px 12px; border-top: 1px solid var(--line); background: var(--panel); }
+.cbar { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.clabel { color: var(--ink-3); font-weight: 600; font-size: 12px; }
+.chips { display: inline-flex; gap: 4px; }
+.chip { height: 24px; padding: 0 9px; border-radius: 12px; border: 1px solid var(--line-strong); font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; white-space: nowrap; }
+.chip.on { border-color: var(--accent); background: var(--accent-wash); color: var(--ink); font-weight: 600; }
+.chip.off { opacity: 0.55; text-decoration: line-through; }
+.hseg { display: inline-flex; padding: 2px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg); gap: 2px; }
+.hi { padding: 1px 10px; border-radius: 5px; font-size: 12px; color: var(--ink-2); }
+.hi.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px var(--shadow); }
+.hi.on.stop { background: var(--err); color: var(--err-ink); }
+.hi.off { opacity: 0.5; text-decoration: line-through; }
+.cbox { min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; line-height: 1.45; }
+.cbox.ph { color: var(--ink-3); }
+.crow { display: flex; align-items: center; gap: 8px; }
+.crow .hint { flex: 1; font-size: 12px; color: var(--ink-2); }
+.stopbox { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--err); border-radius: 8px; background: color-mix(in srgb, var(--err) 7%, var(--surface)); font-size: 12px; color: var(--ink); }
+.stopbox b { font-weight: 600; }
+
+.srail { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 6px; }
+.srail .area { margin-bottom: 4px; }
+.sgroup { display: grid; gap: 6px; }
+.sbtn { width: 40px; padding: 5px 0 4px; border-radius: 6px; display: grid; justify-items: center; gap: 2px; font-size: 11px; color: var(--ink-2); }
+.sbtn .i { width: 16px; height: 16px; }
+.sbtn.on { background: var(--accent-wash); color: var(--ink); font-weight: 600; }
+.slot { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.stabs { display: flex; align-items: center; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); height: 37px; }
+.stg { display: inline-flex; gap: 2px; }
+.stab { display: inline-flex; align-items: center; gap: 5px; height: 36px; padding: 0 7px; border-bottom: 2px solid transparent; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.stab.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.xbtn { width: 26px; height: 26px; display: grid; place-items: center; color: var(--ink-3); }
+.shead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
+.shead b { color: var(--ink); font-size: 13px; }
+.sbody { padding: 12px 18px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; font-size: 12px; color: var(--ink-2); }
+.docv { margin: 12px 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); display: grid; gap: 8px; font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.docv h5 { font-size: 14px; color: var(--ink); }
+.docv h6 { font-size: 12px; color: var(--ink); margin-top: 4px; }
+.mem { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.mem b { color: var(--ink); font-weight: 600; font-size: 13px; }
+.mem .ms { grid-column: 2; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+.mem .abtn { grid-row: 1 / span 2; grid-column: 3; }
+.invite { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); }
+.invite .addr { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 12px var(--mono); color: var(--ink); }
+.invite .addr span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.termv { margin: 0; padding: 14px 18px; background: var(--term); font: 12px/1.6 var(--mono); color: var(--ink); white-space: pre; }
+.termv > span { display: inline-block; }
+.termv .d { color: var(--ink-3); } .termv .g { color: var(--ok); } .termv .b { color: var(--run); }
+.termnote { display: flex; align-items: center; gap: 8px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.conv.term { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.files { display: grid; gap: 2px; }
+.file { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; font: 12px var(--mono); color: var(--ink); }
+.file.on { background: var(--accent-wash); }
+.file .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+.hunk { margin: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--term); font: 11px/1.7 var(--mono); color: var(--ink); }
+.hunk div { padding: 0 10px; white-space: pre; }
+.hunk .hh { border-radius: 7px 7px 0 0; background: var(--panel); color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.hunk .a { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.hunk .r { background: color-mix(in srgb, var(--err) 12%, transparent); }
+
+.pop { position: absolute; left: 288px; top: 8px; z-index: 5; width: 380px; display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 6px 16px var(--shadow); font-size: 13px; }
+.pop h4 { font-size: 14px; }
+.pop label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.field { height: 30px; display: flex; align-items: center; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font-size: 13px; font-weight: 400; color: var(--ink); }
+.field.focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash); }
+.picks { display: grid; border: 1px solid var(--line); border-radius: 8px; }
+.picks > :first-child { border-radius: 7px 7px 0 0; }
+.pgroup { padding: 5px 14px 3px; font-size: 11px; font-weight: 600; color: var(--ink-3); background: var(--panel); }
+.pick { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 12px; color: var(--ink-2); }
+.pick b { color: var(--ink); font-weight: 600; }
+.box { width: 15px; height: 15px; flex: none; border: 1.5px solid var(--line-strong); border-radius: 4px; display: grid; place-items: center; background: var(--surface); }
+.box.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.box .i { width: 11px; height: 11px; stroke-width: 3; }
+.pnote { font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+.pacts { display: flex; align-items: center; gap: 8px; }
+
+.tree { background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; font-size: 13px; }
+.tree .area { padding: 2px 8px 6px; }
+.trow { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 6px; color: var(--ink-3); }
+.trow b { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow.d1 { padding-left: 22px; } .trow.d2 { padding-left: 36px; }
+.trow.on { background: var(--accent-wash); }
+.stage { padding: 64px 0 0 200px; }
+.canvas { position: relative; background-color: var(--bg); background-image: radial-gradient(var(--line-strong) 1px, transparent 1px); background-size: 20px 20px; overflow: hidden; }
+.eg { position: absolute; min-width: 1.5px; min-height: 1.5px; background: var(--line-strong); }
+.gframe { position: absolute; border: 1.5px dashed var(--ink-3); border-radius: 12px; }
+.gframe > span { position: absolute; left: 10px; top: -10px; padding: 0 6px; background: var(--bg); font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.ncard { position: absolute; width: 224px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 1px 4px var(--shadow); }
+.ncard.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash), 0 1px 4px var(--shadow); }
+.nh { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.nh b { font-weight: 600; }
+.nh .hn { color: var(--ink-3); }
+.nb { padding: 7px 10px; height: 62px; background: var(--term); border-radius: 0 0 10px 10px; font: 11px/1.5 var(--mono); color: var(--ink-2); white-space: pre; overflow: hidden; }
+.slot .msgs { padding: 12px; gap: 10px; flex: 1; }
+.slot .mrow { max-width: 90%; }
+.slot .compose { padding: 8px 12px 10px; }
+
+.mems { display: grid; }
+.mems .mem:last-child { border-bottom: 0; }
+.slot .cbar { flex-wrap: wrap; }
+
+.pill.okp { border-color: var(--ok); background: var(--ok); color: var(--warn-ink); }
+.rrow.pin { margin-top: 8px; border: 1px solid var(--line-strong); background: var(--surface); }
+.rrow.pin.on { border-color: var(--accent); background: var(--accent-wash); }
+.rrow.pin .r2 { padding-left: 20px; }
+.termv.fill { flex: 1; padding: 12px 14px; font-size: 11.5px; overflow: hidden; }
+.fchips { display: flex; gap: 4px; }
+.fchip { height: 24px; padding: 0 9px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.fchip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.fchip.on { background: var(--accent-wash); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+.chead > span { justify-self: start; }
+.qcard.donec { border-color: var(--ok); }
+.origin { font-size: 11px; color: var(--ink-3); }
+.golink { align-self: center; font-size: 12px; font-weight: 600; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.qacts { align-items: center; }
+.dlv { display: inline-flex; gap: 10px; font-size: 11px; color: var(--ink-2); }
+.dlv span { display: inline-flex; align-items: center; gap: 4px; }
+.dlv .i { width: 12px; height: 12px; color: var(--ok); }
+.tofield { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border: 1px dashed var(--line-strong); border-radius: 12px; font-size: 12px; font-weight: 600; color: var(--ink); background: var(--surface); }
+.chip .i { width: 11px; height: 11px; margin-left: 4px; color: var(--ink-3); }
+.chip .i:first-child { margin: 0 4px 0 0; width: 13px; height: 13px; }
+.compose { position: relative; }
+.tolist { position: absolute; left: 16px; bottom: calc(100% + 4px); z-index: 4; width: 560px; display: grid; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 6px 16px var(--shadow); font-size: 12px; }
+.lhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.lhead b { font-size: 13px; color: var(--ink); }
+.lrows { display: grid; margin: 8px 0; }
+.lrow { display: flex; align-items: center; gap: 7px; height: 30px; margin: 0 8px; padding: 0 6px; border-radius: 6px; color: var(--ink-2); }
+.lrow.on { background: var(--accent-wash); }
+.lrow b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.lrow > .i { width: 16px; height: 16px; margin: 0 2px; color: var(--ink-3); }
+.lrow .ls { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lrow .lt { flex: none; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.lfoot { display: grid; gap: 6px; margin: 0 8px; padding: 8px 0 10px; border-top: 1px solid var(--line); }
+.lfind { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--ink-3); box-shadow: 0 0 0 2px var(--accent-wash); }
+.lkey { font-size: 11px; color: var(--ink-3); }
+.part > h3 { font-size: 14px; margin-top: 8px; }
+.part a { color: var(--ink); font-weight: 600; text-underline-offset: 3px; }
+.part a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ftbl.rel td[colspan], .ftbl.rel td:empty { border-bottom: 0; }
+.msgs.top { justify-content: flex-start; }
+.lmain { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.lrow .lt { margin-left: auto; padding-left: 28px; }
+.lhead .lt2 { display: inline-flex; align-items: baseline; gap: 8px; }
+
+</style>
+</head>
+<body data-ui=".fchip, .tofield, .lrow, .lfind, .tolist, .dlv, .golink, .abtn, .seg, .vchip, .chip, .hseg, .rrow, .rfold, .rsort, .rsearch, .bubble, .tcard, .dcard, .qcard, .qopt, .receipt, .cbox, .stab, .sbtn, .xbtn, .ncard, .pill, .kind, .unread, .mchip, .av, .sysline, .mem, .invite, .pop, .field, .pick, .file, .hunk, .termv, .banner, .stopbox, .trow, .cap, .wline, .macts">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></symbol>
+<symbol id="graph" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="6" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1"/><path d="M6.5 9v5a2 2 0 0 0 2 2H14"/></symbol>
+<symbol id="people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0M16 5.2a3.2 3.2 0 0 1 0 5.6M18 14.5a6 6 0 0 1 3 5.5"/></symbol>
+<symbol id="user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+<symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+<symbol id="term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></symbol>
+<symbol id="doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+<symbol id="log" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h14"/></symbol>
+<symbol id="diff" viewBox="0 0 24 24"><path d="M12 3v8M8 7h8M8 18h8"/><rect x="3" y="2" width="18" height="20" rx="2"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+<symbol id="max" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="all" viewBox="0 0 24 24"><path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.5 5h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z"/></symbol>
+<symbol id="expand" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></symbol>
+</svg>
+<main class="doc">
+
+<div class="who"><span class="doc-id">문서 ID: <b>R469</b></span><span>연 담당: <b>UI/UX 설계자 · UI/UX 설계자 채팅플랫폼v2</b></span><span>v2 · 2026-11-19</span></div>
+<h1>loom 채팅 플랫폼: 사용자 흐름과 GPUI 화면 목업</h1>
+<p class="lead">사람 지시(2026-11-19): “우선은 ui/ux 사용자 흐름 부터 다시 설계하자”, “ui/ux도 같이 설계해서 목업 보고서로 만들어”, “내가 구상하는건 채팅 형태의 ui/ux 제공하는것 말곤 최대한 가능성을 열어둔 멀티 에이전트 오케스트레이션 ade 플랫폼이다”. 이 문서는 채팅 모양 하나만 정하고, 팀 모양·하네스·방 묶음·옆 칸은 열어 둔 설계입니다. 화면은 GPUI 데스크톱 앱(<code>desktop/</code>)의 색과 부품으로 그렸습니다. 앞의 웹 목업 M162(loom 채팅 모드)는 참고만 했습니다. v2는 Q3994의 답(D1~D6)을 넣고, 사람이 이 문서에 더한 말 “사람이 한 채팅세션에서 모든 에이전트의 질문, 알림을 확안할 수 있고 지시 내릴 수 있는 종합 채팅방도 필요함, 받는이는 리스트 형식으로 볼 수 있으면 좋을 듯 (현재 표준입력창과 비슷하지 않을까?)”을 화면 ⑧ ⑨로 그렸습니다.</p>
+
+<div class="flow"><span>방 목록에서 방을 찾는다 ①</span><i>→</i><span>방이나 1:1 세션을 읽는다 ① ② ③</span><i>→</i><span>끼어들거나 답한다 ② ④</span><i>→</i><span>외부 에이전트·새 방으로 넓힌다 ⑤ ⑥</span><i>→</i><span>그래프와 옆 칸으로 더 본다 ⑦</span><i>→</i><span>종합 채팅방에서 모두 확인하고 여럿에게 지시한다 ⑧ ⑨</span><i>→</i><span>예외 상태 ⑩</span></div>
+
+<section class="part" aria-label="v2에서 바뀐 것"><h2>v2에서 바뀐 것</h2>
+<p>정해진 것(Q3994, 2026-11-19): <b>D1: B, D2: A, D3: A, D4: A, D5: A, D6: A</b>. 이 여섯은 다시 묻지 않습니다. 새로 정할 것은 종합 채팅방의 <a href="#D7">D7</a>, <a href="#D8">D8</a> 둘입니다. 새 화면은 <a href="#fig8">⑧ 종합 채팅방</a>, <a href="#fig9">⑨ 받는 이 목록</a>이고, 고친 화면은 ② ③ ⑤입니다. v1의 ⑨ 예외 상태는 ⑩이 되었습니다.</p><table class="ftbl "><thead><tr><th>결정</th><th>고른 것</th><th>이 판(v2)에 넣은 것</th><th>화면</th></tr></thead><tbody><tr><td>D1</td><td>B 모든 하네스를 터미널로 돌리고, 세션 기록을 읽어 말풍선을 그린다</td><td>모든 1:1 세션 방에 [터미널] 칸이 있습니다. 말풍선은 턴과 도구가 끝날 때마다 늘어납니다. 기록 형식을 읽지 못하면 그 세션만 터미널 본문으로 돌아갑니다.</td><td>②&nbsp;③</td></tr><tr><td>D2</td><td>A 모든 방에 외부 에이전트를 초대한다</td><td>방마다 주소가 있습니다. 외부 에이전트는 터미널이 없습니다.</td><td>⑤</td></tr><tr><td>D3</td><td>A 저절로 생기는 방 + 사람이 만드는 방</td><td>그대로. 종합 채팅방은 저절로 생기는 방 하나입니다.</td><td>⑥&nbsp;⑧</td></tr><tr><td>D4</td><td>A 그래프 화면은 방을 옆 칸에 연다</td><td>그대로</td><td>⑦</td></tr><tr><td>D5</td><td>A 첫 옆 칸은 구성원·터미널·문서·기록</td><td>「변경」 칸 화면(v1의 ⑧)을 뺐습니다. 뒤에 탭 하나로 더합니다.</td><td>②&nbsp;⑤</td></tr><tr><td>D6</td><td>A 끝난 에이전트의 말을 읽기 전용으로 남긴다</td><td>그대로</td><td>⑩</td></tr></tbody></table></section>
+
+<section class="part" aria-label="사람"><h2>가. 사람은 누구인가</h2>
+<p>사람은 한 명이고, 보는 방식이 때마다 다릅니다. 화면은 세 방식을 모두 받고 어느 하나를 강요하지 않습니다.</p><table class="ftbl "><thead><tr><th>보는 방식</th><th>이 사람이 하는 일</th><th>화면이 주는 것</th><th>화면</th></tr></thead><tbody><tr><td>가까이 본다</td><td>방 하나를 열어 두고 에이전트의 일을 따라가며 바로 끼어듭니다.</td><td>턴마다 늘어나는 말풍선, [터미널] 칸의 실시간 화면, 접힌 도구 줄, 조정·중단, 대기 중인 말 고치기</td><td>①&nbsp;②</td></tr><tr><td>맡겨 둔다</td><td>자리를 비웠다가 돌아와 내 답이 필요한 것만 처리합니다.</td><td>종합 채팅방, 「내 차례」 보기, 방 안의 질문·승인 카드, 다음 질문으로 건너뛰기, OS 알림</td><td>④&nbsp;⑧</td></tr><tr><td>크게 굴린다</td><td>에이전트 수십 개와 여러 작업을 한꺼번에 돌립니다.</td><td>종합 채팅방, 받는 이 목록, 보기 칩, 묶기 기준, 접힌 1:1 세션, 접힌 알림 줄, 그래프 화면</td><td>①&nbsp;⑦&nbsp;⑧&nbsp;⑨</td></tr></tbody></table></section>
+
+<section class="part" aria-label="부품"><h2>나. 부품 여섯 개</h2>
+<p>화면 전체를 이 여섯 부품으로 짭니다. 「정한 것」은 채팅 모양이고, 「열어 둔 것」은 쓰는 사람과 뒤의 개발이 채웁니다. 역할 이름과 한 가지 일하는 순서는 부품에 넣지 않았습니다.</p><table class="ftbl "><thead><tr><th>부품</th><th>뜻</th><th>정한 것</th><th>열어 둔 것</th><th>화면</th></tr></thead><tbody><tr><td>에이전트</td><td>말하는 참여자입니다. loom 노드, 외부 에이전트, 사람이 모두 에이전트입니다.</td><td>이름, 상태 점, 하네스 표시</td><td>하네스·모델, 역할 이름, 팀 모양(나무·떼·짝), 수</td><td>모든 화면</td></tr><tr><td>방</td><td>구성원 묶음과, 그 구성원끼리 주고받은 메시지의 보기입니다. 1:1 세션도 방입니다.</td><td>방 한 줄의 모양, 방 머리</td><td>묶는 기준: 저절로 생긴 방, 사람이 만든 방, 외부 에이전트가 든 방. 종합 채팅방도 방 하나입니다(아래 「라」)</td><td>①&nbsp;⑤&nbsp;⑥&nbsp;⑧</td></tr><tr><td>메시지</td><td>보낸 이 → 받는 이, 종류, 본문입니다. 도구 호출·질문·승인·붙임도 메시지의 한 모양입니다.</td><td>말풍선과 카드</td><td>메시지 종류와 카드 종류(문서, 변경, 질문, 승인…)</td><td>①&nbsp;②&nbsp;④</td></tr><tr><td>끼어들기</td><td>사람이 방에서 보내는 말입니다. 받는 이와 전달 방식을 고릅니다.</td><td>받는 이(방 안에서는 칩, 종합 채팅방에서는 목록), 일반·조정·중단, 읽기 전 고치기·거두기</td><td>하네스마다 다른 전달 경로(밀어 넣기, 스스로 가져가기)</td><td>①&nbsp;②&nbsp;⑤&nbsp;⑨&nbsp;⑩</td></tr><tr><td>보기</td><td>방 목록을 거르고 묶는 규칙입니다.</td><td>전체·내 차례·일하는 중·안 읽음</td><td>묶기 기준, 뒤에 더할 저장한 보기</td><td>①&nbsp;④</td></tr><tr><td>옆 칸</td><td>대화 오른쪽에 여는 칸입니다. 메시지의 카드가 옆 칸을 엽니다.</td><td>칸 자리, 탭, 여닫기</td><td>칸 종류: 구성원·터미널·문서·기록, 뒤에 변경·파일·미리보기·승인 기록·자동화·외부 도구</td><td>②&nbsp;⑤&nbsp;⑦</td></tr></tbody></table></section>
+
+<section class="part" aria-label="들어오는 길"><h2>다. 들어오는 길</h2><table class="ftbl "><thead><tr><th>들어오는 길</th><th>닿는 곳</th></tr></thead><tbody><tr><td>앱을 연다</td><td>마지막에 본 화면. 처음이면 종합 채팅방(⑧)</td></tr><tr><td>OS 알림을 누른다(질문·승인)</td><td>그 방의 그 카드</td></tr><tr><td>방 목록 맨 위의 「종합 채팅방」</td><td>모든 에이전트의 질문·완료·알림과 내가 보낸 말(⑧)</td></tr><tr><td>그래프 카드의 [방 열기]</td><td>그 에이전트의 방(⑦)</td></tr><tr><td>방 주소(<code>/rooms/…</code>)를 연다</td><td>그 방. 외부 에이전트도 같은 주소로 들어옵니다(⑤)</td></tr><tr><td>터미널에서 <code>loom room</code></td><td>같은 방의 말을 읽고 씁니다</td></tr></tbody></table></section>
+
+<section class="part" aria-label="종합 채팅방"><h2>라. 종합 채팅방</h2>
+<p>종합 채팅방은 새 부품이 아니라 방 하나입니다. 구성원이 「나와 모든 에이전트」이고, 보기가 「나와 오간 말」인 방입니다. 지금 그래프 화면의 입력 창(알림 목록, 알림 카드, 대상 목록)이 하던 일을 방으로 옮긴 것입니다.</p>
+<h3>다른 방, 「내 차례」 보기와의 관계</h3><table class="ftbl rel"><thead><tr><th></th><th>종합 채팅방</th><th>「내 차례」 보기</th><th>작업 방 · 1:1 세션 방</th></tr></thead><tbody><tr><td>무엇인가</td><td>방 하나. 구성원은 나와 모든 에이전트이고, 나와 오간 말만 보입니다.</td><td>방 목록을 거르는 칩. 내 답을 기다리는 방만 남깁니다.</td><td>구성원끼리 주고받은 모든 말.</td></tr><tr><td>어디에 있나</td><td>방 목록 맨 위에 늘 있습니다. 보기 칩과 묶기가 숨기지 않고, 지울 수 없습니다.</td><td>방 목록의 보기 칩 둘째.</td><td>방 목록의 묶음 안.</td></tr><tr><td>언제 쓰나</td><td>여러 에이전트의 질문·완료를 차례로 처리하고, 여럿에게 지시할 때.</td><td>어느 방이 나를 기다리는지 볼 때.</td><td>한 일의 경위를 읽고 그 안에서 끼어들 때.</td></tr><tr><td>같은 질문</td><td>질문 카드는 종합 채팅방과 원래 방에 함께 보입니다. 한쪽에서 답하면 두 곳 모두 한 줄 기록이 됩니다. 「질문 2」와 「내 차례 2」는 같은 수입니다.</td><td></td><td></td></tr></tbody></table>
+<h3>한 흐름에 오는 것과 소음 줄이기</h3>
+<p>흐름은 시간 순서이고 새 말이 아래에 옵니다. 답한 질문과 확인한 완료는 한 줄 기록으로 줄어듭니다. 종류 칩(전체 · 질문 · 완료 · 알림 · 내가 보낸 말)이 흐름을 거르고, 할 일이 없는 알림은 처음부터 한 줄로 접힙니다. [다음 질문]은 열린 질문만 차례로 건너뜁니다.</p><table class="ftbl "><thead><tr><th>흐름에 오는 것</th><th>보이는 모양</th><th>내가 하는 일</th><th>칩</th></tr></thead><tbody><tr><td>에이전트의 질문(<code>loom ask</code>)과 승인 요청</td><td>노란 테두리 카드. 보낸 에이전트, 작업 이름, 선택지.</td><td>선택지를 누르거나 글로 답합니다. [방에서 보기]로 경위를 읽습니다.</td><td>질문</td></tr><tr><td>에이전트의 완료 보고(<code>loom done</code>)</td><td>초록 테두리 카드. 결과 글과 붙은 문서.</td><td>[확인]으로 닫거나 [이어서 맡기기]로 그 에이전트에게 다음 일을 보냅니다.</td><td>완료</td></tr><tr><td>loom이 나에게 직접 알리는 것(멈춤, 한도, 전달 실패)</td><td>카드. 할 일의 단추가 붙습니다([다시 띄우기] 등).</td><td>단추를 누릅니다.</td><td>알림</td></tr><tr><td>할 일이 없는 알림(병합됨, 들어옴, 끝남)</td><td>「알림 3건: …」 한 줄로 접힙니다.</td><td>필요할 때 폅니다.</td><td>알림</td></tr><tr><td>내가 보낸 말과 내 답</td><td>오른쪽 말풍선. 받는 이 이름과 받는 이마다의 전달 상태.</td><td>읽기 전이면 고치거나 거둡니다.</td><td>내가 보낸 말</td></tr></tbody></table>
+<h3>지시하기: 받는 이 목록</h3>
+<p>종합 채팅방은 구성원이 많아 받는 이를 칩으로 늘어놓지 못합니다. 그래서 목록에서 고릅니다. 작은 방은 지금처럼 칩이고, 구성원이 여섯을 넘는 방은 같은 목록을 씁니다. 보낸 말은 종합 채팅방에 한 번 보이고, 받은 에이전트의 1:1 세션 방과 고른 방에도 보입니다(D8).</p><table class="ftbl "><thead><tr><th></th><th>지금: 입력 창의 대상 목록</th><th>종합 채팅방의 받는 이 목록(⑨)</th></tr></thead><tbody><tr><td>여는 길</td><td>글 칸 왼쪽의 「&lt;노드&gt;에게」 단추, Alt+L</td><td>[받는 이 고르기] 단추, Alt+L(같은 키)</td></tr><tr><td>고르는 수</td><td>하나</td><td>하나 이상. 줄마다 체크 칸이 있습니다</td></tr><tr><td>줄에 보이는 것</td><td>노드 이름</td><td>상태 점, 이름, 하네스, 지금 하는 일, 마지막 활동 시각</td></tr><tr><td>묶음</td><td>저장소 아래 나무</td><td>맨 위 「방」, 그 아래 작업마다(방 목록의 묶기와 같음)</td></tr><tr><td>방</td><td>없음</td><td>방을 고르면 구성원 모두가 받습니다</td></tr><tr><td>알림 줄</td><td>목록 아래쪽에 「알림」으로 섞여 있습니다</td><td>없습니다. 알림은 흐름에 있고, 카드의 [답하기]·[이어서 맡기기]가 받는 이를 정합니다</td></tr><tr><td>찾기와 칩</td><td>검색 칸 + 전체·질문·완료</td><td>검색 칸 + 전체·내 답을 기다림·일하는 중·쉬는 중·방. 자리는 지금과 같이 입력 쪽 끝입니다</td></tr><tr><td>고른 뒤</td><td>그래프가 그 노드로 옮겨 갑니다</td><td>화면은 그대로이고 받는 이 칩이 늘어납니다</td></tr><tr><td>전달</td><td>터미널에 붙여 넣고 Enter</td><td>일반·조정·중단. 몇 명이 받는지 보내기 전에 알립니다</td></tr></tbody></table></section>
+
+<section class="part" aria-label="핵심 흐름"><h2>마. 핵심 흐름 열한 개</h2>
+<p>오른쪽 번호는 그 흐름을 그린 화면입니다.</p><div class="flows"><div class="frow"><b>1. 둘러보고 방 찾기</b><div class="flow"><span>방 목록을 본다</span><i>→</i><span>보기 칩으로 거른다</span><i>→</i><span>묶음을 펼친다</span><i>→</i><span>방을 누른다</span></div><span class="where">①</span></div><div class="frow"><b>2. 그룹방 읽기</b><div class="flow"><span>보낸 이 → 받는 이를 본다</span><i>→</i><span>종류 표시로 가려 읽는다</span><i>→</i><span>접힌 알림 줄은 필요할 때 편다</span></div><span class="where">①</span></div><div class="frow"><b>3. 방에 끼어들기</b><div class="flow"><span>받는 이를 고른다</span><i>→</i><span>전달 방식을 고른다</span><i>→</i><span>보낸다</span><i>→</i><span>읽기 전이면 고치거나 거둔다</span></div><span class="where">① ⑤ ⑩</span></div><div class="frow"><b>4. 1:1 세션 보기</b><div class="flow"><span>세션을 연다</span><i>→</i><span>접힌 도구 줄을 편다</span><i>→</i><span>끝난 답을 말풍선으로 읽는다</span><i>→</i><span>쓰는 중인 글은 [터미널] 칸에서 본다</span></div><span class="where">② ③</span></div><div class="frow"><b>5. 그 자리에서 답하기</b><div class="flow"><span>알림 또는 「내 차례」</span><i>→</i><span>질문·승인 카드</span><i>→</i><span>선택지를 누르거나 글로 답한다</span><i>→</i><span>다음 내 차례로 간다</span></div><span class="where">④</span></div><div class="frow"><b>6. 외부 에이전트와 일하기</b><div class="flow"><span>방 주소를 복사한다</span><i>→</i><span>외부 에이전트가 들어온다</span><i>→</i><span>말을 보낸다</span><i>→</i><span>가져갈 때까지 기다린다</span></div><span class="where">⑤</span></div><div class="frow"><b>7. 방 만들기</b><div class="flow"><span>[새 방]</span><i>→</i><span>이름을 쓴다</span><i>→</i><span>구성원을 고른다</span><i>→</i><span>방이 맨 위에 생긴다</span></div><span class="where">⑥</span></div><div class="frow"><b>8. 채팅 ↔ 그래프</b><div class="flow"><span>위의 전환 단추</span><i>→</i><span>캔버스에서 카드를 본다</span><i>→</i><span>[방 열기]로 옆 칸에 연다</span><i>→</i><span>[채팅에서 열기]로 넓힌다</span></div><span class="where">⑦</span></div><div class="frow"><b>9. 옆 칸 쓰기</b><div class="flow"><span>옆 칸 단추 또는 메시지의 카드</span><i>→</i><span>탭으로 칸을 바꾼다</span><i>→</i><span>×로 닫는다</span></div><span class="where">② ⑤ ⑦</span></div><div class="frow"><b>10. 한 곳에서 모두 확인하기</b><div class="flow"><span>종합 채팅방을 연다</span><i>→</i><span>종류 칩으로 거른다</span><i>→</i><span>질문에 답하고 완료를 확인한다</span><i>→</i><span>필요하면 원래 방으로 간다</span></div><span class="where">⑧</span></div><div class="frow"><b>11. 여럿에게 지시하기</b><div class="flow"><span>[받는 이 고르기]</span><i>→</i><span>목록에서 에이전트와 방을 고른다</span><i>→</i><span>전달 방식을 고른다</span><i>→</i><span>보낸다</span><i>→</i><span>받는 이마다 전달 상태를 본다</span></div><span class="where">⑧ ⑨</span></div></div></section>
+
+<section class="part" aria-label="예외 상태"><h2>바. 예외 상태</h2><table class="ftbl "><thead><tr><th>상태</th><th>화면이 보이는 것</th><th>사람이 할 수 있는 일</th><th>화면</th></tr></thead><tbody><tr><td>에이전트가 바쁨</td><td>보낸 말이 점선 말풍선으로 남고 「대기 n건 가운데 m번째」를 보입니다.</td><td>고치기, 거두기, 지금 조정으로 보내기</td><td>⑩</td></tr><tr><td>에이전트가 끝남</td><td>방 머리 아래 알림 줄, 구성원 이름에 줄 긋기, 받는 이 칩 꺼짐. 기록은 남습니다(D6).</td><td>기록 읽기. 보내기는 막힙니다</td><td>⑩</td></tr><tr><td>에이전트가 응답하지 않음</td><td>말풍선에 「전달하지 못했습니다」와 이유를 보입니다.</td><td>다시 보내기, 1:1 세션 열기</td><td>⑩</td></tr><tr><td>외부 에이전트가 아직 가져가지 않음</td><td>「아직 가져가지 않음」을 보이고 조정·중단을 끕니다.</td><td>고치기, 거두기, 기다리기</td><td>⑤</td></tr><tr><td>중단을 잘못 고름</td><td>보내기 전에 멈출 일을 보이고 단추가 [중단하고 보내기]로 바뀝니다.</td><td>일반·조정으로 바꾸기, 그대로 중단하기</td><td>⑩</td></tr><tr><td>방 전체에게 보냄</td><td>보낼 말 칸 아래 줄이 「방 전체: 구성원마다 한 턴씩 씁니다」로 바뀝니다.</td><td>한 명으로 바꾸기, 그대로 보내기</td><td>—</td></tr><tr><td>세션 기록을 읽지 못함(CLI 판이 바뀜)</td><td>그 세션만 방 본문이 터미널이 되고 「터미널」 표시와 까닭 한 줄이 붙습니다.</td><td>터미널에 직접 치기, 보낼 말 칸으로 보내기</td><td>③</td></tr><tr><td>종합 채팅방: 받는 이를 고르지 않음</td><td>[보내기]가 꺼지고 보낼 말 칸이 「받는 이를 먼저 고릅니다」를 보입니다.</td><td>받는 이 고르기, 카드의 [이어서 맡기기]</td><td>⑧</td></tr><tr><td>종합 채팅방: 받는 이에 외부 에이전트나 끝난 에이전트가 섞임</td><td>끝난 에이전트는 목록에 없습니다. 외부 에이전트가 있으면 조정·중단이 꺼지고 까닭을 알립니다.</td><td>외부 에이전트 빼기, 일반으로 보내기</td><td>⑨</td></tr><tr><td>종합 채팅방: 여럿에게 중단을 보냄</td><td>멈출 일을 받는 이마다 한 줄씩 보이고 한 번 더 묻습니다.</td><td>받는 이 줄이기, 그대로 중단하기</td><td>⑩과 같은 확인</td></tr><tr><td>방이 빔</td><td>「아직 주고받은 말이 없습니다. 아래에서 첫 말을 보냅니다.」</td><td>첫 말 보내기</td><td>—</td></tr></tbody></table></section>
+
+<section class="part" aria-label="GPUI 화면 규칙"><h2>사. GPUI 화면 규칙</h2>
+<p>모든 하네스가 터미널로 돕니다(D1 B). 빠르기는 화면 쪽에서 얻습니다.</p><table class="ftbl "><thead><tr><th>규칙</th><th>내용</th></tr></thead><tbody><tr><td>색과 글꼴</td><td><code>desktop/src/theme.rs</code>의 색(웹 <code>styles.css</code> 토큰에서 만든 값)과 <code>fonts.rs</code>만 씁니다. 새 색을 더하지 않습니다. 에이전트 색은 이미 있는 <code>lane-1…5</code>입니다.</td></tr><tr><td>방 목록</td><td>줄 높이를 고정해 보이는 줄만 그립니다(<code>uniform_list</code>). 접힌 묶음은 줄을 만들지 않습니다.</td></tr><tr><td>메시지 목록</td><td>높이가 다른 줄을 보이는 범위만 그립니다(<code>list</code>). 세션 기록에 새 줄이 생길 때만 말풍선을 더합니다. 접힌 도구 줄은 펼칠 때 내용을 읽습니다.</td></tr><tr><td>보이지 않는 화면</td><td>닫힌 옆 칸, 가려진 방, 그래프 화면 뒤의 채팅은 갱신을 받지 않습니다. 데몬의 이벤트 한 길(<code>/api/events</code>)만 듣고 폴링하지 않습니다.</td></tr><tr><td>있는 부품 다시 쓰기</td><td>옆 칸은 지금의 도크(<code>views/dock</code>), 터미널 칸과 터미널 본문은 <code>views/terminal</code>, 글은 <code>views/prose.rs</code>, 입력과 한글 조합은 <code>views/compose.rs</code>·<code>inputs.rs</code>, 크기는 <code>scale::px</code>를 씁니다.</td></tr><tr><td>종합 채팅방</td><td>지금 입력 창의 부품을 다시 씁니다: 알림 목록과 대상 목록(<code>desktop/src/float/composer.rs</code>, <code>picker.rs</code>). 받는 이 목록은 줄 높이가 같은 목록(<code>uniform_list</code>)입니다. 새 색과 새 부품 종류는 없습니다.</td></tr><tr><td>움직임</td><td>상태 변화만 보입니다(쓰는 중 깜박임, 새 말 도착). 장식 움직임과 흐림 효과는 두지 않습니다.</td></tr></tbody></table></section>
+
+<div class="fig" id="fig1"><h2>① 방 목록과 그룹방 <span class="tag">둘러보기 · 여럿이 주고받는 말 읽기 · 끼어들기</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg mk new" data-n="1"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app "><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views mk new" data-n="2"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow on mk new" data-n="3"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 4개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 5개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#people"/></svg><b>결제 작업 방</b><span class="state"><i class="dot running"></i>구성원 4 · 2명이 일하는 중</span><span class="spacer"></span><span class="abtn ghost sm"><svg class="i "><use href="#graph"/></svg>그래프에서 보기</span></div><div class="members"><span class="mchip"><i class="av l1">리</i>리드</span><span class="mchip"><i class="av l2">결</i>결제-API</span><span class="mchip"><i class="av l3">결</i>결제-테스트</span><span class="mchip"><i class="av l4">검</i>검토-1</span></div></div>
+<div class="msgs">
+<div class="mrow left"><div class="mhead mk new" data-n="4"><i class="av l4">검</i><span><b>검토-1</b> → 결제-API</span><span class="kind err">판정 · 막음</span></div><div class="bubble ag ">환불 금액이 음수일 때 검사가 없습니다. <code>refund/amount.rs</code> 41행입니다.</div><span class="mmeta">14:36 · 읽음</span></div>
+<div class="sysline mk new" data-n="5"><span><svg class="i closed"><use href="#chev"/></svg>알림 4건: 결제-테스트가 들어옴, 브랜치 2개 병합됨</span></div>
+<div class="mrow right"><div class="mhead"><span>나 → 결제-API</span><span class="kind run">조정</span></div><div class="bubble me">음수는 금액 타입에서 막아 주세요. 검사 함수를 따로 두지 않습니다.</div><span class="mmeta">14:42 · 읽음</span></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips mk new" data-n="6"><span class="chip on">결제-API</span><span class="chip">리드</span><span class="chip">결제-테스트</span><span class="chip">검토-1</span><span class="chip">방 전체</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg mk new" data-n="7"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox ph">결제-API에게 보낼 말</div>
+<div class="crow"><span class="hint">일반: 하던 일이 끝나면 읽습니다. Enter로 보냅니다.</span><span class="abtn primary">보내기</span></div></div>
+</section>
+<aside class="srail"><span class="area">옆 칸</span><div class="sgroup mk new" data-n="8"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span><span class="sbtn"><svg class="i "><use href="#doc"/></svg><span>문서</span></span><span class="sbtn"><svg class="i "><use href="#log"/></svg><span>기록</span></span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>1</b><span>채팅과 그래프를 바꿉니다.</span></div><div><b>2</b><span>보기 칩이 목록을 거릅니다. 「묶기」는 묶는 기준을 바꿉니다.</span></div><div><b>3</b><span>방 한 줄: 상태, 구성원 수, 마지막 말, 안 읽은 수.</span></div><div><b>4</b><span>보낸 이 → 받는 이와 메시지 종류.</span></div><div><b>5</b><span>알림은 한 줄로 접습니다.</span></div><div><b>6</b><span>받는 이. 기본은 한 명입니다.</span></div><div><b>7</b><span>전달 방식. 아래 줄이 뜻을 풀어 줍니다.</span></div><div><b>8</b><span>이름이 붙은 옆 칸 단추.</span></div></div></div>
+<div class="fig" id="fig2"><h2>② 1:1 세션 방 <span class="tag">세션 기록으로 그린 말풍선 + [터미널] 칸</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app open"><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span><span class="unread">3</span></div></div>
+<div class="rfold"><svg class="i "><use href="#chev"/></svg>1:1 세션 4개</div><div class="rrow in"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#user"/></svg><span class="rname">리드</span><span class="rtime">14:44</span></div><div class="r2"><span class="rsub">Claude Code · 답을 기다리는 중</span></div></div><div class="rrow on in"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#user"/></svg><span class="rname">결제-API</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">Codex · 일하는 중</span></div></div><div class="rrow in"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#user"/></svg><span class="rname">결제-테스트</span><span class="rtime">14:31</span></div><div class="r2"><span class="rsub">Codex · 쉬는 중</span></div></div><div class="rrow in"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#user"/></svg><span class="rname">검토-1</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">Cursor · 쉬는 중</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 5개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#user"/></svg><b>결제-API</b><span class="state mk new" data-n="9"><span class="pill">Codex</span><i class="dot running"></i>일하는 중 · 4분</span><span class="spacer"></span></div></div>
+<div class="msgs top">
+<div class="mrow right"><div class="mhead"><span>나 → 결제-API</span><span class="kind run">조정</span></div><div class="bubble me">음수는 금액 타입에서 막아 주세요.</div><span class="mmeta">14:42 · 읽음</span></div>
+<div class="work"><span class="wline"><svg class="i "><use href="#chev"/></svg>생각 4초 · 도구 3건</span>
+<div class="tcard"><b>파일 읽기</b><code>src/refund/amount.rs</code><span class="ts">끝남</span></div>
+<div class="tcard"><b>파일 고치기</b><code>src/refund/amount.rs</code><span class="ts">끝남</span></div>
+<div class="tcard"><b>명령 실행</b><code>cargo test refund</code><span class="ts"><i class="dot running"></i>12초째</span></div></div>
+<div class="mrow left mk new" data-n="10"><div class="mhead"><i class="av l2">결</i><span><b>결제-API</b></span></div><div class="bubble ag ">음수를 막았습니다. 시험 2개를 더했습니다.</div><div class="dcard"><svg class="i "><use href="#doc"/></svg><b>R12 환불 경로 설계</b><span class="go">옆 칸에서 열기</span></div><span class="mmeta">14:45 · 다음 답은 쓰는 중</span></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="chip on">결제-API</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox ph">결제-API에게 보낼 말</div>
+<div class="crow"><span class="hint">일반: 하던 일이 끝나면 읽습니다. Enter로 보냅니다.</span><span class="abtn primary">보내기</span></div></div>
+</section>
+<aside class="slot"><div class="stabs"><span class="stg mk new" data-n="11"><span class="stab"><svg class="i "><use href="#people"/></svg>구성원</span><span class="stab on"><svg class="i "><use href="#term"/></svg>터미널</span><span class="stab"><svg class="i "><use href="#doc"/></svg>문서</span><span class="stab"><svg class="i "><use href="#log"/></svg>기록</span></span><span class="spacer"></span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="shead"><svg class="i "><use href="#term"/></svg><b>결제-API의 터미널</b><span class="pill">Codex</span><span class="spacer"></span><span>직접 칠 수 있습니다</span></div>
+<pre class="termv fill"><span><span class="d">OpenAI Codex · gpt-6-astra · ~/work/shop-api</span>
+
+<span class="b">&gt;</span> 음수는 금액 타입에서 막아 주세요.
+
+<span class="d">• 생각 4초</span>
+<span class="g">✓</span> Read   src/refund/amount.rs
+<span class="g">✓</span> Edit   src/refund/amount.rs  +38 −2
+<span class="d">⠋ Run    cargo test refund  (12s)</span>
+  running 16 tests
+  test refund::negative ... ok
+  test refund::limit ... ok
+
+금액 타입이 음수를 받지 않게
+고쳤습니다. 시험 2개를 더했고
+지금 환불 시험을 돌리▌
+
+<span class="b">&gt;</span> <span class="d">메시지를 입력하세요</span></span></pre></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>9</b><span>하네스와 지금 상태.</span></div><div><b>10</b><span>말풍선은 세션 기록에서 옵니다. 턴과 도구가 끝날 때마다 늘어납니다.</span></div><div><b>11</b><span>[터미널] 칸: 같은 세션의 터미널. 쓰는 중인 글을 보고 직접 칩니다.</span></div></div></div>
+<div class="fig" id="fig3"><h2>③ 1:1 세션 방: 세션 기록을 읽지 못할 때 <span class="tag">CLI 판이 바뀌면 터미널 본문으로 돌아감</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app "><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span><span class="unread">3</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 4개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i "><use href="#chev"/></svg>1:1 세션 5개 가운데 3개</div><div class="rrow in"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#user"/></svg><span class="rname">탐색-2</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">Claude Code · 일하는 중</span></div></div><div class="rrow on in mk new" data-n="12"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#term"/></svg><span class="rname">탐색-3</span><span class="rtime">14:43</span></div><div class="r2"><span class="rsub">Gemini CLI · 터미널</span><span class="pill">터미널</span></div></div><div class="rrow in"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#user"/></svg><span class="rname">탐색-4</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">Codex · 답을 기다리는 중</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv term">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#term"/></svg><b>탐색-3</b><span class="state"><span class="pill">Gemini CLI</span><span class="pill">터미널 본문</span><i class="dot running"></i>일하는 중 · 1분</span><span class="spacer"></span><span class="abtn ghost sm"><svg class="i "><use href="#graph"/></svg>그래프에서 보기</span></div></div>
+<div class="termnote"><svg class="i "><use href="#term"/></svg><span>이 CLI 판의 세션 기록을 읽지 못했습니다. 터미널 화면을 그대로 보입니다.</span></div>
+<pre class="termv"><span class="mk new" data-n="13"><span class="d">Gemini CLI · gemini-3-pro · ~/work/search-exp</span>
+
+<span class="b">&gt;</span> 색인 B의 재현율을 표본 500건으로 다시 재 주세요.
+
+<span class="g">✓</span> ReadFile  bench/recall.py
+<span class="g">✓</span> Shell     python bench/recall.py --index b --n 500
+  recall@10  0.874   (색인 A 0.832)
+  p95        41 ms   (색인 A 38 ms)
+
+색인 B의 재현율이 0.042 높습니다. 지연은 3 ms 늘었습니다.
+표본을 2,000건으로 늘려 한 번 더 재겠습니다.
+
+<span class="d">⠋ Shell  python bench/recall.py --index b --n 2000  (18s)</span>
+
+<span class="b">&gt;</span> <span class="d">Type your message</span></span></pre>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="chip on">탐색-3</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox ph mk new" data-n="14">탐색-3에게 보낼 말</div>
+<div class="crow"><span class="hint">일반: 하던 일이 끝나면 읽습니다. Enter로 보냅니다.</span><span class="abtn primary">보내기</span></div></div>
+</section>
+<aside class="srail"><span class="area">옆 칸</span><div class="sgroup"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span><span class="sbtn"><svg class="i "><use href="#doc"/></svg><span>문서</span></span><span class="sbtn"><svg class="i "><use href="#log"/></svg><span>기록</span></span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>12</b><span>기록을 읽지 못한 세션은 「터미널」 표시.</span></div><div><b>13</b><span>방 본문이 터미널입니다. 직접 칠 수 있습니다.</span></div><div><b>14</b><span>보낼 말 칸은 다른 방과 같습니다.</span></div></div></div>
+<div class="fig" id="fig4"><h2>④ 내 차례: 질문과 승인에 그 자리에서 답하기 <span class="tag">맡겨 두었다가 돌아온 사람</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app "><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views mk new" data-n="15"><span class="vchip">전체 <b>9</b></span><span class="vchip on">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#user"/></svg><span class="rname">리드</span><span class="rtime">14:44</span></div><div class="r2"><span class="rsub">환불 기록을 옛 표에도 남길까요?</span><span class="pill warn">내 차례</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow on"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill warn">내 차례</span></div></div>
+<div class="rhidden mk new" data-n="16">다른 방 7개는 숨겼습니다 <u>전체 보기</u></div></section>
+<section class="conv">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#people"/></svg><b>검색 실험 작업 방</b><span class="state"><i class="dot waiting"></i>구성원 5 · 내 답을 기다리는 일 2건</span><span class="spacer"></span><span class="abtn sm mk new" data-n="17">다음 내 차례 1/2 <svg class="i "><use href="#chev"/></svg></span></div><div class="members"><span class="mchip"><i class="av l5">탐</i>탐색-1</span><span class="mchip"><i class="av l2">탐</i>탐색-2</span><span class="mchip"><i class="av l3">탐</i>탐색-3</span><span class="mchip"><i class="av l4">탐</i>탐색-4</span><span class="mchip"><i class="av l1">탐</i>탐색-5</span></div></div>
+<div class="msgs">
+<div class="receipt mk new" data-n="20"><svg class="i "><use href="#check"/></svg><span>탐색-2의 질문에 답함:</span><b>A 표본 500건으로 잰다</b><span class="mmeta">14:12</span></div>
+<div class="qcard mk new" data-n="18"><div class="mhead"><i class="av l4">탐</i><span><b>탐색-4</b> → 나</span><span class="kind warn">질문</span><span class="spacer"></span><span class="mmeta">14:41</span></div>
+<div class="qtext">색인 B로 전부 옮길까요? 옮기면 색인 A 실험 2건을 멈춥니다.</div>
+<div class="qopts"><div class="qopt"><span class="k">A</span>색인 B로 옮긴다<span class="rec">에이전트 추천</span></div><div class="qopt"><span class="k">B</span>둘 다 계속한다</div></div>
+<div class="qfree"><div class="cbox ph">다른 답을 글로 씁니다</div><span class="abtn">답하기</span></div></div>
+<div class="qcard appr mk new" data-n="19"><div class="mhead"><i class="av l5">탐</i><span><b>탐색-1</b> → 나</span><span class="kind ">승인</span><span class="spacer"></span><span class="mmeta">14:43</span></div>
+<div class="qtext">이 명령을 돌려도 될까요?</div><div class="qcmd">rm -rf data/index-a/tmp</div>
+<div class="qacts"><span class="abtn">한 번 허용</span><span class="abtn">이 세션 동안 허용</span><span class="abtn">거절</span></div></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="chip on">탐색-4</span><span class="chip">탐색-1</span><span class="chip">탐색-2</span><span class="chip">탐색-3</span><span class="chip">탐색-5</span><span class="chip">방 전체</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox ph">탐색-4에게 보낼 말</div>
+<div class="crow"><span class="hint">일반: 하던 일이 끝나면 읽습니다. Enter로 보냅니다.</span><span class="abtn primary">보내기</span></div></div>
+</section>
+<aside class="srail"><span class="area">옆 칸</span><div class="sgroup"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span><span class="sbtn"><svg class="i "><use href="#doc"/></svg><span>문서</span></span><span class="sbtn"><svg class="i "><use href="#log"/></svg><span>기록</span></span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>15</b><span>「내 차례」: 내 답을 기다리는 방만.</span></div><div><b>16</b><span>숨긴 방 수와 돌아가는 길.</span></div><div><b>17</b><span>다음 질문으로 건너뜁니다.</span></div><div><b>20</b><span>답한 카드는 한 줄 기록이 됩니다.</span></div><div><b>18</b><span>질문 카드: 선택지를 누르거나 글로 답합니다.</span></div><div><b>19</b><span>승인 카드: 허용하거나 거절합니다.</span></div></div></div>
+<div class="fig" id="fig5"><h2>⑤ 외부 에이전트와 일하기 <span class="tag">스스로 가져가는 에이전트 · 옆 칸: 구성원</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app open"><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span><span class="unread">3</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 4개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 5개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow on"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#globe"/></svg><b>브라우저 조사 방</b><span class="state">구성원 2 · 그 가운데 외부 에이전트 1</span><span class="spacer"></span></div><div class="members"><span class="mchip"><i class="av l1">리</i>리드</span><span class="mchip"><i class="av l5 out">A</i>Aside</span></div></div>
+<div class="msgs">
+<div class="mrow left"><div class="mhead"><i class="av l1">리</i><span><b>리드</b> → Aside</span><span class="kind ">쪽지</span></div><div class="bubble ag ">경쟁 제품 3곳의 환불 화면을 캡처해 주세요.</div><span class="mmeta">14:20 · Aside가 14:26에 가져감</span></div>
+<div class="mrow left mk new" data-n="21"><div class="mhead"><i class="av l5 out">A</i><span><b>Aside</b> → 리드</span><span class="kind ok">완료</span><span class="pill out">외부 에이전트</span></div><div class="bubble outb ">3곳을 캡처했습니다. 두 곳은 환불 사유를 고르게 합니다.</div><span class="mmeta">14:38 · 읽음</span></div>
+<div class="mrow right mk new" data-n="22"><div class="mhead"><span>나 → Aside</span><span class="kind ">일반</span></div><div class="bubble wait">모바일 화면도 같이 봐 주세요.</div><div class="macts"><span class="abtn sm">고치기</span><span class="abtn sm">거두기</span></div><span class="mmeta">14:44 · Aside가 아직 가져가지 않음</span></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="chip on">Aside</span><span class="chip">리드</span><span class="chip">방 전체</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg mk new" data-n="23"><span class="hi on">일반</span><span class="hi off">조정</span><span class="hi off">중단</span></span></div>
+<div class="cbox ph">Aside에게 보낼 말</div>
+<div class="crow"><span class="hint">외부 에이전트는 스스로 가져갈 때 받습니다. 조정·중단은 쓸 수 없습니다.</span><span class="abtn primary">보내기</span></div></div>
+</section>
+<aside class="slot"><div class="stabs"><span class="stg mk new" data-n="24"><span class="stab on"><svg class="i "><use href="#people"/></svg>구성원</span><span class="stab"><svg class="i "><use href="#term"/></svg>터미널</span><span class="stab"><svg class="i "><use href="#doc"/></svg>문서</span><span class="stab"><svg class="i "><use href="#log"/></svg>기록</span></span><span class="spacer"></span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="sbody" style="padding-top:4px;padding-bottom:0"><div class="mems">
+<div class="mem"><i class="av l1">리</i><b>리드</b><span class="abtn sm">1:1 세션</span><span class="ms"><span class="pill">Claude Code</span><i class="dot waiting"></i>답을 기다리는 중</span></div>
+<div class="mem"><i class="av l5 out">A</i><b>Aside</b><span class="abtn sm off">1:1 세션</span><span class="ms"><span class="pill out">외부 에이전트</span>2분 전에 가져감 · 터미널 없음</span></div>
+<div class="mem"><i class="av" style="background:var(--accent)">나</i><b>나</b><span class="ms">사람</span></div></div></div>
+<div class="sbody"><div class="invite mk new" data-n="25"><b style="color:var(--ink);font-size:13px">외부 에이전트 초대</b><span>이 주소를 받은 외부 에이전트는 이 방의 말을 읽고 씁니다.</span><div class="addr"><span>http://127.0.0.1:7420/rooms/r-48</span><span class="abtn sm"><svg class="i "><use href="#copy"/></svg>복사</span></div></div>
+<span class="abtn" style="justify-self:start"><svg class="i "><use href="#plus"/></svg>에이전트 넣기</span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>21</b><span>외부 에이전트는 배지로 구분합니다.</span></div><div><b>22</b><span>외부 에이전트가 가져가기 전에는 고치거나 거둘 수 있습니다.</span></div><div><b>23</b><span>조정·중단은 꺼지고 이유를 알립니다.</span></div><div><b>24</b><span>옆 칸. 지금은 구성원 칸입니다.</span></div><div><b>25</b><span>방 주소를 외부 에이전트에게 줍니다.</span></div></div></div>
+<div class="fig" id="fig6"><h2>⑥ 새 방 만들기 <span class="tag">어떤 묶음이든 방으로</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app "><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm pressed"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg mk new" data-n="30"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow on"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 4개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow mk new" data-n="29"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 5개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#people"/></svg><b>결제 작업 방</b><span class="state"></span><span class="spacer"></span></div></div>
+<div class="msgs" style="padding-left:410px">
+<div class="mrow left"><div class="mhead"><i class="av l1">리</i><span><b>리드</b> → 결제-API</span><span class="kind ">쪽지</span></div><div class="bubble ag ">음수 검사를 더하고 다시 올려 주세요.</div><span class="mmeta">14:40 · 읽음</span></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="chip on">결제-API</span><span class="chip">리드</span><span class="chip">결제-테스트</span><span class="chip">검토-1</span><span class="chip">방 전체</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox ph">결제-API에게 보낼 말</div>
+<div class="crow"><span class="hint">일반: 하던 일이 끝나면 읽습니다. Enter로 보냅니다.</span><span class="abtn primary">보내기</span></div></div>
+</section>
+<aside class="srail"><span class="area">옆 칸</span><div class="sgroup"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span><span class="sbtn"><svg class="i "><use href="#doc"/></svg><span>문서</span></span><span class="sbtn"><svg class="i "><use href="#log"/></svg><span>기록</span></span></div></aside><div class="pop"><h4 class="mk new" data-n="26">새 방</h4>
+<label>방 이름<span class="field focus">출시 점검</span></label>
+<label>구성원 <span class="field" style="color:var(--ink-3)"><svg class="i "><use href="#search"/></svg>&nbsp;에이전트 찾기</span></label>
+<div class="picks mk new" data-n="27"><div class="pgroup">결제 리팩터링</div><div class="pick"><span class="box on"><svg class="i "><use href="#check"/></svg></span><i class="av l1">리</i><b>리드</b><span>Claude Code</span></div><div class="pick"><span class="box on"><svg class="i "><use href="#check"/></svg></span><i class="av l2">결</i><b>결제-API</b><span>Codex</span></div>
+<div class="pgroup">검색 품질 실험</div><div class="pick"><span class="box on"><svg class="i "><use href="#check"/></svg></span><i class="av l2">탐</i><b>탐색-2</b><span>Claude Code</span></div><div class="pick"><span class="box"></span><i class="av l3">탐</i><b>탐색-3</b><span>Gemini CLI · 터미널</span></div>
+<div class="pgroup">외부 에이전트</div><div class="pick"><span class="box"></span><i class="av l5 out">A</i><b>Aside</b><span>브라우저</span></div></div>
+<p class="pnote mk new" data-n="28">방은 고른 구성원끼리 주고받은 말을 모아 보여 줍니다. 에이전트가 하는 일은 바뀌지 않습니다.</p>
+<div class="pacts"><span class="hint" style="font-size:12px;color:var(--ink-2)">구성원 3명</span><span class="spacer"></span><span class="abtn">취소</span><span class="abtn primary">방 만들기</span></div></div></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>26</b><span>[새 방]을 누르면 열립니다.</span></div><div><b>30</b><span>내가 만든 방은 맨 위.</span></div><div><b>29</b><span>저절로 생긴 방은 「자동」 표시.</span></div><div><b>27</b><span>어느 작업의 에이전트든, 외부 에이전트도 고릅니다.</span></div><div><b>28</b><span>방은 보기입니다. 에이전트의 일은 그대로입니다.</span></div></div></div>
+<div class="fig" id="fig7"><h2>⑦ 그래프 화면: 옆 칸에 방 열기 <span class="tag">같은 에이전트를 캔버스로 보기</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg mk new" data-n="31"><span class="si"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si on"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app graph">
+<aside class="tree"><span class="area">저장소</span>
+<div class="trow"><svg class="i "><use href="#chev"/></svg><svg class="i "><use href="#folder"/></svg><b>shop-api</b></div>
+<div class="trow d1"><svg class="i "><use href="#chev"/></svg><b>결제 리팩터링</b></div>
+<div class="trow d2 on"><i class="dot waiting"></i><b>리드</b></div>
+<div class="trow d2"><i class="dot running"></i><b>결제-API</b></div>
+<div class="trow d2"><i class="dot done"></i><b>결제-테스트</b></div>
+<div class="trow d2"><i class="dot done"></i><b>검토-1</b></div>
+<div class="trow d1"><svg class="i closed"><use href="#chev"/></svg><b>검색 품질 실험</b></div>
+<div class="trow d1"><svg class="i closed"><use href="#chev"/></svg><b>브라우저 조사</b></div></aside>
+<div class="canvas"><i class="eg" style="left:138px;top:150px;height:100px"></i><i class="eg" style="left:138px;top:200px;width:284px"></i><i class="eg" style="left:422px;top:200px;height:50px"></i><i class="eg" style="left:280px;top:200px;height:290px"></i><i class="eg" style="left:280px;top:490px;width:30px"></i>
+<div class="gframe" style="left:12px;top:30px;width:536px;height:520px"><span>결제 리팩터링</span></div>
+<div class="ncard sel" style="left:26px;top:56px"><div class="nh"><i class="dot waiting"></i><b>리드</b><span class="hn">Claude Code</span><span class="spacer"></span><span class="abtn sm mk new" data-n="32"><svg class="i "><use href="#chat"/></svg>방 열기</span></div><div class="nb">환불 기록을 옛 표에도 남길까요?&#10;답을 기다립니다.</div></div>
+<div class="ncard" style="left:26px;top:250px"><div class="nh"><i class="dot running"></i><b>결제-API</b><span class="hn">Codex</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#chat"/></svg>방 열기</span></div><div class="nb">$ cargo test refund&#10;running 14 tests</div></div>
+<div class="ncard" style="left:310px;top:250px"><div class="nh"><i class="dot done"></i><b>결제-테스트</b><span class="hn">Codex</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#chat"/></svg>방 열기</span></div><div class="nb">시험 14개 통과&#10;쉬는 중</div></div>
+<div class="ncard" style="left:310px;top:440px"><div class="nh"><i class="dot done"></i><b>검토-1</b><span class="hn">Cursor</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#chat"/></svg>방 열기</span></div><div class="nb">판정: 막음&#10;음수 검사 없음</div></div>
+</div>
+<aside class="slot"><div class="stabs"><span class="stg mk new" data-n="33"><span class="stab"><svg class="i "><use href="#people"/></svg>구성원</span><span class="stab"><svg class="i "><use href="#term"/></svg>터미널</span><span class="stab"><svg class="i "><use href="#doc"/></svg>문서</span><span class="stab"><svg class="i "><use href="#log"/></svg>기록</span><span class="stab on"><svg class="i "><use href="#chat"/></svg>방</span></span><span class="spacer"></span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="shead"><svg class="i "><use href="#people"/></svg><b>결제 작업 방</b><span>구성원 4</span><span class="spacer"></span><span class="abtn sm mk new" data-n="34"><svg class="i "><use href="#expand"/></svg>채팅에서 열기</span></div>
+<div class="msgs">
+<div class="mrow left"><div class="mhead"><i class="av l4">검</i><span><b>검토-1</b> → 결제-API</span><span class="kind err">판정 · 막음</span></div><div class="bubble ag ">환불 금액이 음수일 때 검사가 없습니다.</div><span class="mmeta">14:36</span></div>
+<div class="mrow left"><div class="mhead"><i class="av l1">리</i><span><b>리드</b> → 결제-API</span><span class="kind ">쪽지</span></div><div class="bubble ag ">음수 검사를 더하고 다시 올려 주세요.</div><span class="mmeta">14:40</span></div>
+<div class="mrow right"><div class="mhead"><span>나 → 결제-API</span><span class="kind run">조정</span></div><div class="bubble me">음수는 금액 타입에서 막아 주세요.</div><span class="mmeta">14:42 · 읽음</span></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="chip on">결제-API</span><span class="chip">방 전체</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox ph">결제-API에게 보낼 말</div>
+<div class="crow"><span class="hint">일반: 하던 일이 끝나면 읽습니다.</span><span class="abtn primary">보내기</span></div></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>31</b><span>그래프 화면. 나무와 캔버스는 지금과 같습니다.</span></div><div><b>32</b><span>[방 열기]가 방을 옆 칸에 엽니다.</span></div><div><b>33</b><span>「방」 탭에서 읽고 바로 보냅니다.</span></div><div><b>34</b><span>같은 방을 채팅 화면으로 넓힙니다.</span></div></div></div>
+<div class="fig" id="fig8"><h2>⑧ 종합 채팅방: 모든 에이전트의 질문·완료·알림을 한 곳에서 <span class="tag">새 화면 · 그 자리에서 답하기</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app "><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin on mk new" data-n="35"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span><span class="unread">3</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 4개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 5개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#all"/></svg><b>종합 채팅방</b><span class="state">에이전트 12 · 내 답을 기다리는 질문 2 · 확인할 완료 3</span><span class="spacer"></span><span class="abtn sm">다음 질문 1/2 <svg class="i "><use href="#chev"/></svg></span></div><span class="mk new" data-n="36"><div class="fchips"><span class="fchip on">전체</span><span class="fchip">질문 <b>2</b></span><span class="fchip">완료 <b>3</b></span><span class="fchip">알림 <b>6</b></span><span class="fchip">내가 보낸 말 <b>4</b></span></div></span></div>
+<div class="msgs">
+<div class="qcard donec mk new" data-n="37"><div class="mhead"><i class="av l2">결</i><span><b>결제-API</b> → 나</span><span class="kind ok">완료</span><span class="origin">결제 리팩터링</span><span class="mmeta">14:12</span><span class="golink">방에서 보기</span></div>
+<div class="qtext">금액 타입이 음수를 받지 않게 고쳤습니다. 환불 시험 16개가 통과했습니다.</div>
+<div class="qacts"><span class="abtn">확인</span><span class="abtn">이어서 맡기기</span></div></div><div class="mrow right mk new" data-n="38"><div class="mhead"><span>나 → 결제-API, 탐색-2</span><span class="kind ">일반</span></div><div class="bubble me">오전에 한 일을 한 줄씩 알려 주세요.</div><span class="dlv"><span><svg class="i "><use href="#check"/></svg>결제-API 읽음</span><span><i class="dot running"></i>탐색-2 대기 중</span></span><span class="mmeta">14:30</span></div><div class="sysline"><span><svg class="i closed"><use href="#chev"/></svg>알림 3건: 브랜치 2개 병합됨, 탐색-5 들어옴</span></div><div class="qcard mk new" data-n="39"><div class="mhead"><i class="av l4">탐</i><span><b>탐색-4</b> → 나</span><span class="kind warn">질문</span><span class="origin">검색 품질 실험</span><span class="mmeta">14:41</span><span class="golink">방에서 보기</span></div>
+<div class="qtext">색인 B로 전부 옮길까요? 옮기면 색인 A 실험 2건을 멈춥니다.</div>
+<div class="qopts"><div class="qopt"><span class="k">A</span>색인 B로 옮긴다<span class="rec">에이전트 추천</span></div><div class="qopt"><span class="k">B</span>둘 다 계속한다</div></div>
+<div class="qfree"><div class="cbox ph">다른 답을 글로 씁니다</div><span class="abtn">답하기</span></div></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="tofield"><svg class="i "><use href="#plus"/></svg>받는 이 고르기</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox ph mk new" data-n="40">받는 이를 먼저 고릅니다</div>
+<div class="crow"><span class="hint">받는 이를 고르면 보낼 수 있습니다. 카드의 [이어서 맡기기]도 받는 이를 정합니다.</span><span class="abtn primary off">보내기</span></div></div>
+</section>
+<aside class="srail"><span class="area">옆 칸</span><div class="sgroup"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span><span class="sbtn"><svg class="i "><use href="#doc"/></svg><span>문서</span></span><span class="sbtn"><svg class="i "><use href="#log"/></svg><span>기록</span></span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>35</b><span>종합 채팅방은 늘 맨 위. 보기 칩이 숨기지 않습니다.</span></div><div><b>36</b><span>종류 칩이 흐름을 거릅니다. 할 일이 없는 알림은 한 줄로 접힙니다.</span></div><div><b>37</b><span>완료: [확인]하거나 이어서 맡깁니다.</span></div><div><b>38</b><span>내가 보낸 말과 받는 이마다의 전달 상태.</span></div><div><b>39</b><span>질문: 여기서 답합니다. [방에서 보기]는 원래 방으로 갑니다.</span></div><div><b>40</b><span>받는 이가 없으면 보낼 수 없습니다.</span></div></div></div>
+<section class="decision" id="D7" data-for="36"><h3><span class="did">D7</span>종합 채팅방의 흐름에 무엇까지 넣을까요?</h3><div class="opts"><div class="opt" data-recommended><span class="key">A</span><span class="label">나와 오간 것만: 에이전트가 나에게 보낸 질문·승인·완료, loom이 나에게 알리는 것, 내가 보낸 말<span class="mark">권장</span><span class="sub">지금: 입력 창의 알림 목록에 질문·완료만, 답하면 사라짐 → 바뀐 뒤: 같은 것이 대화로 남고 내가 보낸 말과 그 전달 상태도 보임 · 비용 작음(이미 있는 대기와 메시지를 읽음) · 위험: 에이전트끼리 한 말은 그 방에 가야 보임 · 되돌리기: 칩 하나 더하기</span></span></div><div class="opt"><span class="key">B</span><span class="label">A에 더해 에이전트끼리 주고받은 모든 말(칩 「에이전트끼리」로 거름)<span class="sub">바뀐 뒤: 모든 방의 말이 한 흐름에 옴 · 비용 보통(모든 메시지를 읽는 목록) · 위험: 에이전트 12개면 하루 수백 줄이 질문을 밀어냄 · 되돌리기: 칩 빼기</span></span></div></div><ul class="why"><li>사람 지시는 「모든 에이전트의 질문, 알림을 확인」입니다. 알림 규칙(M92, Q2928)은 사람이 할 일이 있을 때만 알립니다.</li><li>에이전트끼리 한 말은 작업 방이 이미 보여 줍니다. 카드의 [방에서 보기]가 그 방으로 갑니다.</li><li>칩은 뒤에 하나씩 더할 수 있고 화면 배치가 바뀌지 않습니다.</li></ul></section>
+<div class="fig" id="fig9"><h2>⑨ 종합 채팅방: 받는 이 목록으로 여럿에게 지시하기 <span class="tag">새 화면 · 목록에서 에이전트와 방 고르기</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app "><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin on"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span><span class="unread">3</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 4개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 5개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#all"/></svg><b>종합 채팅방</b><span class="state">에이전트 12 · 내 답을 기다리는 질문 2 · 확인할 완료 3</span><span class="spacer"></span><span class="abtn sm">다음 질문 1/2 <svg class="i "><use href="#chev"/></svg></span></div><span class=""><div class="fchips"><span class="fchip on">전체</span><span class="fchip">질문 <b>2</b></span><span class="fchip">완료 <b>3</b></span><span class="fchip">알림 <b>6</b></span><span class="fchip">내가 보낸 말 <b>4</b></span></div></span></div>
+<div class="msgs top">
+<div class="mrow right"><div class="mhead"><span>나 → 결제-API, 탐색-2</span><span class="kind ">일반</span></div><div class="bubble me">오전에 한 일을 한 줄씩 알려 주세요.</div><span class="dlv"><span><svg class="i "><use href="#check"/></svg>결제-API 읽음</span><span><i class="dot running"></i>탐색-2 대기 중</span></span><span class="mmeta">14:30</span></div>
+</div>
+<div class="compose">
+<div class="tolist"><div class="lhead"><span class="lt2 mk new" data-n="41"><b>받는 이 목록</b><span>3곳 고름</span></span><span class="spacer"></span><span class="abtn sm">모두 풀기</span></div>
+<div class="lrows mk new" data-n="42">
+<div class="pgroup">방 · 구성원 모두가 받습니다</div>
+<div class="lrow on"><span class="box on"><svg class="i "><use href="#check"/></svg></span><span class="lmain"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><b>검색 실험 작업 방</b><span class="ls">구성원 5 · 2명이 일하는 중</span></span><span class="lt">14:41</span></div>
+<div class="lrow"><span class="box"></span><span class="lmain"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><b>결제 작업 방</b><span class="ls">구성원 4 · 1명이 일하는 중</span></span><span class="lt">14:40</span></div>
+<div class="pgroup">결제 리팩터링</div>
+<div class="lrow"><span class="box"></span><span class="lmain"><i class="dot waiting"></i><i class="av l1">리</i><b>리드</b><span class="pill">Claude Code</span><span class="ls">내 답을 기다리는 중 · 환불 기록을 옛 표에도…</span></span><span class="lt">14:44</span></div>
+<div class="lrow on"><span class="box on"><svg class="i "><use href="#check"/></svg></span><span class="lmain"><i class="dot running"></i><i class="av l2">결</i><b>결제-API</b><span class="pill">Codex</span><span class="ls">일하는 중 4분 · cargo test refund</span></span><span class="lt">14:46</span></div>
+<div class="lrow"><span class="box"></span><span class="lmain"><i class="dot done"></i><i class="av l3">결</i><b>결제-테스트</b><span class="pill">Codex</span><span class="ls">쉬는 중 · 시험 14개 통과</span></span><span class="lt">14:31</span></div>
+<div class="lrow"><span class="box"></span><span class="lmain"><i class="dot done"></i><i class="av l4">검</i><b>검토-1</b><span class="pill">Cursor</span><span class="ls">쉬는 중 · 판정: 막음</span></span><span class="lt">14:36</span></div>
+<div class="pgroup">검색 품질 실험</div>
+<div class="lrow on"><span class="box on"><svg class="i "><use href="#check"/></svg></span><span class="lmain"><i class="dot running"></i><i class="av l2">탐</i><b>탐색-2</b><span class="pill">Claude Code</span><span class="ls">일하는 중 1분 · 표본 2,000건 재는 중</span></span><span class="lt">14:40</span></div>
+<div class="lrow"><span class="box"></span><span class="lmain"><i class="dot running"></i><i class="av l3">탐</i><b>탐색-3</b><span class="pill">Gemini CLI</span><span class="ls">일하는 중 1분 · 색인 B 재현율</span></span><span class="lt">14:43</span></div>
+</div>
+<div class="lfoot mk new" data-n="43"><span class="lfind"><svg class="i "><use href="#search"/></svg>이름·방·하네스로 찾기<span class="spacer"></span><span class="lkey">↑↓ · Space 고르기 · Esc 닫기</span></span>
+<div class="fchips"><span class="fchip on">전체 <b>14</b></span><span class="fchip">내 답을 기다림 <b>2</b></span><span class="fchip">일하는 중 <b>4</b></span><span class="fchip">쉬는 중 <b>6</b></span><span class="fchip">방 <b>4</b></span></div></div></div><div class="cbar"><span class="clabel">받는 이</span><span class="chips"><span class="chips"><span class="chip on">결제-API <svg class="i "><use href="#x"/></svg></span><span class="chip on">탐색-2 <svg class="i "><use href="#x"/></svg></span><span class="chip on"><svg class="i "><use href="#people"/></svg>검색 실험 작업 방 · 5명 <svg class="i "><use href="#x"/></svg></span><span class="abtn sm pressed"><svg class="i "><use href="#plus"/></svg>받는 이 더하기</span></span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi on">일반</span><span class="hi">조정</span><span class="hi">중단</span></span></div>
+<div class="cbox">오늘 작업은 18시까지 브랜치에 올려 주세요.</div>
+<div class="crow"><span class="hint">에이전트 6명이 따로 받습니다. 탐색-2는 방에도 있어 한 번만 받습니다.</span><span class="abtn primary">6명에게 보내기</span></div></div>
+</section>
+<aside class="srail"><span class="area">옆 칸</span><div class="sgroup"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span><span class="sbtn"><svg class="i "><use href="#doc"/></svg><span>문서</span></span><span class="sbtn"><svg class="i "><use href="#log"/></svg><span>기록</span></span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>41</b><span>[받는 이 더하기]가 여는 목록. 고른 수를 보입니다.</span></div><div><b>42</b><span>한 줄: 상태 점, 이름, 하네스, 하는 일, 마지막 활동 시각. 방을 고르면 구성원 모두가 받습니다.</span></div><div><b>43</b><span>찾기와 상태 칩. 지금 입력 창의 대상 목록과 같은 자리.</span></div></div></div>
+<section class="decision" id="D8" data-for="38"><h3><span class="did">D8</span>여러 받는 이에게 보낸 말은 어떻게 전달할까요?</h3><div class="opts"><div class="opt" data-recommended><span class="key">A</span><span class="label">받는 이마다 따로 보낸다<span class="mark">권장</span><span class="sub">지금: 한 번에 한 노드에게만 → 바뀐 뒤: 고른 에이전트가 저마다 같은 말을 받음. 내 말은 종합 채팅방에 한 번, 받은 에이전트의 1:1 세션 방마다 한 번 보이고, 방을 골랐으면 그 방에 「나 → 방 전체」로 보임. 겹친 에이전트는 한 번만 받음 · 비용 작음(지금 보내는 길을 받는 이 수만큼 씀) · 위험: 에이전트들이 같은 지시를 받은 줄 몰라 일이 겹칠 수 있음 · 되돌리기: 읽기 전에 거두기</span></span></div><div class="opt"><span class="key">B</span><span class="label">고른 받는 이로 새 방을 만들어 그 방에 보낸다<span class="sub">바뀐 뒤: 받는 이들이 서로의 말을 보고 답이 한 방에 모임 · 비용 보통(방 만들기와 묶음) · 위험: 한 번 쓰고 마는 방이 목록에 쌓임 · 되돌리기: 방 지우기(메시지는 남음)</span></span></div></div><ul class="why"><li>함께 일하게 하려면 방을 먼저 만들고(⑥) 그 방을 받는 이로 고릅니다. 두 길이 겹치지 않습니다.</li><li>지금 loom의 보내는 길이 한 명에게 보내는 길입니다. A는 새 길을 만들지 않습니다.</li><li>보내기 전에 「6명에게 보내기」처럼 받는 수를 알려 잘못 보내기를 줄입니다.</li></ul></section>
+<div class="fig" id="fig10"><h2>⑩ 예외 상태 <span class="tag">끝난 에이전트 · 전달 실패 · 대기 줄 · 중단 확인</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="seg"><span class="si on"><svg class="i "><use href="#chat"/></svg>채팅</span><span class="si"><svg class="i "><use href="#graph"/></svg>그래프</span></span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app "><section class="rooms"><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새 방</span></div>
+<div class="rsearch"><svg class="i "><use href="#search"/></svg>방·에이전트·메시지 찾기</div>
+<div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 에이전트의 질문·완료·알림</span><span class="pill warn">질문 2</span><span class="pill okp">완료 3</span></div></div>
+<div class="views"><span class="vchip on">전체 <b>9</b></span><span class="vchip">내 차례 <b>2</b></span><span class="vchip">일하는 중 <b>4</b></span><span class="vchip">안 읽음 <b>3</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>내가 만든 방</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#people"/></svg><span class="rname">검토 짝</span><span class="cnt">2</span><span class="rtime">14:36</span></div><div class="r2"><span class="rsub">검토-1: 음수일 때 검사가 없습니다.</span></div></div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>결제 리팩터링</span></div>
+<div class="rrow on"><div class="r1"><i class="dot running"></i><svg class="i "><use href="#people"/></svg><span class="rname">결제 작업 방</span><span class="cnt">4</span><span class="rtime">14:40</span></div><div class="r2"><span class="rsub">리드: 음수 검사를 더하고 다시 올려 주세요.</span><span class="pill">자동</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 4개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>검색 품질 실험</span></div>
+<div class="rrow"><div class="r1"><i class="dot waiting"></i><svg class="i "><use href="#people"/></svg><span class="rname">검색 실험 작업 방</span><span class="cnt">5</span><span class="rtime">14:41</span></div><div class="r2"><span class="rsub">탐색-4: 색인 B로 전부 옮길까요?</span><span class="pill">자동</span><span class="pill warn">내 차례</span></div></div>
+<div class="rfold"><svg class="i closed"><use href="#chev"/></svg>1:1 세션 5개</div>
+<div class="rgroup"><span class="rg"><svg class="i "><use href="#chev"/></svg>브라우저 조사</span></div>
+<div class="rrow"><div class="r1"><i class="dot done"></i><svg class="i "><use href="#globe"/></svg><span class="rname">브라우저 조사 방</span><span class="cnt">2</span><span class="rtime">14:38</span></div><div class="r2"><span class="rsub">Aside: 3곳을 캡처했습니다.</span><span class="pill">자동</span></div></div></section>
+<section class="conv term">
+<div class="chead"><div class="ch1"><svg class="i "><use href="#people"/></svg><b>결제 작업 방</b><span class="state"><i class="dot running"></i>구성원 4 · 1명이 일하는 중 · 1명 끝남</span><span class="spacer"></span></div><div class="members"><span class="mchip"><i class="av l1">리</i>리드</span><span class="mchip"><i class="av l2">결</i>결제-API</span><span class="mchip gone"><i class="av l3">결</i>결제-테스트</span><span class="mchip"><i class="av l4">검</i>검토-1</span></div></div>
+<div class="banner mk new" data-n="44"><i class="av l3">결</i><span><b>결제-테스트</b>가 끝났습니다(브랜치 병합됨). 이 방의 기록은 남습니다. 결제-테스트에게는 보낼 수 없습니다.</span></div>
+<div class="msgs">
+<div class="mrow right mk new" data-n="45"><div class="mhead"><span>나 → 검토-1</span><span class="kind ">일반</span></div><div class="bubble fail">음수 검사를 다시 봐 주세요.</div><div class="macts err">전달하지 못했습니다: 검토-1이 응답하지 않습니다.<span class="abtn sm">다시 보내기</span><span class="abtn sm">1:1 세션 열기</span></div><span class="mmeta"></span></div>
+<div class="mrow right mk new" data-n="46"><div class="mhead"><span>나 → 결제-API</span><span class="kind ">일반</span></div><div class="bubble wait">끝나면 환불 한도 상수도 설정으로 옮겨 주세요.</div><div class="macts"><span class="abtn sm">고치기</span><span class="abtn sm">거두기</span></div><span class="mmeta">대기 2건 가운데 1번째 · 결제-API가 일하는 중</span></div>
+</div>
+<div class="compose">
+<div class="cbar"><span class="clabel">받는 이</span><span class="chips mk new" data-n="47"><span class="chip on">결제-API</span><span class="chip">리드</span><span class="chip off">결제-테스트</span><span class="chip">검토-1</span><span class="chip">방 전체</span></span><span class="spacer"></span><span class="clabel">전달</span><span class="hseg"><span class="hi">일반</span><span class="hi">조정</span><span class="hi on stop">중단</span></span></div>
+<div class="stopbox mk new" data-n="48"><b>결제-API가 하던 일을 멈춥니다.</b><span>지금 하는 일: 명령 실행 <code>cargo test refund</code> (2분째). 멈춘 일은 이어서 하지 못합니다.</span></div><div class="cbox">시험을 멈추고 음수 검사부터 고쳐 주세요.</div>
+<div class="crow"><span class="hint">중단: 하던 일을 바로 멈추고 이 말을 읽게 합니다.</span><span class="abtn danger">중단하고 보내기</span></div></div>
+</section>
+<aside class="srail"><span class="area">옆 칸</span><div class="sgroup"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span><span class="sbtn"><svg class="i "><use href="#doc"/></svg><span>문서</span></span><span class="sbtn"><svg class="i "><use href="#log"/></svg><span>기록</span></span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 12 · 일하는 중 4</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>44</b><span>끝난 에이전트: 기록은 남고 보낼 수 없습니다.</span></div><div><b>45</b><span>전달 실패: 이유와 [다시 보내기].</span></div><div><b>46</b><span>바쁜 에이전트에게 보낸 말은 대기 줄에 쌓입니다.</span></div><div><b>47</b><span>끝난 구성원은 꺼집니다.</span></div><div><b>48</b><span>중단은 멈출 일을 보이고 한 번 더 묻습니다.</span></div></div></div>
+
+</main>
+<button type="button" class="theme-toggle" onclick="const h=document.documentElement;const dark=h.style.colorScheme==='dark';h.style.colorScheme=dark?'light':'dark';this.textContent=dark?'다크로 보기':'라이트로 보기';">다크로 보기</button>
+<script>
+(() => {
+  const GUT = 290;
+  const fit = fig => {
+    const room = fig.clientWidth - GUT;
+    for (const e of fig.querySelectorAll('.page, .shotwrap')) e.style.zoom = Math.min(0.8, room / (e.matches('.shotwrap') ? 1394 : 1360));
+    for (const e of fig.querySelectorAll('.xlwin')) { e.style.zoom = 1; e.style.zoom = Math.min(1, room / e.offsetWidth); }
+  };
+  const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+  const inside = (a, b) => a.l >= b.l && a.r <= b.r && a.t >= b.t && a.b <= b.b;
+  const grow = (r, d) => ({ l: r.l - d, t: r.t - d, r: r.r + d, b: r.b + d });
+  const cross = (x1, y1, x2, y2, r) => {
+    let t0 = 0, t1 = 1; const dx = x2 - x1, dy = y2 - y1;
+    for (const [p, q] of [[-dx, x1 - r.l], [dx, r.r - x1], [-dy, y1 - r.t], [dy, r.b - y1]]) {
+      if (p === 0) { if (q < 0) return false; continue; }
+      const t = q / p; if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+    }
+    return true;
+  };
+  const UI = ['img, svg, button, input, select, textarea', document.body.dataset.ui].filter(Boolean).join(', ');
+  const uiRects = (fig, rel) => {
+    const out = [];
+    for (const r of [...fig.children].filter(e => !e.matches('.co, .lead-svg, .calls'))) {
+      const w = document.createTreeWalker(r, NodeFilter.SHOW_TEXT);
+      for (let n; (n = w.nextNode());) {
+        if (!n.textContent.trim()) continue;
+        const g = document.createRange(); g.selectNodeContents(n);
+        for (const q of g.getClientRects()) if (q.width && q.height) out.push(Object.assign(rel(q), { txt: 1 }));
+      }
+      for (const e of r.querySelectorAll(UI)) out.push(rel(e.getBoundingClientRect()));
+    }
+    return out;
+  };
+  const refs = new Map();
+  const name = fig => [...fig.querySelector('h2')?.childNodes ?? []].filter(c => !c.classList?.contains('tag')).map(c => c.textContent).join('').trim();
+  for (const d of document.querySelectorAll('.decision[data-for]')) {
+    const groups = new Map();
+    for (const n of d.dataset.for.match(/\d+/g) ?? []) {
+      refs.set(n, [...(refs.get(n) ?? []), d.id]);
+      const fig = document.querySelector(`.mk[data-n="${n}"]`)?.closest('.fig'); if (!fig) continue;
+      groups.set(fig, [...(groups.get(fig) ?? []), n]);
+    }
+    const line = document.createElement('p'); line.className = 'for';
+    line.textContent = '대상: ' + [...groups].map(([fig, ns]) => `${name(fig)} · ${ns.join(', ')}번`).join(' / ');
+    d.querySelector(':scope > .for')?.remove(); d.querySelector(':scope > h3')?.after(line);
+  }
+  const layout = () => { for (const fig of document.querySelectorAll('.fig')) {
+    if (!fig.getClientRects().length) continue;
+    const src = fig.querySelector(':scope > .calls'); if (!src) { fit(fig); continue; }
+    fig.style.paddingBottom = ''; const base = parseFloat(getComputedStyle(fig).paddingBottom);
+    if (!place(fig, src)) continue;
+    const pad = x => { fig.style.paddingBottom = base + x + 'px'; return place(fig, src); };
+    let lo = 0, hi = 1200;
+    if (pad(hi)) continue;
+    while (hi - lo > 20) { const mid = Math.round((lo + hi) / 40) * 20; if (pad(mid)) lo = mid; else hi = mid; }
+    pad(hi);
+  } };
+  const place = (fig, src) => {
+    fig.querySelectorAll(':scope > .co, :scope > .lead-svg, :scope > .ov-box, :scope > .ov-badge').forEach(e => e.remove());
+    fit(fig);
+    const texts = new Map([...src.querySelectorAll(':scope > div')].map(d => [d.querySelector(':scope > b')?.textContent.trim(), d.querySelector(':scope > span')?.innerHTML]));
+    src.style.display = 'none';
+    const F = fig.getBoundingClientRect();
+    const rel = r => ({ l: r.left - F.left, t: r.top - F.top, r: r.right - F.left, b: r.bottom - F.top });
+    const marks = [...fig.querySelectorAll('.mk[data-n]')];
+    const clip = (g, e) => { if (!e || !fig.contains(e)) return g; const z = grow(rel(e.getBoundingClientRect()), -1); return { l: Math.max(g.l, z.l), t: Math.max(g.t, z.t), r: Math.min(g.r, z.r), b: Math.min(g.b, z.b) }; };
+    const outl = marks.map(m => { const r = rel(m.getBoundingClientRect()), frame = m.closest('.page, .xlwin, .shotwrap');
+      if (m.matches('td, th')) return clip(grow(r, -1), frame);
+      if (m.matches('.shotwrap .mk')) return r;
+      return clip(clip(grow(r, 5), m.parentElement.closest('td, th')), frame); });
+    const ui = uiRects(fig, rel);
+    const badges = [];
+    marks.forEach((m, i) => {
+      const o = outl[i], bx = document.createElement('div'); bx.className = 'ov-box' + (m.classList.contains('new') ? ' new' : ''); bx.dataset.n = m.dataset.n;
+      Object.assign(bx.style, { left: o.l + 'px', top: o.t + 'px', width: o.r - o.l + 'px', height: o.b - o.t + 'px' }); fig.appendChild(bx);
+      const spots = [[o.l, o.t], [o.r, o.t], [o.l, o.b], [o.r, o.b], [(o.l + o.r) / 2, o.t - 14], [(o.l + o.r) / 2, o.b + 14], [o.l - 14, o.t + 14], [o.r + 14, o.t + 14]].map(([x, y]) => ({ l: x - 14, t: y - 14, r: x + 14, b: y + 14 }));
+      const ocx = (o.l + o.r) / 2, ocy = (o.t + o.b) / 2, cont = u => !u.txt && u.l <= ocx && ocx <= u.r && u.t <= ocy && ocy <= u.b;
+      const area = (a, b) => Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+      const cost = r => (r.l < 0 || r.t < 0 || r.r > F.width ? 1e9 : 0) + ui.reduce((s, u) => s + (cont(u) ? 0 : area(r, u)), 0) + badges.reduce((s, u) => s + 10 * area(grow(r, 2), u), 0)
+        + outl.reduce((s, u, j) => s + (j !== i && hit(r, u) && !(u.l <= r.l && r.r <= u.r && u.t <= r.t && r.b <= u.b) ? 50 : 0), 0);
+      const sp = spots.reduce((a, r) => (cost(r) < cost(a) ? r : a)); badges.push(sp);
+      const bd = document.createElement('div'); bd.className = 'ov-badge'; bd.dataset.n = bd.textContent = m.dataset.n;
+      Object.assign(bd.style, { left: sp.l + 'px', top: sp.t + 'px' }); fig.appendChild(bd);
+    });
+    const boxes = outl;
+    const frames = [...fig.querySelectorAll('.page, .xlwin, .shotwrap')];
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'lead-svg');
+    svg.setAttribute('width', F.width); svg.setAttribute('height', F.height); fig.appendChild(svg);
+    const attempt = order => {
+    fig.querySelectorAll(':scope > .co').forEach(e => e.remove()); svg.replaceChildren();
+    const placed = [], segs = [], seen = new Set(), pad = 4; let fails = 0, longest = 0;
+    order.forEach(i => { const m = marks[i];
+      const n = +m.dataset.n; if (seen.has(n) || !texts.get(String(n))) return; seen.add(n);
+      const co = document.createElement('div'); co.className = 'co'; co.dataset.n = n; co.innerHTML = `<b>${n}</b>${(refs.get(String(n)) ?? []).map(k => `<i class="dref">${k}</i>`).join('')}<span>${texts.get(String(n))}</span>`;
+      Object.assign(co.style, { left: '0px', top: '0px', boxSizing: 'border-box' }); fig.appendChild(co);
+      const own = m.closest('.page, .xlwin, .shotwrap');
+      const other = frames.filter(e => e !== own).map(e => rel(e.getBoundingClientRect()));
+      const k = outl[i];
+      const cx = (k.l + k.r) / 2, cy = (k.t + k.b) / 2, holds = o => o.l <= cx && cx <= o.r && o.t <= cy && cy <= o.b;
+      const lineObs = ui.filter(o => !inside(o, k) && !holds(o)).concat(outl.filter((o, j) => j !== i && !holds(o)), badges.filter(b => !hit(b, grow(k, 1))), other);
+      const bubObs = ui.concat(boxes, badges);
+      const segFree = (x1, y1, x2, y2) => { const d = Math.hypot(x2 - x1, y2 - y1); if (d < 3) return true;
+        const ux = (x2 - x1) / d, uy = (y2 - y1) / d; return ![...lineObs, ...placed].some(o => cross(x1 + ux * 2, y1 + uy * 2, x2 - ux * 2, y2 - uy * 2, o)); };
+      const plen = p => p.reduce((s, q, z) => z ? s + Math.hypot(q[0] - p[z - 1][0], q[1] - p[z - 1][1]) : 0, 0);
+      const route = c => {
+        const x1 = Math.min(Math.max((c.l + c.r) / 2, k.l), k.r), y1 = Math.min(Math.max((c.t + c.b) / 2, k.t), k.b);
+        const st = [[x1, y1], [Math.min(Math.max(x1, c.l), c.r), Math.min(Math.max(y1, c.t), c.b)]];
+        if (segFree(...st[0], ...st[1])) return st;
+        let line = null;
+        for (const [a, b] of [[k.l, k.t, k.r, k.t], [k.l, k.b, k.r, k.b], [k.l, k.t, k.l, k.b], [k.r, k.t, k.r, k.b]].flatMap(([xa, ya, xb, yb]) => { const L = Math.hypot(xb - xa, yb - ya), m = Math.max(1, Math.round(L / 8)); return Array.from({ length: m + 1 }, (_, z) => [xa + (xb - xa) * z / m, ya + (yb - ya) * z / m]); })) {
+          const p = [[a, b], [Math.min(Math.max(a, c.l), c.r), Math.min(Math.max(b, c.t), c.b)]];
+          if ((!line || plen(p) < plen(line)) && segFree(...p[0], ...p[1])) line = p;
+        }
+        if (line) return line;
+        const yc = c.t + 16, side = c.l >= k.r ? c.l : c.r <= k.l ? c.r : null; if (side === null) return null;
+        if (yc >= k.t && yc <= k.b) return null;
+        const ye = yc < k.t ? k.t : k.b; let best = null;
+        for (let xv = k.l + 6; xv <= k.r - 6; xv += 10) {
+          const p = [[xv, ye], [xv, yc], [side, yc]];
+          if (segFree(...p[0], ...p[1]) && segFree(...p[1], ...p[2]) && (!best || plen(p) < plen(best))) best = p;
+        }
+        return best;
+      };
+      const free = c => c.l >= 0 && c.r <= F.width && c.t >= 40 && c.b <= F.height - 4 && ![...bubObs, ...placed].some(o => hit(grow(c, pad), o)) && !segs.some(q => cross(...q, grow(c, 2)));
+      const w0 = co.offsetWidth, sizes = [...new Set([w0, Math.round(w0 * 0.75), Math.round(w0 * 0.55)])].map(w => { co.style.width = w + 'px'; return [w, co.offsetHeight]; });
+      const cands = [];
+      for (const [w, h] of sizes) {
+        for (let d = 6; d <= 120; d += 6)
+          for (const [x, y] of [[k.r + d, k.t], [k.l, k.b + d], [k.l - w - d, k.t], [k.l, k.t - h - d], [k.r + d, k.b - h], [k.r - w, k.b + d], [k.r - w, k.t - h - d], [k.l - w - d, k.b - h]])
+            cands.push({ l: x, t: y, r: x + w, b: y + h });
+        for (let y = 40; y + h < F.height; y += 16) for (let x = 0; x + w < F.width; x += 16) cands.push({ l: x, t: y, r: x + w, b: y + h });
+      }
+      const gap = c => Math.hypot(Math.max(0, c.l - k.r, k.l - c.r), Math.max(0, c.t - k.b, k.t - c.b));
+      const pick = list => { let bp = null, bc = null; for (const c of list.map(c => [gap(c), c]).sort((a, b) => a[0] - b[0]).map(([, c]) => c)) { if (bp && gap(c) >= plen(bp)) break; if (!free(c)) continue; const p = route(c); if (p && (!bp || plen(p) < plen(bp))) { bp = p; bc = c; } } return bc && { c: bc, p: bp }; };
+      const best = pick(cands);
+      if (!best) { fails++; co.remove(); console.error(`callouts: no place for bubble ${n}`); return; }
+      const { c: bc, p: path } = best; longest = Math.max(longest, plen(path));
+      Object.assign(co.style, { left: bc.l + 'px', top: bc.t + 'px', width: bc.r - bc.l + 'px' }); placed.push(bc);
+      const ln = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      ln.setAttribute('points', path.map(q => q.join(',')).join(' ')); ln.dataset.n = n; svg.appendChild(ln);
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', path[0][0]); dot.setAttribute('cy', path[0][1]); dot.setAttribute('r', 2.5); svg.appendChild(dot);
+      for (let z = 1; z < path.length; z++) segs.push([...path[z - 1], ...path[z]]);
+    });
+    return { fails, longest }; };
+    const idx = marks.map((_, i) => i);
+    const orders = [idx, [...idx].sort((a, b) => outl[b].r - outl[a].r), [...idx].sort((a, b) => outl[a].t - outl[b].t), [...idx].reverse()];
+    const cmp = (a, b) => a.fails - b.fails || a.longest - b.longest;
+    let bestO = null, bestR = null;
+    for (const o of orders) { const r = attempt(o); if (!bestR || cmp(r, bestR) < 0) { bestR = r; bestO = o; } }
+    if (bestO !== orders[orders.length - 1]) attempt(bestO);
+    return bestR.fails;
+  };
+  document.fonts?.addEventListener('loadingdone', () => dispatchEvent(new Event('resize')));
+  let tm; addEventListener('resize', () => { clearTimeout(tm); tm = setTimeout(layout, 120); });
+  if (document.readyState === 'complete') layout(); else addEventListener('load', layout);
+})();
+
+</script>
+</body>
+</html>

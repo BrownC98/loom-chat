@@ -43,7 +43,7 @@ fn mark(color: Rgba) -> impl IntoElement {
     .h(px(MARK))
 }
 
-pub fn bar(window: &Window, colors: &Colors, lang: Lang, switch: impl IntoElement) -> Div {
+pub fn bar(window: &Window, colors: &Colors, lang: Lang) -> Div {
     div()
         .h(px(HEIGHT))
         .flex_none()
@@ -60,9 +60,11 @@ pub fn bar(window: &Window, colors: &Colors, lang: Lang, switch: impl IntoElemen
                 .items_center()
                 .ml(px(MARK_BEFORE))
                 .mr(px(MARK_AFTER))
-                .child(mark(colors.ink_2)),
+                .gap(px(6.0))
+                .child(mark(colors.ink_2))
+                .text_color(colors.ink)
+                .child("loom"),
         ))
-        .child(div().flex().items_center().child(switch))
         .child(drag(div().flex_1().h_full()))
         .children(platform::captions(window, colors, lang))
 }

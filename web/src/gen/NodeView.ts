@@ -58,4 +58,4 @@ since: number,
 /**
  * 내 브랜치의 지금 관문에서 받은 판정 막음 수. 3 이상이면 칩 옆에 보인다. 옛 데몬이면 0이다.
  */
-rework: number, };
+rework: number, role?: string, };

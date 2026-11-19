@@ -12,8 +12,8 @@ use api::ids::RepoId;
 use api::repos::{FolderList, Locations, PlaceView};
 use api::settings::places::{ReachView, SystemView};
 
-use super::calls;
-use super::pop;
+pub(crate) mod calls;
+pub(crate) mod pop;
 use crate::fonts;
 use crate::scale::px;
 use crate::store::Store;

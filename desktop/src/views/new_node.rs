@@ -1,46 +1,28 @@
-use std::cell::Cell;
-use std::rc::Rc;
-
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, AnyView, AppContext, Bounds, Context, Div, Entity, EventEmitter, FontWeight,
-    InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Point,
-    Render, StatefulInteractiveElement, Styled, Subscription, Window, div, point,
+    AnyElement, Context, Entity, EventEmitter, FontWeight, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
+    div,
 };
 
 use api::graph::{NewNode, Place};
-use api::ids::{AgentId, RepoId};
+use api::ids::AgentId;
 use api::profile::AgentView;
 use api::repos::PlaceView;
 use api::start::{ModelChoice, Start};
 
-use super::view::CanvasView;
 use crate::fonts;
-use crate::scale::{self, px};
+use crate::scale::px;
 use crate::store::Store;
 use crate::strings::{Lang, Str};
 use crate::theme::Theme;
 use crate::views::field::{self, Field, FieldEvent, Form};
 use crate::views::icons::{Lucide, icon};
 use crate::views::scrollbar::Bar;
-use crate::views::status::pop::{self as status_pop, StatusView};
-use crate::views::worktree::{self, Closed, DeleteWorktreeView, Doomed, NewWorktreeView};
+use crate::views::worktree::Closed;
 
 const WIDTH: f32 = 340.0;
-const HEIGHT: f32 = 385.0;
-const EDGE: f32 = 8.0;
-const GAP: f32 = 6.0;
 const LIST: f32 = 264.0;
-
-pub struct Popped {
-    view: AnyView,
-    key: String,
-    at: Point<f32>,
-    end: bool,
-    size: (f32, f32),
-    measured: Rc<Cell<f32>>,
-    _closed: Vec<Subscription>,
-}
 
 #[derive(Clone)]
 struct Choice {
@@ -294,8 +276,7 @@ impl NewNodeView {
             let created = task.await;
             let _ = this.update(cx, |this, cx| match created {
                 Ok(id) => {
-                    this.store
-                        .update(cx, |store, cx| store.select_when_loaded(id.0, cx));
+                    this.store.update(cx, |store, cx| store.open_agent(id, cx));
                     cx.emit(Closed);
                 }
                 Err(error) => {
@@ -557,233 +538,4 @@ impl Render for NewNodeView {
                     .child(error)
             }))
     }
-}
-
-fn local(canvas: &CanvasView, window: Point<Pixels>) -> Point<f32> {
-    canvas.camera.to_graph(window - canvas.area.get().origin)
-}
-
-pub fn dismiss(canvas: &mut CanvasView, cx: &mut Context<CanvasView>) {
-    if canvas.pop.take().is_some() {
-        cx.notify();
-    }
-}
-
-pub enum Anchor {
-    Below(Bounds<Pixels>),
-    At(Point<Pixels>),
-}
-
-fn show(
-    canvas: &mut CanvasView,
-    key: String,
-    view: AnyView,
-    anchor: Anchor,
-    size: (f32, f32),
-    closed: Vec<Subscription>,
-    cx: &mut Context<CanvasView>,
-) {
-    let (point, end) = match anchor {
-        Anchor::Below(button) => (point(button.right(), button.bottom() + px(GAP)), true),
-        Anchor::At(point) => (point, false),
-    };
-    canvas.pop = Some(Popped {
-        view,
-        key,
-        at: local(canvas, point),
-        end,
-        size,
-        measured: Rc::new(Cell::new(0.0)),
-        _closed: closed,
-    });
-    cx.notify();
-}
-
-fn toggled(canvas: &mut CanvasView, key: &str, cx: &mut Context<CanvasView>) -> bool {
-    if canvas.pop.as_ref().is_some_and(|p| p.key == key) {
-        dismiss(canvas, cx);
-        return true;
-    }
-    false
-}
-
-pub fn new_node(
-    canvas: &mut CanvasView,
-    place: Place,
-    branch: String,
-    anchor: Anchor,
-    window: &mut Window,
-    cx: &mut Context<CanvasView>,
-) {
-    let key = format!("new:{}", place.worktree);
-    if matches!(anchor, Anchor::Below(_)) && toggled(canvas, &key, cx) {
-        return;
-    }
-    let store = canvas.store.clone();
-    let view = cx.new(|cx| NewNodeView::new(store, place, branch, window, cx));
-    let closed = cx.subscribe(&view, |this, _, _: &Closed, cx| dismiss(this, cx));
-    show(
-        canvas,
-        key,
-        view.into(),
-        anchor,
-        (WIDTH, HEIGHT),
-        vec![closed],
-        cx,
-    );
-}
-
-pub fn status(
-    canvas: &mut CanvasView,
-    node: u32,
-    anchor: Anchor,
-    window: &mut Window,
-    cx: &mut Context<CanvasView>,
-) {
-    let key = format!("status:{node}");
-    if toggled(canvas, &key, cx) {
-        return;
-    }
-    let store = canvas.store.clone();
-    let view = cx.new(|cx| StatusView::new(store, node, window, cx));
-    let closed = cx.subscribe(&view, |this, _, _: &Closed, cx| dismiss(this, cx));
-    show(
-        canvas,
-        key,
-        view.into(),
-        anchor,
-        (status_pop::WIDTH, status_pop::HEIGHT),
-        vec![closed],
-        cx,
-    );
-}
-
-pub fn delete_worktree(
-    canvas: &mut CanvasView,
-    repo: RepoId,
-    path: String,
-    label: String,
-    button: Bounds<Pixels>,
-    window: &mut Window,
-    cx: &mut Context<CanvasView>,
-) {
-    let key = format!("del:{path}");
-    if toggled(canvas, &key, cx) {
-        return;
-    }
-    let store = canvas.store.clone();
-    let Some(snapshot) = store.read(cx).snapshot() else {
-        return;
-    };
-    let doomed = Doomed::of(snapshot, repo, path, label);
-    let view = cx.new(|cx| DeleteWorktreeView::new(store, doomed, window, cx));
-    let closed = cx.subscribe(&view, |this, _, _: &Closed, cx| dismiss(this, cx));
-    show(
-        canvas,
-        key,
-        view.into(),
-        Anchor::Below(button),
-        (worktree::DELETE_WIDTH, 300.0),
-        vec![closed],
-        cx,
-    );
-}
-
-pub fn new_worktree(
-    canvas: &mut CanvasView,
-    repo: RepoId,
-    button: Bounds<Pixels>,
-    window: &mut Window,
-    cx: &mut Context<CanvasView>,
-) {
-    let key = format!("wt:{}", repo.0);
-    if toggled(canvas, &key, cx) {
-        return;
-    }
-    let store = canvas.store.clone();
-    let Some(info) = store
-        .read(cx)
-        .snapshot()
-        .and_then(|s| s.repos.iter().find(|r| r.id == repo))
-        .cloned()
-    else {
-        return;
-    };
-    let view = cx.new(|cx| NewWorktreeView::new(store, info, window, cx));
-    let closed = cx.subscribe(&view, |this, _, _: &Closed, cx| dismiss(this, cx));
-    show(
-        canvas,
-        key,
-        view.into(),
-        Anchor::Below(button),
-        (worktree::NEW_WIDTH, 330.0),
-        vec![closed],
-        cx,
-    );
-}
-
-pub fn context(frame: Div, place: Option<Place>, label: String, cx: &Context<CanvasView>) -> Div {
-    let Some(place) = place else { return frame };
-    frame.on_mouse_down(
-        MouseButton::Right,
-        cx.listener(move |this, e: &MouseDownEvent, window, cx| {
-            let at = local(this, e.position);
-            let over_card = this.scene.cards.iter().any(|c| {
-                let (x, y) = (c.rect.at.x as f32, c.rect.at.y as f32);
-                at.x >= x
-                    && at.y >= y
-                    && at.x <= x + c.rect.size.width as f32
-                    && at.y <= y + c.rect.size.height as f32
-            });
-            if !over_card {
-                new_node(
-                    this,
-                    place.clone(),
-                    label.clone(),
-                    Anchor::At(e.position),
-                    window,
-                    cx,
-                );
-                cx.stop_propagation();
-            }
-        }),
-    )
-}
-
-pub fn element(canvas: &CanvasView) -> Option<Div> {
-    let pop = canvas.pop.as_ref()?;
-    let area = canvas.area.get().size;
-    let at = canvas.camera.to_screen(pop.at);
-    let width = pop.size.0;
-    let height = match pop.measured.get() {
-        0.0 => pop.size.1,
-        measured => measured,
-    };
-    let measured = pop.measured.clone();
-    let left = if pop.end { at.x - px(width) } else { at.x };
-    let left = left.min(area.width - px(width + EDGE)).max(px(EDGE));
-    let top = at.y.min(area.height - px(height + EDGE)).max(px(EDGE));
-    Some(
-        div()
-            .absolute()
-            .left(left)
-            .top(top)
-            .child(pop.view.clone())
-            .child(
-                gpui::canvas(
-                    move |bounds, window, _| {
-                        let now = f32::from(bounds.size.height) / scale::get();
-                        if (measured.get() - now).abs() > 0.5 {
-                            measured.set(now);
-                            window.refresh();
-                        }
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
-            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Right, |_, _, cx| cx.stop_propagation()),
-    )
 }

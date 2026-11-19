@@ -10,15 +10,15 @@ use gpui::{
     StatefulInteractiveElement, Styled, Subscription, Window, div, point,
 };
 
-use crate::canvas::popover::NewNodeView;
 use crate::scale::px;
 use crate::store::Store;
 use crate::views::field::Field;
 use crate::views::icons::{Lucide, icon};
-use crate::views::sidebar::{add_repo::AddRepo, calls, pop};
+use crate::views::new_node::NewNodeView;
 use crate::views::tooltip::tip;
 use crate::views::ui::colors;
 use crate::views::widgets::btn;
+use crate::views::workspace::{AddRepo, calls, pop};
 use crate::views::worktree::{Closed, DeleteWorktreeView, Doomed, NewWorktreeView};
 
 use super::list::Index;

@@ -85,9 +85,9 @@ fn with_status(
             let view = view_from_row(row, linked)?;
             let derived = Derived {
                 limited: row.get(20)?,
-                idle: optional_json(row, 21)?,
-                merged: optional_json(row, 22)?,
-                rework: row.get(23)?,
+                idle: optional_json(row, 22)?,
+                merged: optional_json(row, 23)?,
+                rework: row.get(24)?,
             };
             Ok((view, derived))
         })?

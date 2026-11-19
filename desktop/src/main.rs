@@ -1,8 +1,6 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-mod canvas;
 mod daemon;
-mod float;
 mod fonts;
 mod frame;
 mod link;
@@ -45,9 +43,7 @@ fn main() -> std::process::ExitCode {
             cx.open_window(platform::window_options(cx), |window, cx| {
                 let store = cx.new(|cx| store::Store::new(started, window, cx));
                 settings::notify::watch(&store, window, cx);
-                let inputs = cx.new(|_| views::inputs::Inputs::default());
-                let shelf = cx.new(|_| views::pictures::Shelf::default());
-                cx.new(|cx| views::shell::Shell::new(store, inputs, shelf, window, cx))
+                cx.new(|cx| views::shell::Shell::new(store, window, cx))
             })
             .expect("could not open the window");
             cx.activate(true);

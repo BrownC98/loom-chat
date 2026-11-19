@@ -423,13 +423,15 @@ impl Rooms {
             ("끝남".to_owned(), c.ink_3)
         };
         let role = live.map(|node| {
-            if node.agent.is_none() {
-                "셸"
-            } else if node.parent.is_some() {
-                "하위 에이전트"
-            } else {
-                "상위 에이전트"
-            }
+            node.role.as_deref().unwrap_or_else(|| {
+                if node.agent.is_none() {
+                    "셸"
+                } else if node.parent.is_some() {
+                    "하위 에이전트"
+                } else {
+                    "상위 에이전트"
+                }
+            })
         });
         let time = room
             .last_activity

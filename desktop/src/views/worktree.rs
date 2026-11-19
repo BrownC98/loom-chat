@@ -1,3 +1,4 @@
+use api::graph::{NodeState, ProcessState};
 use api::ids::RepoId;
 use api::repos::RepoView;
 use gpui::prelude::FluentBuilder;
@@ -13,7 +14,6 @@ use crate::scale::px;
 use crate::store::Store;
 use crate::strings::{Lang, Str};
 use crate::theme::{Colors, Theme};
-use crate::views::card;
 use crate::views::cardlink;
 use crate::views::field::{self, Field, FieldEvent, Form};
 use crate::views::icons::{Lucide, icon};
@@ -21,14 +21,14 @@ use crate::views::prose::prose;
 use crate::views::scrollbar::Bar;
 
 pub const NEW_WIDTH: f32 = 380.0;
-pub const DELETE_WIDTH: f32 = 420.0;
 const PAD: f32 = 14.0;
 const GAP: f32 = 12.0;
 const ROUND: f32 = 10.0;
 const BUTTON: f32 = 30.0;
 const SELECT_ROW: f32 = 28.0;
-const CHANGES_MAX: f32 = 160.0;
 const LIST_MAX: f32 = 200.0;
+const CHANGES_MAX: f32 = 160.0;
+const DELETE_WIDTH: f32 = 420.0;
 
 pub struct Closed;
 
@@ -279,7 +279,12 @@ impl Render for NewWorktreeView {
         let separator = if self.dir.contains('\\') { '\\' } else { '/' };
         let folder = [
             self.dir.trim_end_matches(['/', '\\']),
-            &crate::canvas::repos::folder_name(&self.repo.path),
+            self.repo
+                .path
+                .trim_end_matches(['/', '\\'])
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(&self.repo.path),
             &leaf,
         ]
         .join(&separator.to_string());
@@ -425,7 +430,8 @@ impl Doomed {
             .filter(|n| n.place.repo == repo && n.place.worktree == path)
             .map(|n| Member {
                 name: n.name.clone(),
-                running: card::active(n),
+                running: matches!(n.state, NodeState::Running)
+                    && !matches!(n.process, ProcessState::Stopped { .. }),
             })
             .collect();
         Doomed {

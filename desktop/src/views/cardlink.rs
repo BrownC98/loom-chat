@@ -1,4 +1,3 @@
-use api::graph::CardView;
 use api::graph::events::EventRecord;
 use api::repos::RepoView;
 use gpui::{App, AppContext, Context, Entity, Task};
@@ -21,24 +20,8 @@ struct NewWorktree<'a> {
     base: &'a str,
 }
 
-pub fn steer_queued(base: &str, node: u32) -> Result<(), Failure> {
-    link::post::<Value>(base, &format!("/api/nodes/{node}/steer-queued"), None).map(|_| ())
-}
-
-pub fn set_card_view(base: &str, node: u32, view: CardView) -> Result<(), Failure> {
-    link::put(base, &format!("/api/nodes/{node}/card-view"), &view)
-}
-
-pub fn clear_card_view(base: &str, node: u32) -> Result<(), Failure> {
-    link::delete(base, &format!("/api/nodes/{node}/card-view"))
-}
-
 pub fn relaunch(base: &str, node: u32) -> Result<(), Failure> {
     link::post::<Value>(base, &format!("/api/nodes/{node}/relaunch"), None).map(|_| ())
-}
-
-pub fn wake(base: &str, node: u32) -> Result<(), Failure> {
-    link::post::<Value>(base, &format!("/api/nodes/{node}/wake"), None).map(|_| ())
 }
 
 pub fn process_log(base: &str, node: u32) -> Result<Vec<EventRecord>, Failure> {

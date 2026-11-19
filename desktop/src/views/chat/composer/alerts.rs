@@ -15,7 +15,6 @@ use crate::store::Store;
 use crate::theme::mix;
 use crate::views::dock::answers::{self, Answers};
 use crate::views::icons::{Lucide, icon};
-use crate::views::pictures::Shelf;
 use crate::views::tooltip::tip;
 use crate::views::{ui, widgets::btn};
 
@@ -40,8 +39,9 @@ struct QuestionContext {
 
 pub(super) struct Alerts {
     answers: Entity<Answers>,
-    expanded: bool,
+    pub(super) expanded: bool,
     selected: Option<Position>,
+    focus: bool,
     context: Option<(WaitId, QuestionContext)>,
     reading: Option<Task<()>>,
     _answers: Subscription,
@@ -49,13 +49,13 @@ pub(super) struct Alerts {
 
 impl Alerts {
     pub fn new(graph: Entity<Store>, cx: &mut Context<Composer>) -> Self {
-        let shelf = cx.new(|_| Shelf::default());
-        let answers = cx.new(|cx| Answers::new(graph, shelf, cx));
+        let answers = cx.new(|cx| Answers::new(graph, cx));
         let subscription = cx.observe(&answers, |_, _, cx| cx.notify());
         Self {
             answers,
             expanded: false,
             selected: None,
+            focus: false,
             context: None,
             reading: None,
             _answers: subscription,
@@ -115,6 +115,7 @@ impl Composer {
         let position = question.position();
         self.alerts.expanded = !matches!(movement, Move::Fold) || !self.alerts.expanded;
         self.alerts.selected = Some(position);
+        self.alerts.focus = self.alerts.expanded;
         if !self.alerts.expanded {
             self.alerts.reading = None;
             self.alerts.context = None;
@@ -128,7 +129,7 @@ impl Composer {
         true
     }
 
-    pub(super) fn alert_key(
+    pub(in crate::views::chat) fn alert_key(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
@@ -218,7 +219,11 @@ impl Composer {
         }));
     }
 
-    pub(super) fn alert_view(&mut self, cx: &mut Context<Self>) -> Option<Div> {
+    pub(super) fn alert_view(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
         let questions = self.questions(cx);
         if questions.is_empty() {
             self.alerts.expanded = false;
@@ -259,7 +264,7 @@ impl Composer {
             "질문 펼치기"
         };
         let name = repo.map_or_else(|| name.clone(), |repo| format!("{repo} › {name}"));
-        let head = self.alert_header(index, total, &wait, name, label, cx);
+        let head = self.alert_header(index, total, &wait, name.clone(), label, cx);
         let strip = div()
             .flex()
             .flex_col()
@@ -273,6 +278,13 @@ impl Composer {
         if !self.alerts.expanded {
             return Some(strip);
         }
+        let focus = std::mem::take(&mut self.alerts.focus);
+        self.alerts.answers.update(cx, |answers, cx| {
+            answers.prepare(node, &wait, cx);
+            if focus {
+                answers.focus(wait.wait.id, window, cx);
+            }
+        });
         let context = self
             .alerts
             .context
@@ -313,20 +325,27 @@ impl Composer {
                     )
             }));
         Some(
-            strip.child(details).child(
-                div()
-                    .id("chat-alert-content")
-                    .max_h(px(205.0))
-                    .overflow_y_scroll()
-                    .child(answers::entry(
-                        &self.alerts.answers,
-                        node,
-                        &wait,
-                        scale::get(),
-                        None,
-                        cx,
-                    )),
-            ),
+            strip
+                .child(details)
+                .child(
+                    div()
+                        .id("chat-alert-content")
+                        .max_h(px(205.0))
+                        .overflow_y_scroll()
+                        .child(answers::content(
+                            &self.alerts.answers,
+                            &wait,
+                            scale::get(),
+                            cx,
+                        )),
+                )
+                .children(answers::composer(
+                    &self.alerts.answers,
+                    &wait,
+                    &name,
+                    scale::get(),
+                    cx,
+                )),
         )
     }
 

@@ -8,7 +8,6 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point,
 };
 
-use crate::float::place::measure;
 use crate::scale::px;
 use crate::views::dock::ui::{TEXT, colors};
 use crate::views::icons::{Lucide, icon};
@@ -215,4 +214,18 @@ impl Render for Select {
         .with_priority(2);
         host.child(backdrop).child(list)
     }
+}
+
+fn measure(cell: Rc<Cell<Size<Pixels>>>, owner: gpui::EntityId) -> impl IntoElement {
+    gpui::canvas(
+        move |bounds, _, cx| {
+            if cell.get() != bounds.size {
+                cell.set(bounds.size);
+                cx.notify(owner);
+            }
+        },
+        |_, _, _, _| (),
+    )
+    .absolute()
+    .size_full()
 }

@@ -11,7 +11,6 @@ use gpui::{
 };
 
 use super::body::{self, Follow, Target};
-use super::find::Find;
 use super::ui;
 use crate::fonts;
 use crate::scale::fixed as px;
@@ -27,7 +26,6 @@ struct Draw<'a> {
     next: Cell<usize>,
     doc: Option<&'a WaitDoc>,
     color: Rgba,
-    find: Option<&'a Find>,
     size: f32,
     cx: &'a App,
     c: Colors,
@@ -53,7 +51,6 @@ pub fn render(
     plain: &str,
     doc: Option<&WaitDoc>,
     color: Rgba,
-    find: Option<&Find>,
     size: f32,
     cx: &App,
     follow: impl Fn(Target, &mut App) + 'static,
@@ -63,7 +60,6 @@ pub fn render(
         next: Cell::new(0),
         doc,
         color,
-        find,
         size,
         cx,
         c: ui::colors(cx),
@@ -96,7 +92,6 @@ impl Draw<'_> {
             plain,
             self.doc,
             self.color,
-            self.find,
             self.cx,
             &self.follow,
         )
@@ -142,10 +137,7 @@ impl Draw<'_> {
     }
 
     fn code(&self, text: &str) -> AnyElement {
-        let shown = match self.find {
-            Some(find) => find.apply(find.scan(text, 0, Vec::new()), prose(text.to_owned())),
-            None => prose(text.to_owned()),
-        };
+        let shown = prose(text.to_owned());
         div()
             .id(self.id("code"))
             .w_full()

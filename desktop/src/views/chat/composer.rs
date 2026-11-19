@@ -235,6 +235,13 @@ impl Composer {
         }
     }
 
+    pub(super) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sync_room(window, cx);
+        if self.writable(cx) {
+            self.focus_input(window, cx);
+        }
+    }
+
     fn draft(&self) -> Option<&Draft> {
         self.drafts.get(self.active.as_ref()?)
     }
@@ -278,7 +285,6 @@ impl Composer {
         self.focus_input(window, cx);
     }
 
-    #[expect(dead_code)]
     pub(super) fn quote(&mut self, item: &ChatItem, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_room(window, cx);
         if !self.writable(cx) {
@@ -544,12 +550,11 @@ impl Composer {
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.sync_room(window, cx);
-        let alert = self.alert_view(cx);
+        let alert = self.alert_view(window, cx);
         let bounds = self.bounds.clone();
         let colors = ui::colors(cx);
         let panel = div()
             .on_key_down(tab)
-            .capture_key_down(cx.listener(Self::alert_key))
             .relative()
             .flex_none()
             .flex()
@@ -570,6 +575,9 @@ impl Render for Composer {
                 .size_full(),
             )
             .children(alert);
+        if self.alerts.expanded {
+            return panel;
+        }
         let data = self.data.read(cx);
         let Some((room, draft)) = data.room().zip(self.draft()) else {
             return div();

@@ -1,11 +1,9 @@
 use api::graph::docs::{DocGroup, DocRow};
 use gpui::{
-    App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Role,
+    App, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Role,
     StatefulInteractiveElement, Styled, div,
 };
 
-use super::Dock;
-use super::body::Target;
 use super::ui::{self, SMALL, TEXT};
 use crate::fonts;
 use crate::scale::px;
@@ -15,8 +13,6 @@ use crate::views::icons::{Lucide, icon};
 use crate::views::tooltip::tip;
 use crate::views::widgets::btn;
 
-const GROUPS: [DocGroup; 2] = [DocGroup::Mockup, DocGroup::Report];
-
 fn kind_label(kind: DocGroup) -> Str {
     match kind {
         DocGroup::Mockup => Str::DocsKindMockup,
@@ -24,189 +20,96 @@ fn kind_label(kind: DocGroup) -> Str {
     }
 }
 
-impl Dock {
-    pub(super) fn load_docs(&mut self, cx: &mut Context<Self>) {
-        self.docs.order += 1;
-        let order = self.docs.order;
-        let task = self.store.update(cx, |store, cx| store.list_docs(cx));
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            let _ = this.update(cx, |dock, cx| {
-                if order <= dock.docs.loaded {
-                    return;
+pub(crate) fn document_rows<'a>(
+    shown: impl IntoIterator<Item = &'a DocRow>,
+    cx: &App,
+    open: impl Fn(String, &mut App) + Clone + 'static,
+) -> Div {
+    let c = ui::colors(cx);
+    let lang = *cx.global::<Lang>();
+    div()
+        .flex()
+        .flex_col()
+        .px(px(8.0))
+        .py(px(4.0))
+        .children(shown.into_iter().enumerate().map(|(index, doc)| {
+            let openable = doc.source || doc.snapshot;
+            let mut meta = vec![ui::say(cx, kind_label(doc.kind)).to_owned()];
+            if openable {
+                meta.push(doc.folder.clone());
+                if !doc.source {
+                    meta.push(ui::say(cx, Str::DocsLastCopy).to_owned());
                 }
-                dock.docs.loaded = order;
-                match result {
-                    Ok(rows) => {
-                        dock.docs.rows = Some(rows);
-                        dock.docs.error = None;
-                    }
-                    Err(error) => dock.docs.error = Some(error),
+                if let Some(at) = doc.attached_at {
+                    meta.push(ui::day_and_time(at, lang));
                 }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    fn shown_docs<'a>(&'a self, rows: &'a [DocRow], cx: &Context<Self>) -> Vec<&'a DocRow> {
-        let needle = self.docs.query.read(cx).text().trim().to_lowercase();
-        rows.iter()
-            .filter(|d| {
-                !self.docs.hidden.contains(&d.kind)
-                    && (needle.is_empty()
-                        || d.id.to_lowercase().contains(&needle)
-                        || d.title.to_lowercase().contains(&needle))
-            })
-            .collect()
-    }
-
-    pub(super) fn documents(&self, cx: &mut Context<Self>) -> Div {
-        let chips = GROUPS.iter().map(|&kind| {
-            let on = !self.docs.hidden.contains(&kind);
-            ui::chip(("doc-kind", kind as usize), on, cx)
-                .child(ui::say(cx, kind_label(kind)))
-                .on_click(cx.listener(move |dock, _, _, cx| {
-                    match dock.docs.hidden.iter().position(|&k| k == kind) {
-                        Some(at) => {
-                            dock.docs.hidden.remove(at);
-                        }
-                        None => dock.docs.hidden.push(kind),
-                    }
-                    cx.notify();
-                }))
-        });
-        let mut panel = div()
-            .size_full()
-            .flex()
-            .flex_col()
-            .child(ui::hint(ui::say(cx, Str::DocsOrder), cx))
-            .child(
-                ui::filters(cx)
-                    .children(chips)
-                    .child(ui::search(&self.docs.query, cx)),
-            );
-        if let Some(error) = &self.docs.error {
-            panel = panel.child(ui::note(error.clone(), true, cx));
-        }
-        let Some(rows) = &self.docs.rows else {
-            if self.docs.error.is_none() {
-                panel = panel.child(ui::note(
-                    ui::say(cx, Str::DocsReading).to_owned(),
-                    false,
-                    cx,
-                ));
+            } else {
+                meta.push(ui::say(cx, Str::DocsGone).to_owned());
             }
-            return panel;
-        };
-        let shown = self.shown_docs(rows, cx);
-        if rows.is_empty() {
-            return panel.child(ui::note(ui::say(cx, Str::DocsEmpty).to_owned(), false, cx));
-        }
-        if shown.is_empty() {
-            return panel.child(ui::note(
-                ui::say(cx, Str::DocsNoMatch).to_owned(),
-                false,
-                cx,
-            ));
-        }
-        let dock = cx.entity().downgrade();
-        panel.child(Self::document_rows(shown, cx, move |id, cx| {
-            let _ = dock.update(cx, |dock, cx| dock.follow(Target::Doc(id), cx));
-        }))
-    }
-
-    pub(crate) fn document_rows<'a>(
-        shown: impl IntoIterator<Item = &'a DocRow>,
-        cx: &App,
-        open: impl Fn(String, &mut App) + Clone + 'static,
-    ) -> Div {
-        let c = ui::colors(cx);
-        let lang = *cx.global::<Lang>();
-        div()
-            .flex()
-            .flex_col()
-            .px(px(8.0))
-            .py(px(4.0))
-            .children(shown.into_iter().enumerate().map(|(index, doc)| {
-                let openable = doc.source || doc.snapshot;
-                let mut meta = vec![ui::say(cx, kind_label(doc.kind)).to_owned()];
-                if openable {
-                    meta.push(doc.folder.clone());
-                    if !doc.source {
-                        meta.push(ui::say(cx, Str::DocsLastCopy).to_owned());
-                    }
-                    if let Some(at) = doc.attached_at {
-                        meta.push(ui::day_and_time(at, lang));
-                    }
-                } else {
-                    meta.push(ui::say(cx, Str::DocsGone).to_owned());
-                }
-                let meta = meta.join(" \u{00b7} ");
-                let id = doc.id.clone();
-                let ink = if openable { c.ink } else { c.ink_3 };
-                let title = if openable {
-                    let open = open.clone();
-                    btn::tabbable(div().id(("doc", index)), cx)
-                        .role(Role::Link)
-                        .aria_label(doc.title.clone())
-                        .flex()
-                        .items_center()
-                        .gap(px(3.0))
-                        .min_w_0()
-                        .cursor_pointer()
-                        .text_color(c.ink)
-                        .underline()
-                        .child(div().min_w_0().truncate().child(doc.title.clone()))
-                        .child(icon(Lucide::ExternalLink, px(12.0), c.ink))
-                        .on_click(move |_, _, cx| open(id.clone(), cx))
-                        .into_any_element()
-                } else {
-                    div()
-                        .min_w_0()
-                        .truncate()
-                        .child(doc.title.clone())
-                        .into_any_element()
-                };
-                let hover = c.surface_hover;
-                div()
-                    .id(("doc-row", index))
+            let meta = meta.join(" \u{00b7} ");
+            let id = doc.id.clone();
+            let ink = if openable { c.ink } else { c.ink_3 };
+            let title = if openable {
+                let open = open.clone();
+                btn::tabbable(div().id(("doc", index)), cx)
+                    .role(Role::Link)
+                    .aria_label(doc.title.clone())
                     .flex()
-                    .gap(px(8.0))
-                    .px(px(8.0))
-                    .py(px(7.0))
-                    .rounded(px(6.0))
-                    .text_size(px(TEXT))
-                    .hover(move |style| style.bg(hover))
-                    .child(
-                        div()
-                            .w(px(44.0))
-                            .flex_none()
-                            .pt(px(1.0))
-                            .text_size(px(SMALL))
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .font_family(fonts::TERMINAL_FAMILY)
-                            .text_color(if openable { c.ink_2 } else { c.ink_3 })
-                            .child(doc.id.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .text_color(ink)
-                            .child(title)
-                            .child(
-                                div()
-                                    .id(("doc-meta", index))
-                                    .truncate()
-                                    .text_size(px(SMALL))
-                                    .text_color(c.ink_3)
-                                    .tooltip(tip(meta.clone()))
-                                    .child(meta),
-                            ),
-                    )
-            }))
-    }
+                    .items_center()
+                    .gap(px(3.0))
+                    .min_w_0()
+                    .cursor_pointer()
+                    .text_color(c.ink)
+                    .underline()
+                    .child(div().min_w_0().truncate().child(doc.title.clone()))
+                    .child(icon(Lucide::ExternalLink, px(12.0), c.ink))
+                    .on_click(move |_, _, cx| open(id.clone(), cx))
+                    .into_any_element()
+            } else {
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(doc.title.clone())
+                    .into_any_element()
+            };
+            let hover = c.surface_hover;
+            div()
+                .id(("doc-row", index))
+                .flex()
+                .gap(px(8.0))
+                .px(px(8.0))
+                .py(px(7.0))
+                .rounded(px(6.0))
+                .text_size(px(TEXT))
+                .hover(move |style| style.bg(hover))
+                .child(
+                    div()
+                        .w(px(44.0))
+                        .flex_none()
+                        .pt(px(1.0))
+                        .text_size(px(SMALL))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .font_family(fonts::TERMINAL_FAMILY)
+                        .text_color(if openable { c.ink_2 } else { c.ink_3 })
+                        .child(doc.id.clone()),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .text_color(ink)
+                        .child(title)
+                        .child(
+                            div()
+                                .id(("doc-meta", index))
+                                .truncate()
+                                .text_size(px(SMALL))
+                                .text_color(c.ink_3)
+                                .tooltip(tip(meta.clone()))
+                                .child(meta),
+                        ),
+                )
+        }))
 }

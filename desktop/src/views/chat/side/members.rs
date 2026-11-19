@@ -301,11 +301,9 @@ impl Row {
             .on_click(cx.listener(move |this, _, window, cx| match &action {
                 Action::Room(room) => cx.emit(SideEvent::OpenRoom(room.clone())),
                 Action::Terminal(node) => {
-                    this.open(SideTab::Terminal, this.header, cx);
+                    this.show(SideTab::Terminal, cx);
                     this.member = Some(MemberKey::Local(*node));
-                    if this.header == super::Header::Tabs {
-                        window.focus(&this.tab_focus[SideTab::Terminal as usize], cx);
-                    }
+                    window.focus(&this.tab_focus[SideTab::Terminal as usize], cx);
                 }
             }))
     }

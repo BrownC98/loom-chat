@@ -19,7 +19,6 @@ use crate::scale::fixed as px;
 use crate::strings::Lang;
 use crate::theme::{Terminal, Theme};
 use crate::views::compose;
-use crate::views::inputs::Inputs;
 use crate::vt::view::Picked;
 use crate::vt::{self, Key, KeyKind, Screen, Shape, Vt};
 
@@ -42,13 +41,6 @@ const ROUNDING: f32 = 1.0;
 const SCROLLBAR: f32 = 14.0;
 const FIT_MIN_COLS: u16 = 2;
 const FIT_MIN_ROWS: u16 = 1;
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum InputState {
-    Open,
-    Offline,
-    Gone,
-}
 
 #[derive(Clone, Copy)]
 struct Metrics {
@@ -158,20 +150,12 @@ fn metrics(window: &Window, face: &Face, scale: f32) -> Metrics {
     }
 }
 
-pub fn open(
-    inputs: &Entity<Inputs>,
-    base: &str,
-    node: u32,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<TerminalView> {
+pub fn open(base: &str, node: u32, window: &mut Window, cx: &mut App) -> Entity<TerminalView> {
     let saver = Saver {
         base: base.to_owned(),
         node: Some(NodeId(node)),
     };
-    let view = open_with(link::attach, base, node, saver, window, cx);
-    crate::views::inputs::offer(inputs, node, &view, cx);
-    view
+    open_with(link::attach, base, node, saver, window, cx)
 }
 
 pub fn open_login(
@@ -275,32 +259,12 @@ impl TerminalView {
         window.focus(&self.focus, cx);
     }
 
-    pub fn refocus(&self, window: &mut Window, cx: &mut App) -> bool {
-        compose::refocus(&self.focus, window, cx)
-    }
-
-    pub fn composing(&self) -> bool {
-        self.marked.is_some()
-    }
-
     fn set_marked(&mut self, marked: Option<String>, cx: &mut App) {
         let open = marked.is_some();
         if open || self.marked.is_some() {
             compose::mark(&self.focus, open, cx);
         }
         self.marked = marked;
-    }
-
-    pub fn focused(&self, window: &Window) -> bool {
-        self.focus.is_focused(window)
-    }
-
-    pub fn set_scale(&mut self, scale: f32, body: Option<Size<Pixels>>) {
-        self.body = body;
-        if scale != self.scale {
-            self.scale = scale;
-            self.dirty = true;
-        }
     }
 
     fn cheap(&self) -> bool {
@@ -471,23 +435,6 @@ impl TerminalView {
         self.dirty = true;
         self.typed = Some(Instant::now());
         self.send(bytes);
-    }
-
-    pub fn input_state(&self) -> InputState {
-        if self.gone {
-            InputState::Gone
-        } else if self.ended.is_some() || self.pty.is_none() {
-            InputState::Offline
-        } else {
-            InputState::Open
-        }
-    }
-
-    pub fn deliver(&mut self, text: &str, cx: &mut Context<Self>) {
-        let mut bytes = self.vt.encode_paste(text);
-        bytes.push(b'\r');
-        self.type_in(bytes);
-        self.changed(cx);
     }
 
     fn copy(&mut self, cx: &mut Context<Self>) {

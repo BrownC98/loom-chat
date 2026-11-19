@@ -9,10 +9,9 @@ use polling::{Event as Ready, Events, Poller};
 use tungstenite::client::IntoClientRequest;
 use tungstenite::{Message, WebSocket};
 
-use api::canvas::{Arranged, CardSize, CommitGraph, Layout, Placed};
 use api::graph::pty::{Pace, PtyNotice, PtyRequest, Resize};
 use api::graph::{GraphEvent, NodeView};
-use api::ids::{NodeId, RepoId};
+use api::ids::NodeId;
 use api::repos::RepoView;
 use api::settings::SettingsView;
 use api::settings::places::DistroView;
@@ -59,7 +58,6 @@ enum Cmd {
     Add(usize, Box<Conn>),
     Out(usize, Out),
     Close(usize),
-    Pace(Pace),
     Opened(usize, u64, Box<Result<WebSocket<TcpStream>, String>>),
 }
 
@@ -86,7 +84,6 @@ fn hub() -> &'static Hub {
             queue,
             cmds: cmds.clone(),
             conns: HashMap::new(),
-            pace: Pace::Front,
         };
         std::thread::Builder::new()
             .name("link".to_owned())
@@ -98,10 +95,6 @@ fn hub() -> &'static Hub {
             keys: AtomicUsize::new(0),
         }
     })
-}
-
-pub fn pace(pace: Pace) {
-    hub().send(Cmd::Pace(pace));
 }
 
 pub struct Pty {
@@ -224,34 +217,6 @@ pub fn put<T: Serialize>(base: &str, path: &str, body: &T) -> Result<(), Failure
             .send(text),
     )
     .map(|_| ())
-}
-
-pub fn put_sizes(base: &str, sizes: &[CardSize]) -> Result<(), Failure> {
-    put(base, "/api/sizes", &sizes)
-}
-
-pub fn put_spots(base: &str, placed: &[Placed]) -> Result<(), Failure> {
-    put(base, "/api/spots", &placed)
-}
-
-pub fn clear_sizes(base: &str, nodes: &[NodeId]) -> Result<(), Failure> {
-    let text = serde_json::to_string(nodes).map_err(|e| Failure::Other(e.to_string()))?;
-    answer(
-        agent()
-            .delete(format!("{base}/api/sizes"))
-            .force_send_body()
-            .header("content-type", "application/json")
-            .send(text),
-    )
-    .map(|_| ())
-}
-
-pub fn put_arranged(base: &str, arranged: &Arranged) -> Result<(), Failure> {
-    put(base, "/api/spots/arranged", arranged)
-}
-
-pub fn clear_spots(base: &str, repo: u32) -> Result<(), Failure> {
-    delete(base, &format!("/api/repos/{repo}/spots"))
 }
 
 pub fn post<T: serde::de::DeserializeOwned>(
@@ -392,8 +357,6 @@ pub fn image(base: &str, path: &str) -> Result<(String, Vec<u8>), Failure> {
 pub struct Snapshot {
     pub nodes: Vec<NodeView>,
     pub repos: Vec<RepoView>,
-    pub layout: Layout,
-    pub sizes: Vec<CardSize>,
 }
 
 static LOADS: AtomicU64 = AtomicU64::new(0);
@@ -419,18 +382,6 @@ pub fn read_within<T: serde::de::DeserializeOwned>(
         .map_err(|e| Failure::Other(format!("GET {path}: {e}")))
 }
 
-pub fn commits(
-    base: &str,
-    repo: RepoId,
-    skip: usize,
-    limit: usize,
-) -> Result<CommitGraph, Failure> {
-    read(
-        base,
-        &format!("/api/repos/{}/commits?skip={skip}&limit={limit}", repo.0),
-    )
-}
-
 fn frame(request: &impl Serialize) -> Message {
     Message::text(serde_json::to_string(request).unwrap_or_default())
 }
@@ -438,16 +389,7 @@ fn frame(request: &impl Serialize) -> Message {
 pub struct Fresh {
     pub order: u64,
     pub nodes: Vec<NodeView>,
-    pub view: Option<GraphView>,
-}
-
-pub enum GraphView {
-    Repos(Vec<RepoView>),
-    Full {
-        repos: Vec<RepoView>,
-        layout: Layout,
-        sizes: Vec<CardSize>,
-    },
+    pub repos: Option<Vec<RepoView>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -492,65 +434,21 @@ impl Seen {
     }
 }
 
-fn read_view(
+fn read_repos(
     base: &str,
     wanted: Read,
     nodes: &[NodeView],
-    graph: &GraphRead,
     seen: &mut Option<Seen>,
-) -> Result<Option<GraphView>, Failure> {
-    let Some(was) = seen.as_mut().filter(|_| wanted == Read::Nodes) else {
-        let repos: Vec<RepoView> = graph.read(base, "/api/repos")?;
-        let layout = graph.read(base, "/api/spots")?;
-        let sizes = graph.read(base, "/api/sizes")?;
-        *seen = Some(Seen::of(nodes, &repos));
-        return Ok(Some(GraphView::Full {
-            repos,
-            layout,
-            sizes,
-        }));
-    };
-    if was.wants_repos(nodes) {
-        let repos: Vec<RepoView> = graph.read(base, "/api/repos")?;
-        was.note(nodes, Some(&repos));
-        Ok(Some(GraphView::Repos(repos)))
-    } else {
-        was.note(nodes, None);
-        Ok(None)
+) -> Result<Option<Vec<RepoView>>, Failure> {
+    if let Some(known) = seen.as_mut().filter(|_| wanted == Read::Nodes)
+        && !known.wants_repos(nodes)
+    {
+        known.note(nodes, None);
+        return Ok(None);
     }
-}
-
-const GRAPH_HIDDEN: u64 = 0;
-
-#[derive(Clone)]
-pub struct GraphRead {
-    view: Arc<AtomicU64>,
-    shown_at: u64,
-}
-
-impl GraphRead {
-    fn new(view: &Arc<AtomicU64>) -> Option<Self> {
-        let shown_at = view.load(Ordering::Acquire);
-        (shown_at != GRAPH_HIDDEN).then(|| Self {
-            view: view.clone(),
-            shown_at,
-        })
-    }
-
-    pub fn is_current(&self) -> bool {
-        self.view.load(Ordering::Acquire) == self.shown_at
-    }
-
-    pub fn read<T: serde::de::DeserializeOwned>(
-        &self,
-        base: &str,
-        path: &str,
-    ) -> Result<T, Failure> {
-        if !self.is_current() {
-            return Err(Failure::Other("graph view changed".to_owned()));
-        }
-        read(base, path)
-    }
+    let repos: Vec<RepoView> = read(base, "/api/repos")?;
+    *seen = Some(Seen::of(nodes, &repos));
+    Ok(Some(repos))
 }
 
 pub enum Graph {
@@ -570,36 +468,16 @@ pub enum Graph {
 pub struct Watch {
     key: usize,
     reload: mpsc::Sender<Read>,
-    view: Arc<AtomicU64>,
 }
 
 impl Watch {
     pub fn reload(&self) {
         let _ = self.reload.send(Read::All);
     }
-
-    pub fn graph_read(&self) -> Option<GraphRead> {
-        GraphRead::new(&self.view)
-    }
-
-    pub fn graph_visible(&self) -> bool {
-        self.view.load(Ordering::Acquire) != GRAPH_HIDDEN
-    }
-
-    pub fn accepts_graph(&self, order: u64) -> bool {
-        let shown_at = self.view.load(Ordering::Acquire);
-        shown_at != GRAPH_HIDDEN && order > shown_at
-    }
-
-    pub fn set_graph_visible(&self, visible: bool) {
-        let shown_at = if visible { order() } else { GRAPH_HIDDEN };
-        self.view.store(shown_at, Ordering::Release);
-    }
 }
 
 impl Drop for Watch {
     fn drop(&mut self) {
-        self.set_graph_visible(false);
         hub().send(Cmd::Close(self.key));
     }
 }
@@ -609,8 +487,6 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
     let (reload, wanted) = mpsc::channel::<Read>();
     let base = base.to_owned();
     let sink = graph.clone();
-    let view = Arc::new(AtomicU64::new(order()));
-    let worker_view = view.clone();
     std::thread::Builder::new()
         .name("reload".to_owned())
         .spawn(move || {
@@ -618,7 +494,6 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
             while let Ok(mut requested) = wanted.recv() {
                 loop {
                     requested = wanted.try_iter().fold(requested, Read::max);
-                    let reading = GraphRead::new(&worker_view);
                     let order = order();
                     let mut failed = false;
                     if requested == Read::All {
@@ -631,29 +506,26 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
                             return;
                         }
                     }
-                    let result = read::<Vec<NodeView>>(&base, "/api/nodes");
-                    let event = match result {
+                    let event = match read::<Vec<NodeView>>(&base, "/api/nodes") {
                         Ok(nodes) => {
-                            let mut view = None;
-                            if let Some(graph) = reading.filter(GraphRead::is_current) {
-                                match read_view(&base, requested, &nodes, &graph, &mut seen) {
-                                    Ok(fresh) => view = fresh,
-                                    Err(error) if graph.is_current() => {
-                                        failed = true;
-                                        if sink
-                                            .send_blocking(Graph::Failed { order, error })
-                                            .is_err()
-                                        {
-                                            return;
-                                        }
+                            let repos = match read_repos(&base, requested, &nodes, &mut seen) {
+                                Ok(repos) => repos,
+                                Err(error) => {
+                                    failed = true;
+                                    if sink.send_blocking(Graph::Failed { order, error }).is_err() {
+                                        return;
                                     }
-                                    Err(_) => {}
+                                    None
                                 }
-                            }
-                            Graph::Nodes(Box::new(Fresh { order, nodes, view }))
+                            };
+                            Graph::Nodes(Box::new(Fresh {
+                                order,
+                                nodes,
+                                repos,
+                            }))
                         }
                         Err(error) => {
-                            failed |= reading.is_some_and(|graph| graph.is_current());
+                            failed = true;
                             Graph::Failed { order, error }
                         }
                     };
@@ -663,7 +535,11 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
                     if !failed {
                         break;
                     }
-                    std::thread::sleep(RECONNECT);
+                    match wanted.recv_timeout(RECONNECT) {
+                        Ok(next) => requested = requested.max(next),
+                        Err(mpsc::RecvTimeoutError::Timeout) => {}
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return,
+                    }
                 }
             }
         })
@@ -675,7 +551,7 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
             reload: reload.clone(),
         },
     ));
-    Ok(Watch { key, reload, view })
+    Ok(Watch { key, reload })
 }
 
 pub fn attach(base: &str, id: u32, events: async_channel::Sender<Event>) -> Result<Pty, String> {
@@ -969,7 +845,6 @@ struct Worker {
     queue: mpsc::Receiver<Cmd>,
     cmds: mpsc::Sender<Cmd>,
     conns: HashMap<usize, Conn>,
-    pace: Pace,
 }
 
 impl Worker {
@@ -1015,14 +890,6 @@ impl Worker {
                 self.settle(key, fate);
             }
             Cmd::Close(key) => self.forget(key),
-            Cmd::Pace(pace) => {
-                self.pace = pace;
-                let keys: Vec<usize> = self.conns.keys().copied().collect();
-                for key in keys {
-                    let fate = self.conns.get_mut(&key).and_then(|c| c.push(frame(&pace)));
-                    self.settle(key, fate);
-                }
-            }
             Cmd::Opened(key, generation, result) => self.opened(key, generation, *result),
         }
     }
@@ -1081,7 +948,7 @@ impl Worker {
             conn.retry = now + RECONNECT;
             return;
         }
-        let _ = socket.send(frame(&self.pace));
+        let _ = socket.send(frame(&Pace::Front));
         conn.socket = Some(socket);
         conn.heard = now;
         conn.limit = CONNECT_LIMIT;

@@ -49,7 +49,6 @@ enum Hint {
 }
 
 type Files = Box<dyn Fn(Vec<ClipboardEntry>, &mut Window, &mut App)>;
-type Typed = Box<dyn Fn(&mut App)>;
 
 pub struct Field {
     focus: FocusHandle,
@@ -61,11 +60,9 @@ pub struct Field {
     form: Form,
     scale: Option<f32>,
     tone: Option<Rgba>,
-    rest: Option<Rgba>,
     lead: f32,
     trail: f32,
     files: Option<Files>,
-    typed: Option<Typed>,
     selected: Range<usize>,
     reversed: bool,
     marked: Option<Range<usize>>,
@@ -116,11 +113,9 @@ impl Field {
             form: Form::Chat,
             scale: None,
             tone: None,
-            rest: None,
             lead: 0.0,
             trail: 0.0,
             files: None,
-            typed: None,
             selected: 0..0,
             reversed: false,
             marked: None,
@@ -151,24 +146,10 @@ impl Field {
         }
     }
 
-    pub fn set_rest(&mut self, tone: Rgba, cx: &mut Context<Self>) {
-        if self.rest != Some(tone) {
-            self.rest = Some(tone);
-            cx.notify();
-        }
-    }
-
     pub fn set_inset(&mut self, lead: f32, trail: f32, cx: &mut Context<Self>) {
         if (self.lead, self.trail) != (lead, trail) {
             self.lead = lead;
             self.trail = trail;
-            cx.notify();
-        }
-    }
-
-    pub fn set_label(&mut self, label: Str, cx: &mut Context<Self>) {
-        if !matches!(&self.hint, Hint::Label(held) if *held == label) {
-            self.hint = Hint::Label(label);
             cx.notify();
         }
     }
@@ -223,17 +204,6 @@ impl Field {
         handler: impl Fn(Vec<ClipboardEntry>, &mut Window, &mut App) + 'static,
     ) {
         self.files = Some(Box::new(handler));
-    }
-
-    pub fn on_typed(&mut self, handler: impl Fn(&mut App) + 'static) {
-        self.typed = Some(Box::new(handler));
-    }
-
-    pub fn insert_token(&mut self, token: &str, window: &Window, cx: &mut Context<Self>) {
-        let at = self.selected.start.min(self.text.len());
-        let lead = at > 0 && !self.text[..at].ends_with(char::is_whitespace);
-        let typed = format!("{}{token} ", if lead { " " } else { "" });
-        self.splice(at..at, &typed, window, cx);
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -358,13 +328,6 @@ impl Field {
 
     fn put(&mut self, range: Range<usize>, text: &str, window: &Window, cx: &mut Context<Self>) {
         self.splice(range, text, window, cx);
-        self.tell_typed(cx);
-    }
-
-    fn tell_typed(&self, cx: &mut Context<Self>) {
-        if let Some(typed) = &self.typed {
-            typed(cx);
-        }
     }
 
     fn splice(&mut self, range: Range<usize>, text: &str, window: &Window, cx: &mut Context<Self>) {
@@ -660,7 +623,6 @@ impl EntityInputHandler for Field {
         self.reversed = false;
         window.notify_text_input_changed(&self.focus);
         cx.emit(FieldEvent::Changed);
-        self.tell_typed(cx);
         cx.notify();
     }
 
@@ -862,8 +824,8 @@ impl Render for Field {
         if self.boxed {
             let z = self.scale.unwrap_or_else(scale::get);
             let skinned = skin(base, z, focused, colors);
-            let skinned = match (focused, self.tone, self.rest) {
-                (true, Some(tone), _) | (false, _, Some(tone)) => skinned.border_color(tone),
+            let skinned = match (focused, self.tone) {
+                (true, Some(tone)) => skinned.border_color(tone),
                 _ => skinned,
             }
             .when(self.lead > 0.0, |el| el.pl(px((8.0 + self.lead) * z)))

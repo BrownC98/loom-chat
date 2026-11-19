@@ -12,12 +12,12 @@ use gpui::{
 use serde_json::Value;
 
 use super::agents::parts::badge;
-use super::graph;
 use crate::fonts::latin_mono;
-use crate::scale::px;
+use crate::scale::{self, px};
 use crate::settings::widgets::button;
 use crate::settings::widgets::{
-    Label, Select, SelectEvent, Text, TextEvent, field_reset, inert, segmented, tabbable,
+    Label, Select, SelectEvent, Text, TextEvent, field_reset, inert, segmented, segmented_on,
+    tabbable,
 };
 use crate::settings::{Ctx, Dialog, Section, Writer};
 use crate::strings::Str;
@@ -275,21 +275,74 @@ pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App)
     let (pop, hex, language) = setup(state, ctx, window, cx);
     vec![
         theme_section(ctx, cx),
-        graph::size_choice(
-            "display-ui-size",
-            |view| view.ui_size,
-            |view, value| view.ui_size = value,
-            Str::FloatSizeUiSize,
-            &[Str::FloatSizeUiSizeHint, Str::FloatSizeUiSizeHint2],
-            ("reset-ui-size", &["uiSize"]),
-            graph::ui_face,
-            &state.ui_size_hover,
-            ctx,
-            cx,
-        ),
+        size_section(&state.ui_size_hover, ctx, cx),
         colors_section(&pop, &hex, ctx, window, cx),
         language_section(&language, ctx, cx),
     ]
+}
+
+fn size_section(hovered: &Rc<Cell<Option<FloatSize>>>, ctx: &Ctx, cx: &App) -> Section {
+    let c = colors(cx);
+    let mut section = Section::new(Some(say(cx, Str::FloatSizeUiSize)), ctx);
+    let choices = [
+        (FloatSize::Small, Str::FloatSizeSmall),
+        (FloatSize::Normal, Str::FloatSizeNormal),
+        (FloatSize::Large, Str::FloatSizeLarge),
+        (FloatSize::Huge, Str::FloatSizeHuge),
+    ];
+    let sizes = choices
+        .iter()
+        .map(|&(size, label)| {
+            let text = say(cx, label);
+            let _ = section.text(text, cx);
+            (size, SharedString::from(text))
+        })
+        .collect();
+    let writer = ctx.writer.clone();
+    let preview = hovered.clone();
+    let radios = segmented_on(
+        "display-ui-size",
+        sizes,
+        ctx.view.ui_size,
+        move |size, _, cx| writer.edit(cx, |view| view.ui_size = size),
+        Some(move |size, window: &mut Window, _: &mut App| {
+            if preview.replace(size) != size {
+                window.refresh();
+            }
+        }),
+        cx,
+    );
+    let size = hovered.get().unwrap_or(ctx.view.ui_size);
+    let sample = section.text(say(cx, Str::FloatSizeSampleAsk), cx);
+    let label = choices
+        .iter()
+        .find(|(value, _)| *value == size)
+        .map_or("", |(_, label)| say(cx, *label));
+    let caption = section.text(&say_with(cx, Str::FloatSizePreview, &[("size", label)]), cx);
+    let hint = section.text(say(cx, Str::FloatSizeUiSizeHint), cx);
+    let example = div()
+        .min_h(px(62.0))
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(px(4.0))
+        .text_color(c.ink_2)
+        .child(div().text_size(px(SMALL)).child(caption))
+        .child(
+            div()
+                .rounded(px(6.0))
+                .px(px(10.0))
+                .py(px(4.0))
+                .bg(c.accent_wash)
+                .text_color(c.ink)
+                .text_size(scale::fixed(TEXT * scale::zoom(size)))
+                .child(sample),
+        );
+    section
+        .beside(field_reset("reset-ui-size", &["uiSize"], ctx, cx))
+        .child(radios)
+        .child(example)
+        .child(div().text_size(px(SMALL)).text_color(c.ink_3).child(hint))
 }
 
 fn theme_section(ctx: &Ctx, cx: &mut App) -> Section {

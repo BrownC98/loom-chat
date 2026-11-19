@@ -1,334 +1,25 @@
+use api::graph::NodeView;
 use api::graph::events::{Entry, EventRecord};
-use api::graph::{GraphEvent, NodeView};
 use api::profile::AgentView;
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, Entity, FocusHandle, FontWeight, InteractiveElement,
-    IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState, ParentElement, Role,
-    StatefulInteractiveElement, Styled, Window, div, list,
+    AnyElement, App, ClickEvent, Div, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    Role, StatefulInteractiveElement, Styled, Window, div,
 };
 
-use super::Dock;
 use super::body;
-use super::field::{self, Field};
 use super::ui::{self, GAP, PAD, SMALL};
 use crate::fonts;
 use crate::scale::px;
-use crate::strings::{Lang, Str};
+use crate::strings::Lang;
 use crate::theme::Colors;
-use crate::views::scrollbar::Bar;
 use crate::views::widgets::btn;
-use what::{Category, Ctx, Family, Seg, Tone};
+use what::{Ctx, Family, Seg, Tone};
 
 pub mod refusal;
 pub(crate) mod what;
 
-const CATEGORIES: [(Category, Str); 3] = [
-    (Category::Node, Str::EventsCategoryNode),
-    (Category::Message, Str::EventsCategoryMessage),
-    (Category::Notice, Str::EventsCategoryNotice),
-];
-
 const TIME: &str = "%H:%M:%S";
 const INDENT: f32 = 80.0;
-
-pub struct Events {
-    records: Option<Vec<EventRecord>>,
-    agents: Vec<AgentView>,
-    newest: Option<u32>,
-    held: Option<Vec<EventRecord>>,
-    ticket: u64,
-    error: Option<String>,
-    hidden: Vec<Category>,
-    query: Entity<Field>,
-    needle: String,
-    open: Option<u32>,
-    focus: FocusHandle,
-    shown: Vec<usize>,
-    list: ListState,
-    bar: Bar<ListState>,
-}
-
-impl Events {
-    pub fn new(cx: &mut App) -> Self {
-        let list = ListState::new(0, ListAlignment::Top, px(240.0));
-        Self {
-            records: None,
-            agents: Vec::new(),
-            newest: None,
-            held: None,
-            ticket: 0,
-            error: None,
-            hidden: Vec::new(),
-            query: field::new(Str::EventsFilterNamePlaceholder, cx),
-            needle: String::new(),
-            open: None,
-            focus: cx.focus_handle(),
-            shown: Vec::new(),
-            list: list.clone(),
-            bar: Bar::over(list.clone()),
-        }
-    }
-
-    pub fn query(&self) -> &Entity<Field> {
-        &self.query
-    }
-
-    fn passes(&self, record: &EventRecord) -> bool {
-        !what::hidden(&record.entry)
-            && !self.hidden.contains(&what::category_of(&record.entry))
-            && (self.needle.is_empty() || what::matches_name(&record.entry, &self.needle))
-    }
-}
-
-impl Dock {
-    pub(super) fn load_events(&mut self, cx: &mut Context<Self>) {
-        self.events.ticket += 1;
-        let ticket = self.events.ticket;
-        self.events.newest = None;
-        self.events.held = Some(Vec::new());
-        let task = self.store.update(cx, |store, cx| store.event_console(cx));
-        cx.spawn(async move |this, cx| {
-            let result = task.await;
-            let _ = this.update(cx, |dock, cx| {
-                if dock.events.ticket != ticket {
-                    return;
-                }
-                match result {
-                    Ok((log, agents)) => {
-                        dock.events.newest = Some(log.last);
-                        dock.events.records = Some(log.records);
-                        dock.events.agents = agents;
-                        dock.events.error = None;
-                        dock.refilter(cx);
-                        for record in dock.events.held.take().into_iter().flatten() {
-                            if dock.events.newest.is_none() {
-                                break;
-                            }
-                            dock.append(record, cx);
-                        }
-                    }
-                    Err(error) => {
-                        dock.events.held = None;
-                        dock.events.error = Some(error);
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-    }
-
-    pub(super) fn feed(&mut self, event: &GraphEvent, cx: &mut Context<Self>) {
-        let GraphEvent::Recorded { record } = event else {
-            return;
-        };
-        let record: EventRecord = (**record).clone();
-        if let Some(held) = &mut self.events.held {
-            held.push(record);
-            return;
-        }
-        self.append(record, cx);
-    }
-
-    fn append(&mut self, record: EventRecord, cx: &mut Context<Self>) {
-        let Some(newest) = self.events.newest else {
-            return;
-        };
-        if record.id <= newest {
-            return;
-        }
-        if record.id != newest + 1 {
-            self.load_events(cx);
-            return;
-        }
-        self.events.newest = Some(record.id);
-        if what::hidden(&record.entry) {
-            return;
-        }
-        let events = &mut self.events;
-        let passes = events.passes(&record);
-        let Some(records) = &mut events.records else {
-            return;
-        };
-        records.insert(0, record);
-        for at in &mut events.shown {
-            *at += 1;
-        }
-        if passes {
-            events.shown.insert(0, 0);
-            let top = events.list.logical_scroll_top();
-            events.list.splice(0..0, 1);
-            if top.item_ix == 0 && top.offset_in_item == px(0.0) {
-                events.list.scroll_to(ListOffset::default());
-            }
-        }
-        cx.notify();
-    }
-
-    pub(super) fn query_changed(&mut self, cx: &mut Context<Self>) {
-        let needle = self.events.query.read(cx).text().trim().to_owned();
-        if needle != self.events.needle {
-            self.events.needle = needle;
-            self.refilter(cx);
-            cx.notify();
-        }
-    }
-
-    fn refilter(&mut self, _: &mut Context<Self>) {
-        let events = &mut self.events;
-        let shown: Vec<usize> = events
-            .records
-            .iter()
-            .flatten()
-            .enumerate()
-            .filter(|(_, record)| events.passes(record))
-            .map(|(at, _)| at)
-            .collect();
-        events.list.reset(shown.len());
-        events.shown = shown;
-    }
-
-    fn toggle_category(&mut self, category: Category, cx: &mut Context<Self>) {
-        match self.events.hidden.iter().position(|&c| c == category) {
-            Some(at) => {
-                self.events.hidden.remove(at);
-            }
-            None => self.events.hidden.push(category),
-        }
-        self.refilter(cx);
-        cx.notify();
-    }
-
-    fn pick_event(&mut self, id: u32, cx: &mut Context<Self>) {
-        let before = self.events.open;
-        let opening = before != Some(id);
-        self.events.open = opening.then_some(id);
-        let involved: Vec<u32> = self
-            .events
-            .records
-            .iter()
-            .flatten()
-            .find(|record| record.id == id)
-            .filter(|_| opening)
-            .map(|record| what::involved(&record.entry))
-            .unwrap_or_default();
-        let keys = opening.then(|| involved.iter().map(u32::to_string).collect());
-        self.store.update(cx, |store, cx| {
-            store.set_picked(keys, cx);
-            store.show_nodes(involved, cx);
-        });
-        self.remeasure(id);
-        if let Some(before) = before {
-            self.remeasure(before);
-        }
-        cx.notify();
-    }
-
-    fn remeasure(&self, id: u32) {
-        if let Some(at) = self
-            .events
-            .shown
-            .iter()
-            .position(|&at| self.events.records.as_ref().is_some_and(|r| r[at].id == id))
-        {
-            self.events.list.remeasure_items(at..at + 1);
-        }
-    }
-
-    pub(super) fn drop_pick(&mut self, cx: &mut Context<Self>) {
-        if let Some(id) = self.events.open
-            && !self.store.read(cx).has_picked()
-        {
-            self.events.open = None;
-            self.remeasure(id);
-        }
-    }
-
-    pub(super) fn events(&self, cx: &mut Context<Self>) -> Div {
-        let chips = CATEGORIES.iter().map(|&(category, label)| {
-            let on = !self.events.hidden.contains(&category);
-            ui::chip(("event-category", category as usize), on, cx)
-                .child(ui::say(cx, label))
-                .on_click(cx.listener(move |dock, _, _, cx| dock.toggle_category(category, cx)))
-        });
-        let head = div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .child(ui::hint(ui::say(cx, Str::EventsOrder), cx))
-            .child(
-                ui::filters(cx)
-                    .children(chips)
-                    .child(ui::search(&self.events.query, cx)),
-            );
-        let mut panel = div()
-            .h_full()
-            .flex()
-            .flex_col()
-            .track_focus(&self.events.focus)
-            .on_key_down(cx.listener(|dock, e: &KeyDownEvent, _, cx| {
-                if e.keystroke.key == "escape" {
-                    dock.store
-                        .update(cx, |store, cx| store.set_picked(None, cx));
-                    cx.stop_propagation();
-                }
-            }))
-            .child(head);
-        if let Some(error) = &self.events.error {
-            panel = panel.child(ui::note(error.clone(), true, cx));
-        }
-        let note =
-            |text: Str, cx: &mut Context<Self>| ui::note(ui::say(cx, text).to_owned(), false, cx);
-        match &self.events.records {
-            None if self.events.error.is_none() => panel.child(note(Str::EventsReading, cx)),
-            None => panel,
-            Some(records) if records.is_empty() => panel.child(note(Str::EventsEmpty, cx)),
-            Some(_) if self.events.shown.is_empty() => panel.child(note(Str::EventsNoMatch, cx)),
-            Some(_) => panel.child(
-                self.events
-                    .bar
-                    .reserved(list(
-                        self.events.list.clone(),
-                        cx.processor(|dock: &mut Dock, ix: usize, _, cx| dock.event_row(ix, cx)),
-                    ))
-                    .flex_1()
-                    .min_h_0(),
-            ),
-        }
-    }
-
-    fn event_row(&self, ix: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(record) = self
-            .events
-            .shown
-            .get(ix)
-            .and_then(|&at| self.events.records.as_ref()?.get(at))
-        else {
-            return div().into_any_element();
-        };
-        let id = record.id;
-        let dock = cx.entity().downgrade();
-        let follow = dock.clone();
-        let row = EventRow {
-            record,
-            current: self.events.open == Some(id),
-            agents: &self.events.agents,
-            nodes: self.store.read(cx).snapshot().map_or(&[], |s| &s.nodes),
-        };
-        row.render(
-            cx,
-            move |_, window, cx| {
-                let _ = dock.update(cx, |dock, cx| {
-                    window.focus(&dock.events.focus, cx);
-                    dock.pick_event(id, cx);
-                });
-            },
-            move |target, cx| {
-                let _ = follow.update(cx, |dock, cx| dock.follow(target, cx));
-            },
-        )
-    }
-}
 
 pub(crate) struct EventRow<'a> {
     pub record: &'a EventRecord,
@@ -498,7 +189,6 @@ impl EventRow<'_> {
                     "",
                     doc,
                     link,
-                    None,
                     cx,
                     follow,
                 );
@@ -513,7 +203,6 @@ impl EventRow<'_> {
                 "",
                 None,
                 link,
-                None,
                 cx,
                 follow.clone(),
             );
@@ -523,16 +212,7 @@ impl EventRow<'_> {
             ));
         }
         if let Some(parts) = body_parts {
-            let text = body::render(
-                ("event-body", key),
-                &parts,
-                "",
-                None,
-                link,
-                None,
-                cx,
-                follow,
-            );
+            let text = body::render(("event-body", key), &parts, "", None, link, cx, follow);
             let mut value = div()
                 .flex()
                 .flex_col()

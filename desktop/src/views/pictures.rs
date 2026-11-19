@@ -1,4 +1,3 @@
-use std::collections::{HashMap, HashSet};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -66,7 +65,7 @@ struct Destination {
 pub enum PicturesEvent {
     Settled,
     Refused(String),
-    Other(String, Vec<u8>),
+    Other(String),
 }
 
 enum Unreadable {
@@ -82,30 +81,6 @@ pub struct Pictures {
     next: u32,
     reading: usize,
     locked: bool,
-}
-
-#[derive(Default)]
-pub struct Shelf {
-    waits: HashMap<u32, Entity<Pictures>>,
-}
-
-impl Shelf {
-    pub fn pictures(
-        &mut self,
-        store: &Entity<Store>,
-        node: NodeId,
-        wait: u32,
-        cx: &mut Context<Self>,
-    ) -> Entity<Pictures> {
-        self.waits
-            .entry(wait)
-            .or_insert_with(|| cx.new(|_| Pictures::new(store.clone(), node)))
-            .clone()
-    }
-
-    pub fn keep(&mut self, live: &HashSet<u32>) {
-        self.waits.retain(|wait, _| live.contains(wait));
-    }
 }
 
 impl EventEmitter<PicturesEvent> for Pictures {}
@@ -181,12 +156,6 @@ impl Pictures {
         if self.locked != locked {
             self.locked = locked;
             cx.notify();
-        }
-    }
-
-    pub fn aim(&mut self, node: NodeId) {
-        if let Some(destination) = &mut self.destination {
-            destination.node = node;
         }
     }
 
@@ -282,7 +251,7 @@ impl Pictures {
                                 },
                                 cx,
                             ),
-                            None => cx.emit(PicturesEvent::Other(name, bytes)),
+                            None => cx.emit(PicturesEvent::Other(name)),
                         },
                         Err(error) => {
                             let text = match error {

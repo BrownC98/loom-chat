@@ -11,7 +11,6 @@ use super::data::ChatData;
 use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::views::icons::{Lucide, icon};
-use crate::views::inputs::Inputs;
 use crate::views::scrollbar::{Bar, Track};
 use crate::views::tooltip::tip;
 use crate::views::ui::{self, SMALL};
@@ -45,7 +44,7 @@ impl SideTab {
         }
     }
 
-    fn icon(self) -> Lucide {
+    pub(super) fn icon(self) -> Lucide {
         match self {
             Self::Members => Lucide::Workflow,
             Self::Terminal => Lucide::SquareTerminal,
@@ -60,17 +59,10 @@ pub enum SideEvent {
     OpenRoom(String),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Header {
-    Tabs,
-    External,
-}
-
 pub struct SideSlot {
     data: Entity<ChatData>,
     terminal: Entity<SessionTerminal>,
     panel: Option<Panel>,
-    header: Header,
     room: Option<String>,
     member: Option<MemberKey>,
     choosing: bool,
@@ -84,9 +76,9 @@ pub struct SideSlot {
 impl EventEmitter<SideEvent> for SideSlot {}
 
 impl SideSlot {
-    pub fn new(data: Entity<ChatData>, inputs: Entity<Inputs>, cx: &mut Context<Self>) -> Self {
+    pub fn new(data: Entity<ChatData>, cx: &mut Context<Self>) -> Self {
         let graph = data.read(cx).graph().clone();
-        let terminal = cx.new(|cx| SessionTerminal::new(graph.clone(), inputs, cx));
+        let terminal = cx.new(|cx| SessionTerminal::new(graph.clone(), cx));
         let subscriptions = [
             cx.observe(&data, |this, _, cx| {
                 if this.panel.is_some() {
@@ -112,7 +104,6 @@ impl SideSlot {
             data,
             terminal,
             panel: None,
-            header: Header::Tabs,
             room: None,
             member: None,
             choosing: false,
@@ -129,22 +120,10 @@ impl SideSlot {
     }
 
     pub fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
-        self.open(tab, Header::Tabs, cx);
-    }
-
-    pub fn show_body(&mut self, tab: SideTab, cx: &mut Context<Self>) {
-        self.open(tab, Header::External, cx);
-    }
-
-    fn open(&mut self, tab: SideTab, header: Header, cx: &mut Context<Self>) {
         self.sync_room(cx);
-        let moved = header != self.header;
-        self.header = header;
         if self.tab() != Some(tab) {
             self.clear_tab(cx);
             self.panel = Some(Panel::open(tab, &self.data, cx));
-            cx.notify();
-        } else if moved {
             cx.notify();
         }
     }
@@ -273,7 +252,7 @@ impl Render for SideSlot {
             return div();
         };
         let c = ui::colors(cx);
-        let tabs = (self.header == Header::Tabs).then(|| self.tabs(tab, cx));
+        let tabs = self.tabs(tab, cx);
         let body = self.body(cx);
         div()
             .size_full()
@@ -297,9 +276,7 @@ impl Render for SideSlot {
                         let height = scroll.0.borrow().base_handle.bounds().size.height.as_f32();
                         let step = height * if stroke.key == "pageup" { -0.9 } else { 0.9 };
                         scroll.set((scroll.offset() + step).clamp(0.0, scroll.max()));
-                        if this.header == Header::Tabs {
-                            window.focus(&this.tab_focus[SideTab::Members as usize], cx);
-                        }
+                        window.focus(&this.tab_focus[SideTab::Members as usize], cx);
                         cx.notify();
                     }
                     _ => return,
@@ -307,7 +284,7 @@ impl Render for SideSlot {
                 window.prevent_default();
                 cx.stop_propagation();
             }))
-            .children(tabs)
+            .child(tabs)
             .child(div().flex_1().min_h_0().child(body))
     }
 }

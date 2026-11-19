@@ -1,5 +1,5 @@
 use api::graph::waits::{ScreenWait, WaitTone};
-use api::graph::{NodeView, Status};
+use api::graph::{NodeView, ProcessState, Status};
 use chrono::Local;
 use gpui::{Div, FontWeight, ParentElement, Rgba, Styled, div};
 
@@ -17,12 +17,10 @@ const SHA_LEN: usize = 7;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Tone {
-    Ask,
     Problem,
     Working,
     Result,
     Waiting,
-    Done,
     Rework,
 }
 
@@ -163,9 +161,7 @@ fn short(seconds: i64, lang: Lang) -> String {
 
 pub fn pill(text: String, tone: Tone, zoom: f32, c: &Colors) -> Div {
     let (fill, edge, ink) = match tone {
-        Tone::Ask => (c.warn, c.warn, c.warn_ink),
         Tone::Problem => (c.err, c.err, c.err_ink),
-        Tone::Done => (c.ok, c.ok, c.accent_ink),
         Tone::Working => (wash(c.run, 0.1), wash(c.run, 0.45), c.run),
         Tone::Result => (wash(c.ok, 0.1), wash(c.ok, 0.45), c.ok),
         Tone::Rework => (wash(c.err, 0.1), wash(c.err, 0.45), c.err),
@@ -186,4 +182,17 @@ pub fn pill(text: String, tone: Tone, zoom: f32, c: &Colors) -> Div {
         .text_color(ink)
         .whitespace_nowrap()
         .child(text)
+}
+
+pub fn process_text(process: &ProcessState, lang: Lang) -> String {
+    match process {
+        ProcessState::Working => Str::NodeProcessWorking.text(lang).to_owned(),
+        ProcessState::Idle => Str::NodeProcessIdle.text(lang).to_owned(),
+        ProcessState::Asleep => Str::NodeProcessAsleep.text(lang).to_owned(),
+        ProcessState::Blocked { .. } => Str::NodeProcessBlocked.text(lang).to_owned(),
+        ProcessState::Stopped { code: None } => Str::NodeProcessStopped.text(lang).to_owned(),
+        ProcessState::Stopped { code: Some(code) } => {
+            Str::NodeProcessStoppedCode.with(lang, &[("code", &code.to_string())])
+        }
+    }
 }

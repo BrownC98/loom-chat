@@ -7,7 +7,7 @@ use api::ids::{NodeId, RepoId};
 use api::repos::RepoView;
 use gpui::App;
 
-use super::{ChatData, Rooms};
+use super::{ChatData, Rooms, words};
 
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub(super) enum Filter {
@@ -21,12 +21,12 @@ pub(super) enum Filter {
 impl Filter {
     pub(super) const ALL: [Self; 4] = [Self::All, Self::MyTurn, Self::Working, Self::Unread];
 
-    pub(super) fn label(self) -> &'static str {
+    pub(super) fn label(self, cx: &App) -> &'static str {
         match self {
-            Self::All => "전체",
-            Self::MyTurn => "내 차례",
-            Self::Working => "일하는 중",
-            Self::Unread => "안 읽음",
+            Self::All => words(cx, "전체", "All"),
+            Self::MyTurn => words(cx, "내 차례", "My turn"),
+            Self::Working => words(cx, "일하는 중", "Working"),
+            Self::Unread => words(cx, "안 읽음", "Unread"),
         }
     }
 
@@ -149,25 +149,6 @@ impl<'a> Index<'a> {
                     .get(node)
                     .is_some_and(|name| name.to_lowercase().contains(query))
             })
-    }
-
-    pub(super) fn work_title(&self, room: &'a ChatRoom) -> &'a str {
-        if let ChatRoomKind::Work { place } = &room.kind
-            && let Some(repo) = self.repo(place.repo)
-        {
-            if !repo.git {
-                return &repo.name;
-            }
-            if let Some(branch) = repo
-                .worktrees
-                .iter()
-                .find(|work| work.path == place.worktree)
-                .and_then(|work| work.branch.as_deref())
-            {
-                return branch;
-            }
-        }
-        &room.name
     }
 }
 

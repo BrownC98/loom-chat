@@ -7,9 +7,9 @@ use gpui::{
     transparent_black,
 };
 
-use super::data::ChatData;
+use super::{data::ChatData, words};
 use crate::scale::px;
-use crate::strings::{Lang, Str};
+use crate::strings::Str;
 use crate::views::icons::{Lucide, icon};
 use crate::views::scrollbar::{Bar, Track};
 use crate::views::tooltip::tip;
@@ -22,7 +22,7 @@ mod session;
 
 use members::MemberKey;
 use panels::Panel;
-pub use session::SessionTerminal;
+use session::SessionTerminal;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum SideTab {
@@ -55,7 +55,6 @@ impl SideTab {
 }
 
 pub enum SideEvent {
-    Close,
     OpenRoom(String),
 }
 
@@ -66,7 +65,6 @@ pub struct SideSlot {
     room: Option<String>,
     member: Option<MemberKey>,
     choosing: bool,
-    copied: bool,
     scroll: Bar,
     member_scroll: Bar<UniformListScrollHandle>,
     tab_focus: [FocusHandle; SideTab::ALL.len()],
@@ -107,7 +105,6 @@ impl SideSlot {
             room: None,
             member: None,
             choosing: false,
-            copied: false,
             scroll: Bar::new(),
             member_scroll: Bar::default(),
             tab_focus: std::array::from_fn(|_| cx.focus_handle()),
@@ -138,7 +135,6 @@ impl SideSlot {
     fn clear_tab(&mut self, cx: &mut Context<Self>) {
         self.terminal.update(cx, |view, cx| view.set_node(None, cx));
         self.choosing = false;
-        self.copied = false;
         self.scroll.reset();
         self.member_scroll.reset();
     }
@@ -238,10 +234,7 @@ impl SideSlot {
                     .justify_center()
                     .tooltip(tip(close.to_owned()))
                     .child(icon(Lucide::X, px(14.0), c.ink_2))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.hide(cx);
-                        cx.emit(SideEvent::Close);
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.hide(cx))),
             )
     }
 }
@@ -286,13 +279,6 @@ impl Render for SideSlot {
             }))
             .child(tabs)
             .child(div().flex_1().min_h_0().child(body))
-    }
-}
-
-fn words(cx: &App, ko: &'static str, en: &'static str) -> &'static str {
-    match cx.global::<Lang>() {
-        Lang::Ko => ko,
-        Lang::En => en,
     }
 }
 

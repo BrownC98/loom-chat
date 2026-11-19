@@ -123,8 +123,8 @@ async fn add_repo(
 }
 
 async fn scratch_repo(State(app): State<Arc<App>>) -> Result<Json<RepoView>, Problem> {
-    let folder = app.run_dir.with_file_name("scratch");
-    tokio::fs::create_dir_all(&folder).await.map_err(internal)?;
+    let folder = app.graph.scratch_dir();
+    tokio::fs::create_dir_all(folder).await.map_err(internal)?;
     let id = app
         .repos
         .add(app.files(), &folder.to_string_lossy())

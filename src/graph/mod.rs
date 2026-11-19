@@ -18,6 +18,7 @@ mod waits;
 mod watchdog;
 
 use std::ops::{Deref, DerefMut};
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
 
 use rusqlite::types::Type;
@@ -96,6 +97,7 @@ fn process_state(process: Option<ProcessOutcome>, agent: Option<&AgentState>) ->
 
 pub struct Graph {
     db: Database,
+    scratch_dir: PathBuf,
     published: Mutex<u32>,
     events: broadcast::Sender<GraphEvent>,
     agent_tx: mpsc::UnboundedSender<AgentChange>,
@@ -186,7 +188,11 @@ impl Graph {
         Ok(check)
     }
 
-    pub fn open(db: Database, linked: fn(&AgentId) -> bool) -> rusqlite::Result<Self> {
+    pub fn open(
+        db: Database,
+        linked: fn(&AgentId) -> bool,
+        scratch_dir: PathBuf,
+    ) -> rusqlite::Result<Self> {
         let published = events::last_id(&db.lock())?;
         chat::ensure_key(&db.lock())?;
         relaunch_plans::settle_at_start(&db.lock())?;
@@ -195,6 +201,7 @@ impl Graph {
         let (agent_tx, agent_rx) = mpsc::unbounded_channel();
         Ok(Self {
             db,
+            scratch_dir,
             published: Mutex::new(published),
             events: broadcast::channel(EVENT_QUEUE).0,
             agent_tx,
@@ -202,6 +209,10 @@ impl Graph {
             mail: Notify::new(),
             linked,
         })
+    }
+
+    pub fn scratch_dir(&self) -> &Path {
+        &self.scratch_dir
     }
 
     pub fn settle(&self, home: &Place) -> rusqlite::Result<()> {

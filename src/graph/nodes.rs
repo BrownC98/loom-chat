@@ -247,7 +247,8 @@ impl Graph {
             "SELECT EXISTS(SELECT 1 FROM nodes WHERE id = ?1 AND agent = 'null'
              AND parent IS NULL AND state = ?2
              AND NOT EXISTS(SELECT 1 FROM nodes WHERE parent = ?1)
-             AND NOT EXISTS(SELECT 1 FROM messages WHERE sender = ?1 OR recipient = ?1))",
+             AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient = ?1
+                 OR (sender = ?1 AND (recipient IS NOT NULL OR held = 1))))",
             params![id.0, to_json(&Work::Running)],
             |row| row.get(0),
         )?;
@@ -1087,14 +1088,10 @@ fn remove_in(tx: &Connection, id: NodeId) -> rusqlite::Result<Option<Removal>> {
         }
     }
     tx.execute(
-        "UPDATE messages SET recipient = NULL
+        "UPDATE messages SET recipient = NULL, held = 1
          WHERE recipient = ?1 AND delivered = 0 AND kind = ?2
          AND sender IN (SELECT id FROM nodes WHERE parent = ?1)",
         params![id.0, to_json(&Kind::Queue)],
-    )?;
-    tx.execute(
-        "DELETE FROM messages WHERE recipient IS NULL AND sender = ?1",
-        [id.0],
     )?;
     events::write(
         tx,
@@ -1215,9 +1212,10 @@ fn adopt_in(
     let before = super::gate::open_gates(tx, &[child])?;
     let running = running_live(tx, child)?;
     let told_old = old.filter(|_| running);
+    let parent_name = name_of(tx, parent)?;
     let adopted = MessageKind::Adopted {
         node: name.clone(),
-        parent: name_of(tx, parent)?,
+        parent: parent_name.clone(),
     };
     if let Some(old) = told_old {
         mailbox::enqueue(
@@ -1247,9 +1245,20 @@ fn adopt_in(
         ),
         Default::default(),
     )?;
+    tx.execute(
+        "INSERT INTO messages (
+            sender, sender_name, kind, body, delivered, sent_at, what, printed, refused, recipient_name, created_at
+         )
+         SELECT sender, sender_name, kind, body, delivered, sent_at, what, printed, refused, recipient_name, created_at
+         FROM messages WHERE recipient IS NULL AND held = 1 AND sender = ?1 AND recipient_name IS NOT NULL
+         ORDER BY id",
+        [child.0],
+    )?;
     let moved = tx.execute(
-        "UPDATE messages SET recipient = ?2 WHERE recipient IS NULL AND sender = ?1",
-        params![child.0, parent.0],
+        "UPDATE messages SET recipient = ?2, recipient_name = ?3, held = 0,
+             sent_at = NULL, printed = 0, refused = 0
+         WHERE recipient IS NULL AND held = 1 AND sender = ?1",
+        params![child.0, parent.0, parent_name],
     )?;
     events::write(
         tx,

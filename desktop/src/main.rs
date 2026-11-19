@@ -44,25 +44,7 @@ fn main() {
                 settings::notify::watch(&store, window, cx);
                 let inputs = cx.new(|_| views::inputs::Inputs::default());
                 let shelf = cx.new(|_| views::pictures::Shelf::default());
-                let canvas = cx.new(|cx| {
-                    canvas::view::CanvasView::new(store.clone(), inputs.clone(), window, cx)
-                });
-                let sidebar = views::sidebar::sidebar(store.clone(), window, cx);
-                let dock =
-                    views::dock::dock(store.clone(), shelf.clone(), inputs.clone(), window, cx);
-                let zoom = views::shell::zoom(store.clone(), window, cx);
-                let composer = float::composer::composer(store.clone(), inputs, shelf, window, cx);
-                cx.new(|cx| {
-                    views::shell::Shell::new(
-                        store,
-                        zoom,
-                        canvas.into(),
-                        Some(sidebar.into()),
-                        Some(dock.into()),
-                        vec![composer.into()],
-                        cx,
-                    )
-                })
+                cx.new(|cx| views::shell::Shell::new(store, inputs, shelf, window, cx))
             })
             .expect("could not open the window");
             cx.activate(true);

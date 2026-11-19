@@ -1,9 +1,9 @@
 use gpui::{
-    App, BoxShadow, Div, ElementId, InteractiveElement, Stateful, StatefulInteractiveElement,
+    App, BoxShadow, Div, ElementId, InteractiveElement, Rgba, Stateful, StatefulInteractiveElement,
     Styled, point, transparent_black,
 };
 
-use crate::scale::px;
+use crate::scale::{self, px};
 use crate::views::ui::{self, colors};
 
 const RING: f32 = 2.0;
@@ -30,6 +30,14 @@ pub fn inert(element: Stateful<Div>) -> Stateful<Div> {
 
 pub fn button(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
     tabbable(ui::button(id, cx), cx)
+}
+
+pub fn filled(id: impl Into<ElementId>, fill: Rgba, ink: Rgba, cx: &App) -> Stateful<Div> {
+    tabbable(ui::button_frame(id, scale::get()), cx)
+        .border_color(fill)
+        .bg(fill)
+        .text_color(ink)
+        .hover(move |style| style.border_color(ink))
 }
 
 pub fn ghost(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {

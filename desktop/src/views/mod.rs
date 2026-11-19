@@ -1,6 +1,7 @@
 pub mod anchor;
 pub mod card;
 pub mod cardlink;
+mod chat;
 pub mod compose;
 pub mod dock;
 pub mod dotted;

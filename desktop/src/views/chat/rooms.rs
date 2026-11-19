@@ -622,8 +622,8 @@ fn group_id(group: &Group) -> gpui::SharedString {
 fn last_line(data: &ChatData) -> Option<String> {
     data.items().iter().rev().find_map(|item| {
         let (name, text) = match &item.entry {
-            ChatEntry::Message { message } => (&message.from.name, &message.text),
-            ChatEntry::Wait { node, wait, .. } => (&node.name, &wait.summary),
+            ChatEntry::Message { message } => (&message.from.name, super::message_text(message)),
+            ChatEntry::Wait { node, wait, .. } => (&node.name, wait.summary.as_str()),
             _ => return None,
         };
         let first_line = text.lines().find(|line| !line.trim().is_empty())?;

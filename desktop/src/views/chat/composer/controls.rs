@@ -101,27 +101,20 @@ impl Composer {
         } else {
             None
         };
-        let send = btn::button("chat-send", cx)
-            .role(Role::Button)
-            .when(!ready, |button| btn::inert(button).opacity(0.55))
-            .when(ready, |button| {
-                button
-                    .bg(if mode == Kind::Interrupt {
-                        c.err
-                    } else {
-                        c.accent
-                    })
-                    .text_color(if mode == Kind::Interrupt {
-                        c.err_ink
-                    } else {
-                        c.accent_ink
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| {
-                        this.submit(SendIntent::Request, window, cx)
-                    }))
-            })
-            .aria_label(sender.clone())
-            .child(sender);
+        let send = if ready {
+            let (fill, ink) = match mode {
+                Kind::Interrupt => (c.err, c.err_ink),
+                _ => (c.accent, c.accent_ink),
+            };
+            btn::filled("chat-send", fill, ink, cx).on_click(
+                cx.listener(|this, _, window, cx| this.submit(SendIntent::Request, window, cx)),
+            )
+        } else {
+            btn::inert(btn::button("chat-send", cx)).opacity(0.55)
+        }
+        .role(Role::Button)
+        .aria_label(sender.clone())
+        .child(sender);
         let footer = div()
             .flex()
             .items_center()
@@ -415,9 +408,7 @@ impl Composer {
                             ),
                     )
                     .child(
-                        btn::button("chat-interrupt-confirm", cx)
-                            .bg(c.err)
-                            .text_color(c.err_ink)
+                        btn::filled("chat-interrupt-confirm", c.err, c.err_ink, cx)
                             .child(if changes {
                                 "바뀐 작업 확인"
                             } else {

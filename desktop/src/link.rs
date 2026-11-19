@@ -559,6 +559,7 @@ pub enum Graph {
         result: Result<Box<SettingsView>, Failure>,
     },
     Feed(Box<GraphEvent>),
+    Connection(LinkState),
     Failed {
         order: u64,
         error: Failure,
@@ -793,8 +794,9 @@ impl Conn {
         }
         self.state = state;
         match &self.target {
-            Target::Events { reload, .. } => {
-                state != LinkState::Connected || reload.send(Read::All).is_ok()
+            Target::Events { graph, reload } => {
+                graph.send_blocking(Graph::Connection(state)).is_ok()
+                    && (state != LinkState::Connected || reload.send(Read::All).is_ok())
             }
             Target::Pty { .. } => true,
         }

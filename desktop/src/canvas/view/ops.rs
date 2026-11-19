@@ -1,12 +1,12 @@
 use std::rc::Rc;
 
 use api::graph::{CardView, Place, RelaunchOffer};
-use api::ids::RepoId;
+use api::ids::{NodeId, RepoId};
 use gpui::{
     App, Bounds, Context, Div, Entity, MouseDownEvent, Pixels, Point, Subscription, Window, point,
 };
 
-use super::{CanvasView, popover};
+use super::{CanvasView, OpenChat, popover};
 use crate::scale::px;
 use crate::strings::Str;
 use crate::views::card::{self, Actions, FrameActions, Keyed, Press};
@@ -51,6 +51,7 @@ impl CanvasView {
             status: press(|this, id, e, window, cx| {
                 this.open_status(id, e.position, None, window, cx)
             }),
+            room: Some(press(|this, id, _, _, cx| this.open_room(id, cx))),
             expand: if collapse {
                 press(|this, _, _, _, cx| this.collapse(cx))
             } else {
@@ -87,12 +88,7 @@ impl CanvasView {
     }
 
     fn open_room(&mut self, id: u32, cx: &mut Context<Self>) {
-        let opened = self
-            .store
-            .read(cx)
-            .room_url(id)
-            .and_then(|url| crate::views::ui::open_url(&url));
-        self.report(opened, cx);
+        cx.emit(OpenChat(NodeId(id)));
     }
 
     fn bookmark(&mut self, id: u32, cx: &mut Context<Self>) {

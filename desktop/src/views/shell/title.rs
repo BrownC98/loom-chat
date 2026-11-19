@@ -43,31 +43,36 @@ fn mark(color: Rgba) -> impl IntoElement {
     .h(px(MARK))
 }
 
-pub fn bar(window: &Window, colors: &Colors, lang: Lang) -> Div {
-    platform::drag_area(
-        div()
-            .h(px(HEIGHT))
-            .flex_none()
-            .flex()
-            .items_center()
-            .pl(platform::leading_gap())
-            .bg(colors.panel)
-            .border_b_1()
-            .border_color(colors.line)
-            .on_mouse_down(MouseButton::Left, |event, window, _| {
-                if event.click_count >= 2 {
-                    window.titlebar_double_click();
-                } else {
-                    window.start_window_move();
-                }
-            })
-            .child(
-                div()
-                    .ml(px(MARK_BEFORE))
-                    .mr(px(MARK_AFTER))
-                    .child(mark(colors.ink_2)),
-            )
-            .child(div().flex_1())
-            .children(platform::captions(window, colors, lang)),
-    )
+pub fn bar(window: &Window, colors: &Colors, lang: Lang, switch: impl IntoElement) -> Div {
+    div()
+        .h(px(HEIGHT))
+        .flex_none()
+        .flex()
+        .items_center()
+        .pl(platform::leading_gap())
+        .bg(colors.panel)
+        .border_b_1()
+        .border_color(colors.line)
+        .child(drag(
+            div()
+                .h_full()
+                .flex()
+                .items_center()
+                .ml(px(MARK_BEFORE))
+                .mr(px(MARK_AFTER))
+                .child(mark(colors.ink_2)),
+        ))
+        .child(div().flex().items_center().child(switch))
+        .child(drag(div().flex_1().h_full()))
+        .children(platform::captions(window, colors, lang))
+}
+
+fn drag(area: Div) -> Div {
+    platform::drag_area(area.on_mouse_down(MouseButton::Left, |event, window, _| {
+        if event.click_count >= 2 {
+            window.titlebar_double_click();
+        } else {
+            window.start_window_move();
+        }
+    }))
 }

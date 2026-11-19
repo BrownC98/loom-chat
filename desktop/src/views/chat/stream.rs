@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
 use api::graph::chat::{ChatCursor, ChatEntry, ChatItem, ChatOrigin, ChatRoomKind};
+use api::graph::messages::{MessageKind, Question};
 use api::graph::waits::WaitTone;
 use api::ids::{NodeId, WaitId};
 use gpui::prelude::FluentBuilder;
@@ -92,6 +93,13 @@ impl Rows {
     fn new(items: &[Arc<ChatItem>], filter: Filter) -> Self {
         let mut rows = Self::default();
         for (item, entry) in items.iter().enumerate() {
+            if matches!(&entry.entry, ChatEntry::Message { message }
+            if message.origin == ChatOrigin::Human && matches!(
+                message.what,
+                Some(MessageKind::Answer { question: Question::Inbox { .. } })
+            )) {
+                continue;
+            }
             let kind = Filter::of(entry);
             match kind {
                 Filter::Notices => rows.notices += 1,
@@ -406,13 +414,12 @@ impl Render for Stream {
         let toolbar = self.toolbar(cx);
         let data = self.data.read(cx);
         let c = ui::colors(cx);
-        let error = data.error().map(str::to_owned);
         let content = if self.rows.visible.is_empty() {
             let label = if data.loading() {
                 tr(cx, "대화를 읽는 중", "Loading messages")
             } else if self.filter != Filter::All {
                 tr(cx, "이 종류의 대화가 없습니다", "No messages of this kind")
-            } else if error.is_some() {
+            } else if data.error().is_some() {
                 tr(cx, "대화를 읽지 못했습니다", "Could not load messages")
             } else {
                 tr(cx, "아직 대화가 없습니다", "No messages yet")
@@ -426,13 +433,10 @@ impl Render for Stream {
                 .child(label)
         } else {
             self.bar
-                .reserved(
-                    list(
-                        self.list.clone(),
-                        cx.processor(|stream, index, _, cx| stream.row(index, cx)),
-                    )
-                    .size_full(),
-                )
+                .reserved(list(
+                    self.list.clone(),
+                    cx.processor(|stream, index, _, cx| stream.row(index, cx)),
+                ))
                 .flex_1()
                 .min_h_0()
         };
@@ -446,20 +450,6 @@ impl Render for Stream {
             .text_size(px(ui::TEXT))
             .text_color(c.ink)
             .children(toolbar)
-            .children(error.map(|error| {
-                rows::flow()
-                    .flex_none()
-                    .px(px(14.0))
-                    .py(px(6.0))
-                    .child(div().text_color(c.err).child(error))
-                    .child(
-                        btn::button("stream-retry-load", cx)
-                            .child(tr(cx, "다시 읽기", "Reload"))
-                            .on_click(cx.listener(|stream, _, _, cx| {
-                                stream.data.update(cx, ChatData::refresh)
-                            })),
-                    )
-            }))
             .child(content)
             .children(self.result.as_ref().map(|(text, failed)| {
                 div()

@@ -189,7 +189,7 @@ impl Stream {
             .when(mine, |column| column.items_end())
             .child(header)
             .child(bubble(
-                &message.text,
+                super::super::message_text(message),
                 if mine { c.accent_wash } else { c.surface },
                 cx,
             ))
@@ -333,10 +333,14 @@ pub(super) fn meta(text: impl Into<String>, cx: &App) -> Div {
 }
 
 pub(super) fn timestamp(cursor: ChatCursor, cx: &App) -> Div {
-    meta(
-        ui::day_and_time(cursor.at_ms.div_euclid(1000), *cx.global::<Lang>()),
-        cx,
-    )
+    div()
+        .flex_none()
+        .whitespace_nowrap()
+        .text_size(px(ui::SMALL))
+        .text_color(ui::colors(cx).ink_2)
+        .children(
+            (cursor.at_ms > 0).then(|| ui::clock(cursor.at_ms.div_euclid(1000), "%m.%d %H:%M")),
+        )
 }
 
 pub(super) fn badge(text: impl Into<String>, ink: Rgba, cx: &App) -> Div {

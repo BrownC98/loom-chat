@@ -33,9 +33,9 @@ pub enum SideTab {
 }
 
 impl SideTab {
-    const ALL: [Self; 4] = [Self::Members, Self::Terminal, Self::Docs, Self::History];
+    pub(super) const ALL: [Self; 4] = [Self::Members, Self::Terminal, Self::Docs, Self::History];
 
-    fn label(self, cx: &App) -> &'static str {
+    pub(super) fn label(self, cx: &App) -> &'static str {
         match self {
             Self::Members => words(cx, "구성원", "Members"),
             Self::Terminal => ui::say(cx, Str::DockTerminal),

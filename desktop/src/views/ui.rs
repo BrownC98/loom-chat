@@ -83,6 +83,14 @@ pub fn button(id: impl Into<ElementId>, cx: &App) -> Stateful<Div> {
 
 pub fn button_at(id: impl Into<ElementId>, zoom: f32, cx: &App) -> Stateful<Div> {
     let c = colors(cx);
+    button_frame(id, zoom)
+        .border_color(c.line_strong)
+        .bg(c.surface)
+        .text_color(c.ink)
+        .hover(move |style| style.bg(c.surface_hover))
+}
+
+pub(super) fn button_frame(id: impl Into<ElementId>, zoom: f32) -> Stateful<Div> {
     div()
         .id(id)
         .flex()
@@ -93,12 +101,8 @@ pub fn button_at(id: impl Into<ElementId>, zoom: f32, cx: &App) -> Stateful<Div>
         .py(scale::fixed(3.0 * zoom))
         .rounded(scale::fixed(6.0 * zoom))
         .border_1()
-        .border_color(c.line_strong)
-        .bg(c.surface)
         .text_size(scale::fixed(SMALL * zoom))
-        .text_color(c.ink)
         .cursor_pointer()
-        .hover(move |style| style.bg(c.surface_hover))
 }
 
 pub fn count(n: usize, c: &Colors) -> Div {

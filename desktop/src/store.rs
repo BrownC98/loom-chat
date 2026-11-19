@@ -19,7 +19,7 @@ use gpui::{
 
 use crate::canvas::drag::Arrange;
 use crate::canvas::repos::{chosen_repo, groups_of};
-use crate::link::{self, Fresh, Graph, GraphRead, Loaded, Snapshot};
+use crate::link::{self, Fresh, Graph, GraphRead, LinkState, Loaded, Snapshot};
 use crate::problem::Failure;
 use crate::{scale, strings, theme};
 
@@ -37,6 +37,7 @@ pub enum SentPart {
 pub struct Store {
     base: Option<String>,
     status: String,
+    connection: LinkState,
     watch: Option<link::Watch>,
     window: AnyWindowHandle,
     repo_watch: Option<Task<()>>,
@@ -106,6 +107,7 @@ pub struct DraftChanged(pub u32, pub Slot);
 pub struct BusyChanged;
 
 impl EventEmitter<GraphEvent> for Store {}
+impl EventEmitter<LinkState> for Store {}
 impl EventEmitter<Arrange> for Store {}
 impl EventEmitter<ZoomTo> for Store {}
 impl EventEmitter<NodeMenu> for Store {}
@@ -192,9 +194,15 @@ impl Store {
             Err(error) => (None, error.clone(), Some(error), None),
         };
         let notice = failure.map(|text| Notice { text });
+        let connection = if watch.is_some() {
+            LinkState::Reconnecting
+        } else {
+            LinkState::Lost
+        };
         let mut store = Self {
             base,
             status,
+            connection,
             watch,
             window: window.window_handle(),
             repo_watch: None,
@@ -327,6 +335,10 @@ impl Store {
 
     pub fn base(&self) -> Option<&str> {
         self.base.as_deref()
+    }
+
+    pub fn connection(&self) -> LinkState {
+        self.connection
     }
 
     pub fn snapshot(&self) -> Option<&Snapshot> {
@@ -698,6 +710,11 @@ impl Store {
                 .is_some_and(|watch| watch.accepts_graph(order))
         };
         match event {
+            Graph::Connection(state) => {
+                self.connection = state;
+                cx.emit(state);
+                return;
+            }
             Graph::Loaded(loaded) if accepts_graph(loaded.order) => self.load(*loaded),
             Graph::Nodes(fresh) if accepts_graph(fresh.order) => self.refresh(*fresh),
             Graph::Settings { order, result } => match result {
@@ -1039,13 +1056,6 @@ impl Store {
     pub fn doc_url(&self, id: &str) -> Result<String, String> {
         match &self.base {
             Some(base) => Ok(format!("{base}/docs/{id}")),
-            None => Err(self.status.clone()),
-        }
-    }
-
-    pub fn room_url(&self, node: u32) -> Result<String, String> {
-        match &self.base {
-            Some(base) => Ok(format!("{base}/rooms/{node}")),
             None => Err(self.status.clone()),
         }
     }

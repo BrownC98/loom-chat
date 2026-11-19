@@ -8,11 +8,12 @@ use gpui::{
     ParentElement, Role, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
 };
 
-use super::Composer;
+use super::{Composer, local};
 use crate::link;
 use crate::problem::Failure;
 use crate::scale::{self, px};
 use crate::store::Store;
+use crate::strings::Str;
 use crate::theme::mix;
 use crate::views::dock::answers::{self, Answers};
 use crate::views::dock::entry::tone_of;
@@ -89,7 +90,9 @@ impl Composer {
             .flat_map(|node| {
                 node.waits
                     .iter()
-                    .filter(|wait| answers::in_alert_strip(wait))
+                    .filter(|wait| {
+                        answers::in_alert_strip(wait) && !self.visible_waits.contains(&wait.wait.id)
+                    })
                     .map(move |wait| Alert { node, wait })
             })
             .collect();
@@ -114,6 +117,7 @@ impl Composer {
         let wait = notice.wait.clone();
         let position = notice.position();
         self.alerts.expanded = !matches!(movement, Move::Fold) || !self.alerts.expanded;
+        self.mode_menu = false;
         self.alerts.selected = Some(position);
         self.alerts.focus = self.alerts.expanded;
         if !self.alerts.expanded {
@@ -137,6 +141,20 @@ impl Composer {
     ) {
         let stroke = &event.keystroke;
         let modifiers = stroke.modifiers;
+        if stroke.key == "escape"
+            && !modifiers.alt
+            && !modifiers.control
+            && !modifiers.platform
+            && !modifiers.shift
+            && self.alerts.expanded
+        {
+            if self.move_alert(Move::Fold, cx) {
+                self.focus_input(window, cx);
+                window.prevent_default();
+                cx.stop_propagation();
+            }
+            return;
+        }
         if !modifiers.alt || modifiers.control || modifiers.platform || modifiers.shift {
             return;
         }
@@ -235,7 +253,9 @@ impl Composer {
     ) -> Option<Div> {
         let notices = self.notices(cx);
         if notices.is_empty() {
-            self.alerts.expanded = false;
+            if std::mem::take(&mut self.alerts.expanded) {
+                self.focus_input(window, cx);
+            }
             self.alerts.selected = None;
             self.alerts.context = None;
             self.alerts.reading = None;
@@ -265,9 +285,9 @@ impl Composer {
         }
         let colors = ui::colors(cx);
         let label = if self.alerts.expanded {
-            "알림 접기"
+            local(cx, "알림 접기", "Collapse alert")
         } else {
-            "알림 펼치기"
+            local(cx, "알림 펼치기", "Expand alert")
         };
         let tone = tone_of(wait.tone, &colors);
         let name = repo.map_or_else(|| name.clone(), |repo| format!("{repo} › {name}"));
@@ -301,9 +321,9 @@ impl Composer {
         let last = context.and_then(|context| context.last_message.as_deref());
         let previous = context.and_then(|context| context.previous_reply.as_deref());
         let info = [
-            ("하던 일", task.as_deref()),
-            ("내 마지막 말", last),
-            ("앞선 답", previous),
+            (local(cx, "하던 일", "Task"), task.as_deref()),
+            (local(cx, "내 마지막 말", "My last message"), last),
+            (local(cx, "앞선 답", "Previous reply"), previous),
         ];
         let details = div()
             .flex()
@@ -319,7 +339,8 @@ impl Composer {
                     .child(
                         div()
                             .flex_none()
-                            .w(px(74.0))
+                            .w(px(115.0))
+                            .truncate()
                             .font_weight(FontWeight::MEDIUM)
                             .child(label),
                     )
@@ -368,8 +389,8 @@ impl Composer {
         let colors = ui::colors(cx);
         let tone = tone_of(wait.tone, &colors);
         let (icon_kind, kind) = match wait.tone {
-            WaitTone::Ask => (Lucide::CircleQuestionMark, "질문"),
-            WaitTone::Done => (Lucide::Check, "완료"),
+            WaitTone::Ask => (Lucide::CircleQuestionMark, ui::say(cx, Str::WaitQuestion)),
+            WaitTone::Done => (Lucide::Check, ui::say(cx, Str::WaitDone)),
         };
         let arrow = |direction, id, hint: &'static str, glyph| {
             btn::ghost(id, cx)
@@ -397,12 +418,21 @@ impl Composer {
                     .aria_keyshortcuts(
                         "Alt+Up Alt+Down Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7 Alt+8 Alt+9",
                     )
-                    .tooltip(tip(format!("{label} · Alt+↑↓ 알림 이동 · Alt+1~9 선택")))
+                    .tooltip(tip(format!(
+                        "{label} · {}",
+                        local(
+                            cx,
+                            "Alt+↑↓ 알림 이동 · Alt+1~9 선택",
+                            "Alt+↑↓ Move between alerts · Alt+1–9 Choose",
+                        )
+                    )))
                     .flex_1()
                     .min_w_0()
                     .bg(mix(tone, 0.17, colors.panel))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.move_alert(Move::Fold, cx);
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.move_alert(Move::Fold, cx) && !this.alerts.expanded {
+                            this.focus_input(window, cx);
+                        }
                     }))
                     .child(icon(icon_kind, px(15.0), tone))
                     .child(
@@ -438,13 +468,13 @@ impl Composer {
             .child(arrow(
                 -1,
                 "chat-alert-prev",
-                "앞 알림 (Alt+↑)",
+                local(cx, "앞 알림 (Alt+↑)", "Previous alert (Alt+↑)"),
                 Lucide::ChevronUp,
             ))
             .child(arrow(
                 1,
                 "chat-alert-next",
-                "다음 알림 (Alt+↓)",
+                local(cx, "다음 알림 (Alt+↓)", "Next alert (Alt+↓)"),
                 Lucide::ChevronDown,
             ))
     }

@@ -3,6 +3,7 @@ use ts_rs::TS;
 
 use super::events::Who;
 use super::messages::{Kind, MessageKind};
+use super::text::Block;
 use super::waits::{Closed, ScreenWait};
 use super::{Place, Status};
 use crate::ids::{AgentId, NodeId};
@@ -22,6 +23,9 @@ pub struct ChatRoom {
     pub done: u32,
     #[ts(type = "number | null")]
     pub last_activity: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_preview: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]
@@ -180,6 +184,9 @@ pub enum ChatTranscriptItem {
     },
     Assistant {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        blocks: Option<Vec<Block>>,
     },
     ToolCall {
         id: Option<String>,
@@ -208,6 +215,9 @@ pub struct ChatMessage {
     pub from: Who,
     pub origin: ChatOrigin,
     pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub blocks: Option<Vec<Block>>,
     pub mode: Option<Kind>,
     pub what: Option<MessageKind>,
     pub reply_to: Option<u32>,

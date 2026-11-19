@@ -346,12 +346,10 @@ fn read_transcript(
             {
                 continue;
             }
-            found.insert(
-                cursor,
-                ChatEntry::Transcript {
-                    item: transcript_item(item.kind),
-                },
-            );
+            let Some(item) = transcript_item(item.kind) else {
+                continue;
+            };
+            found.insert(cursor, ChatEntry::Transcript { item });
             if found.len() > limit + 1 {
                 found.pop_first();
             }
@@ -387,11 +385,21 @@ fn is_delivery(mut text: &str, deliveries: &[String]) -> bool {
     }
 }
 
-fn transcript_item(kind: transcript::Kind) -> ChatTranscriptItem {
-    use transcript::Kind;
-    match kind {
+fn transcript_item(kind: transcript::Kind) -> Option<ChatTranscriptItem> {
+    use transcript::{Kind, Status};
+    Some(match kind {
+        Kind::User(ref text) | Kind::Assistant(ref text) if text.trim().is_empty() => return None,
+        Kind::Thinking(None) | Kind::Status(Status::TurnStarted | Status::TurnEnded) => {
+            return None;
+        }
         Kind::User(text) => ChatTranscriptItem::User { text },
-        Kind::Assistant(text) => ChatTranscriptItem::Assistant { text },
+        Kind::Assistant(text) => {
+            let blocks = crate::link_text::markdown(&text);
+            ChatTranscriptItem::Assistant {
+                text,
+                blocks: (!blocks.is_empty()).then_some(blocks),
+            }
+        }
         Kind::ToolCall { id, name, summary } => ChatTranscriptItem::ToolCall { id, name, summary },
         Kind::ToolResult {
             id,
@@ -403,15 +411,11 @@ fn transcript_item(kind: transcript::Kind) -> ChatTranscriptItem {
             failed,
         },
         Kind::Thinking(summary) => ChatTranscriptItem::Thinking { summary },
-        Kind::Status(status) => ChatTranscriptItem::Status {
-            text: match status {
-                transcript::Status::TurnStarted => "턴을 시작했습니다.".into(),
-                transcript::Status::TurnEnded => "턴이 끝났습니다.".into(),
-                transcript::Status::TurnStopped => "턴이 멈췄습니다.".into(),
-                transcript::Status::Notice(text) => text,
-            },
+        Kind::Status(Status::TurnStopped) => ChatTranscriptItem::Status {
+            text: "턴이 멈췄습니다.".into(),
         },
-    }
+        Kind::Status(Status::Notice(text)) => ChatTranscriptItem::Status { text },
+    })
 }
 
 fn fallback(reason: &str) -> ChatTranscript {

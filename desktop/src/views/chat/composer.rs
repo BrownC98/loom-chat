@@ -21,7 +21,7 @@ use self::picker::Picker;
 use self::targets::{Catalog, Plan, Target};
 use super::data::ChatData;
 use crate::scale::px;
-use crate::strings::Lang;
+use crate::strings::{Lang, Str};
 use crate::views::field::{self, Field, FieldEvent};
 use crate::views::pictures::{Pictures, PicturesEvent};
 use crate::views::viewer::Viewer;
@@ -35,8 +35,17 @@ struct Draft {
     selected: Option<Vec<Target>>,
     mode: Kind,
     follow_up: Option<(NodeId, WaitId)>,
-    sending: bool,
+    last_send: Option<i64>,
     error: Option<String>,
+}
+
+struct SentDraft {
+    text: String,
+    pictures: Entity<Pictures>,
+    quote: Option<Quote>,
+    selected: Option<Vec<Target>>,
+    mode: Kind,
+    follow_up: Option<(NodeId, WaitId)>,
 }
 
 struct Quote {
@@ -45,13 +54,16 @@ struct Quote {
 }
 
 impl Quote {
-    fn label(&self) -> String {
+    fn label(&self, cx: &App) -> String {
         let line = self
             .text
             .lines()
             .find(|line| !line.trim().is_empty())
             .unwrap_or("");
-        format!("{}의 말 · {line}", self.name)
+        match cx.global::<Lang>() {
+            Lang::Ko => format!("{}의 말 · {line}", self.name),
+            Lang::En => format!("From {} · {line}", self.name),
+        }
     }
 }
 
@@ -71,7 +83,10 @@ impl Draft {
         let Some(quote) = &self.quote else {
             return text.to_owned();
         };
-        let mut body = format!("{}의 말:", quote.name);
+        let mut body = match cx.global::<Lang>() {
+            Lang::Ko => format!("{}의 말:", quote.name),
+            Lang::En => format!("From {}:", quote.name),
+        };
         for line in quote.text.lines() {
             body.push_str("\n> ");
             body.push_str(line);
@@ -114,8 +129,13 @@ pub struct Composer {
     picker: Picker,
     alerts: Alerts,
     viewer: Entity<Viewer>,
+    pub(super) visible_waits: Vec<WaitId>,
     trigger: FocusHandle,
     cancel: FocusHandle,
+    mode_trigger: FocusHandle,
+    mode_options: [FocusHandle; 3],
+    mode_menu: bool,
+    mode_bounds: Rc<Cell<Bounds<Pixels>>>,
     review: Option<Vec<Impact>>,
     bounds: Rc<Cell<Bounds<Pixels>>>,
     _subscriptions: [Subscription; 2],
@@ -137,8 +157,13 @@ impl Composer {
             picker: Picker::new(cx),
             alerts,
             viewer,
+            visible_waits: Vec::new(),
             trigger: cx.focus_handle().tab_stop(true),
             cancel: cx.focus_handle().tab_stop(true),
+            mode_trigger: cx.focus_handle().tab_stop(true),
+            mode_options: std::array::from_fn(|_| cx.focus_handle().tab_stop(true)),
+            mode_menu: false,
+            mode_bounds: Rc::new(Cell::new(Bounds::default())),
             review: None,
             bounds: Rc::new(Cell::new(Bounds::default())),
             _subscriptions: subscriptions,
@@ -155,36 +180,27 @@ impl Composer {
                 .is_some_and(|draft| draft.field.read(cx).focused(window));
         if changed {
             self.picker.open = false;
+            self.mode_menu = false;
             self.review = None;
             self.active = id;
         }
         let Some(id) = self.active.clone() else {
             return;
         };
+        let composer = cx.weak_entity();
         self.drafts.entry(id.clone()).or_insert_with(|| {
-            let changed_room = id.clone();
             let pictures = cx.new(|_| Pictures::draft());
             let field = field::boxed("", false, true, cx);
-            field.update(cx, |field, cx| {
-                field.set_inset(controls::ATTACH_INSET, controls::MODES_INSET, cx);
-                let pictures = pictures.clone();
+            let subscriptions = Self::observe_pictures(&id, &pictures, cx);
+            field.update(cx, |field, _| {
                 field.on_files(move |entries, _, cx| {
-                    pictures.update(cx, |pictures, cx| pictures.take_clipboard(entries, cx));
+                    let pictures = composer
+                        .upgrade()
+                        .and_then(|this| Some(this.read(cx).drafts.get(&id)?.pictures.clone()));
+                    if let Some(pictures) = pictures {
+                        pictures.update(cx, |pictures, cx| pictures.take_clipboard(entries, cx));
+                    }
                 });
-            });
-            let observe = cx.observe(&pictures, move |this, _, cx| {
-                if this.active.as_ref() == Some(&changed_room) {
-                    this.review = None;
-                    cx.notify();
-                }
-            });
-            let errors = cx.subscribe(&pictures, move |this, _, event, cx| {
-                if let PicturesEvent::Refused(error) = event
-                    && let Some(draft) = this.drafts.get_mut(&id)
-                {
-                    draft.error = Some(error.clone());
-                    cx.notify();
-                }
             });
             cx.subscribe_in(&field, window, |this, field, event, window, cx| {
                 if this.draft().is_some_and(|draft| draft.field == *field) {
@@ -204,11 +220,11 @@ impl Composer {
                 field,
                 pictures,
                 quote: None,
-                _pictures: [observe, errors],
+                _pictures: subscriptions,
                 selected: None,
                 mode: Kind::Queue,
                 follow_up: None,
-                sending: false,
+                last_send: None,
                 error: None,
             }
         });
@@ -230,9 +246,41 @@ impl Composer {
                     .collect(),
             );
         }
-        if focus_moved && data.room().is_some_and(|room| !room.archived) {
+        let should_focus = focus_moved && data.room().is_some_and(|room| !room.archived);
+        let inset = controls::mode_inset(cx);
+        draft.field.update(cx, |field, cx| {
+            field.set_inset(controls::ATTACH_INSET, inset, cx);
+        });
+        if should_focus {
             self.focus_input(window, cx);
         }
+    }
+
+    fn observe_pictures(
+        room: &str,
+        pictures: &Entity<Pictures>,
+        cx: &mut Context<Self>,
+    ) -> [Subscription; 2] {
+        let edited_room = room.to_owned();
+        let error_room = room.to_owned();
+        let observe = cx.observe(pictures, move |this, source, cx| {
+            if this.active.as_ref() == Some(&edited_room)
+                && this.draft().is_some_and(|draft| *draft.pictures == *source)
+            {
+                this.review = None;
+                cx.notify();
+            }
+        });
+        let errors = cx.subscribe(pictures, move |this, source, event, cx| {
+            if let PicturesEvent::Refused(error) = event
+                && let Some(draft) = this.drafts.get_mut(&error_room)
+                && *draft.pictures == *source
+            {
+                draft.error = Some(error.clone());
+                cx.notify();
+            }
+        });
+        [observe, errors]
     }
 
     pub(super) fn focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -255,7 +303,7 @@ impl Composer {
             .read(cx)
             .room()
             .is_some_and(|room| !room.archived && self.active.as_ref() == Some(&room.id))
-            && self.draft().is_some_and(|draft| !draft.sending)
+            && self.draft().is_some()
     }
 
     fn focus_input(&self, window: &mut Window, cx: &mut App) {
@@ -298,9 +346,9 @@ impl Composer {
             }
             ChatEntry::Transcript {
                 item: ChatTranscriptItem::User { text },
-            } => ("나", text.as_str()),
+            } => (local(cx, "나", "Me"), text.as_str()),
             ChatEntry::Transcript {
-                item: ChatTranscriptItem::Assistant { text },
+                item: ChatTranscriptItem::Assistant { text, .. },
             } => (room.name.as_str(), text.as_str()),
             _ => return,
         };
@@ -407,7 +455,7 @@ impl Composer {
         let catalog = Catalog::new(recipients);
         let plan = catalog.plan(draft.selected());
         if plan.unavailable {
-            self.set_error("보낼 수 없는 받는 이를 목록에서 빼 주세요.".into(), cx);
+            self.set_error(unavailable_recipient(cx).into(), cx);
             return;
         }
         if plan.count() == 0 {
@@ -429,7 +477,15 @@ impl Composer {
         }
         let files = draft.pictures.read(cx).attachments();
         if !files.is_empty() && plan.outside_rooms > 0 {
-            self.set_error("첨부 파일을 받을 에이전트를 고릅니다.".into(), cx);
+            self.set_error(
+                local(
+                    cx,
+                    "첨부 파일을 받을 에이전트를 고릅니다.",
+                    "Select agents to receive the attachments.",
+                )
+                .into(),
+                cx,
+            );
             return;
         }
         let mut request = plan.request(room, draft.text(cx), mode);
@@ -446,7 +502,15 @@ impl Composer {
         };
         if !files.is_empty() {
             if recipients.len() != plan.nodes.len() {
-                self.set_error("첨부 파일을 받을 사람을 다시 확인해 주세요.".into(), cx);
+                self.set_error(
+                    local(
+                        cx,
+                        "첨부 파일을 받을 사람을 다시 확인해 주세요.",
+                        "Check who will receive the attachments.",
+                    )
+                    .into(),
+                    cx,
+                );
                 return;
             }
             request.attachment_nodes = Some(recipients.iter().map(|(id, _)| *id).collect());
@@ -474,75 +538,102 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(draft) = self.draft_mut() else {
-            return;
-        };
-        draft.sending = true;
-        draft.error = None;
-        draft
-            .field
-            .update(cx, |field, cx| field.set_locked(true, cx));
-        draft
-            .pictures
-            .update(cx, |pictures, cx| pictures.set_locked(true, cx));
-        self.review = None;
-        self.focus_input(window, cx);
         let data = self.data.clone();
         let graph = data.read(cx).graph().clone();
+        let echo_text = attachments.preview(&req.text, cx);
+        let pictures = cx.new(|_| Pictures::draft());
+        let subscriptions = Self::observe_pictures(&room, &pictures, cx);
+        let id = data.update(cx, |data, cx| data.echo(&room, &req, echo_text, cx));
+        let draft = self.drafts.get_mut(&room).expect("sending draft");
+        let saved = SentDraft {
+            text: draft.field.read(cx).text().to_owned(),
+            pictures: std::mem::replace(&mut draft.pictures, pictures),
+            quote: draft.quote.take(),
+            selected: draft.selected.clone(),
+            mode: draft.mode,
+            follow_up: draft.follow_up.take(),
+        };
+        saved
+            .pictures
+            .update(cx, |pictures, cx| pictures.set_locked(true, cx));
+        draft._pictures = subscriptions;
+        draft.last_send = Some(id);
+        draft.error = None;
+        draft.field.update(cx, |field, cx| field.clear(cx));
+        self.review = None;
+        self.mode_menu = false;
+        self.focus_input(window, cx);
         let upload = attachments.upload(&graph, cx);
         cx.spawn(async move |this, cx| {
             let result = match upload.await {
                 Ok(suffix) => {
                     req.text.push_str(&suffix);
-                    let send = data.update(cx, |data, cx| data.send(req, cx));
+                    let send = data.update(cx, |data, cx| data.send(&room, id, req, cx));
                     send.await
                 }
                 Err(error) => Err(error),
             };
-            let sent = result.is_ok();
-            let _ = this.update(cx, |this, cx| {
-                if let Some(draft) = this.drafts.get_mut(&room) {
-                    draft.sending = false;
-                    draft.error = result.err();
-                    draft.field.update(cx, |field, cx| {
-                        field.set_locked(false, cx);
-                        if sent {
-                            field.clear(cx);
-                        }
-                    });
-                    draft.pictures.update(cx, |pictures, cx| {
-                        pictures.set_locked(false, cx);
-                        if sent {
-                            pictures.clear(cx);
-                        }
-                    });
-                    if sent {
-                        draft.quote = None;
-                        draft.follow_up = None;
-                    }
-                    cx.notify();
-                }
-            });
-            if !sent {
-                data.update(cx, |data, cx| data.refresh(cx));
+            let result = data.update(cx, |data, cx| data.finish_send(&room, id, result, cx));
+            if let Err(error) = result {
+                let _ = this.update(cx, |this, cx| {
+                    this.restore_draft(&room, id, saved, error, cx)
+                });
                 return;
             }
+            saved.pictures.update(cx, |pictures, cx| pictures.clear(cx));
             if let Some(wait) = wait {
                 let dismissed = graph
                     .update(cx, |store, cx| store.dismiss_wait(wait, cx))
                     .await;
                 if let Err(error) = dismissed {
                     graph.update(cx, |store, cx| {
-                        store.tell(
-                            format!("말을 보냈지만 완료를 확인하지 못했습니다. {error}"),
+                        let message = local(
                             cx,
+                            "말을 보냈지만 완료를 확인하지 못했습니다.",
+                            "Message sent. Could not confirm the completed work.",
                         );
+                        store.tell(format!("{message} {error}"), cx);
                     });
                 }
             }
-            data.update(cx, |data, cx| data.refresh(cx));
         })
         .detach();
+        cx.notify();
+    }
+
+    fn restore_draft(
+        &mut self,
+        room: &str,
+        id: i64,
+        saved: SentDraft,
+        error: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(draft) = self.drafts.get_mut(room) else {
+            return;
+        };
+        if draft.last_send == Some(id)
+            && draft.field.read(cx).text().is_empty()
+            && !draft.field.read(cx).composing()
+            && draft.quote.is_none()
+            && draft.pictures.read(cx).is_empty()
+            && !draft.pictures.read(cx).busy()
+            && draft.selected == saved.selected
+            && draft.mode == saved.mode
+            && draft.follow_up.is_none()
+        {
+            draft._pictures = Self::observe_pictures(room, &saved.pictures, cx);
+            draft.pictures = saved.pictures;
+            draft
+                .pictures
+                .update(cx, |pictures, cx| pictures.set_locked(false, cx));
+            draft.quote = saved.quote;
+            draft.follow_up = saved.follow_up;
+            draft
+                .field
+                .update(cx, |field, cx| field.set_text_at_end(&saved.text, cx));
+        }
+        draft.error = Some(error);
         cx.notify();
     }
 }
@@ -554,6 +645,7 @@ impl Render for Composer {
         let bounds = self.bounds.clone();
         let colors = ui::colors(cx);
         let panel = div()
+            .capture_key_down(cx.listener(Self::alert_key))
             .on_key_down(tab)
             .relative()
             .flex_none()
@@ -583,11 +675,11 @@ impl Render for Composer {
             return div();
         };
         if room.archived {
-            return panel.child(
-                div()
-                    .text_color(colors.ink_2)
-                    .child("보관된 방입니다. 새 말을 보낼 수 없습니다."),
-            );
+            return panel.child(div().text_color(colors.ink_2).child(local(
+                cx,
+                "보관된 방입니다. 새 말을 보낼 수 없습니다.",
+                "This room is archived. You cannot send new messages.",
+            )));
         }
         let catalog = data.recipients().map(Catalog::new);
         let plan = catalog
@@ -606,15 +698,32 @@ impl Render for Composer {
 }
 
 fn state_label(state: &api::graph::Status, cx: &App) -> String {
-    status::chip(state, *cx.global::<Lang>())
-        .map_or_else(|| "내 답을 기다림".to_owned(), |chip| chip.text)
+    status::chip(state, *cx.global::<Lang>()).map_or_else(
+        || ui::say(cx, Str::NodeStatusChipAnswer).to_owned(),
+        |chip| chip.text,
+    )
 }
 
-fn mode_label(mode: Kind) -> &'static str {
+fn mode_label(mode: Kind, cx: &App) -> &'static str {
     match mode {
-        Kind::Queue => "일반",
-        Kind::Steer => "조정",
-        Kind::Interrupt => "중단",
+        Kind::Queue => local(cx, "일반", "Queue"),
+        Kind::Steer => ui::say(cx, Str::EventsHowSteer),
+        Kind::Interrupt => ui::say(cx, Str::EventsHowInterrupt),
+    }
+}
+
+fn unavailable_recipient(cx: &App) -> &'static str {
+    local(
+        cx,
+        "보낼 수 없는 받는 이를 목록에서 빼 주세요.",
+        "Remove recipients who cannot receive this message.",
+    )
+}
+
+fn local(cx: &App, ko: &'static str, en: &'static str) -> &'static str {
+    match cx.global::<Lang>() {
+        Lang::Ko => ko,
+        Lang::En => en,
     }
 }
 

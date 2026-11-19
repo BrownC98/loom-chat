@@ -60,6 +60,9 @@ pub enum Block {
     /// 코드 블록. 화면은 줄을 바꾸지 않고 그린다.
     Code {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        language: Option<String>,
     },
     /// `start`가 있으면 번호 목록이고 첫 번호다.
     List {
@@ -110,7 +113,7 @@ impl Block {
             .iter()
             .map(|block| match block {
                 Self::Paragraph { parts } | Self::Heading { parts, .. } => inline(parts),
-                Self::Code { text } => text.clone(),
+                Self::Code { text, .. } => text.clone(),
                 Self::List { items, .. } => items
                     .iter()
                     .map(|item| format!("• {}", Self::shown(item)))

@@ -2,21 +2,28 @@ use api::graph::chat::ChatRoom;
 use api::graph::messages::Kind;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Context, Div, ExternalPaths, FontWeight, InteractiveElement, KeyDownEvent, ParentElement, Role,
-    StatefulInteractiveElement, Styled, Toggled, div,
+    Anchor, Context, Div, ExternalPaths, FontWeight, InteractiveElement, KeyDownEvent,
+    ParentElement, Role, StatefulInteractiveElement, Styled, Toggled, Window, anchored, canvas,
+    deferred, div, point,
 };
 
 use super::targets::{self, Catalog, Plan, Target};
-use super::{Composer, Draft, SendIntent, mode_label};
+use super::{Composer, Draft, SendIntent, local, mode_label, tab, unavailable_recipient};
 use crate::scale::px;
 use crate::strings::{Lang, Str};
+use crate::theme::mix;
 use crate::views::icons::{Lucide, icon};
 use crate::views::pictures;
 use crate::views::tooltip::tip;
 use crate::views::{status, ui, widgets::btn};
 
 pub(super) const ATTACH_INSET: f32 = 24.0;
-pub(super) const MODES_INSET: f32 = 132.0;
+pub(super) fn mode_inset(cx: &gpui::App) -> f32 {
+    match cx.global::<Lang>() {
+        Lang::Ko => 62.0,
+        Lang::En => 88.0,
+    }
+}
 
 impl Composer {
     pub(super) fn controls(
@@ -35,14 +42,14 @@ impl Composer {
         let ready =
             writable && draft.has_content(cx) && !busy && plan.count() > 0 && !plan.unavailable;
         let placeholder = if plan.count() == 0 {
-            "받는 이를 고릅니다"
+            local(cx, "받는 이를 고릅니다", "Choose recipients")
         } else {
-            "보낼 말"
+            ui::say(cx, Str::ComposerPlaceholder)
         };
         let paperclip = btn::tabbable(div().id("chat-attach"), cx)
             .role(Role::Button)
-            .aria_label("파일 첨부")
-            .tooltip(tip("파일 첨부".into()))
+            .aria_label(ui::say(cx, Str::ComposerAttachFile))
+            .tooltip(tip(ui::say(cx, Str::ComposerAttachFile).into()))
             .flex()
             .items_center()
             .justify_center()
@@ -51,18 +58,18 @@ impl Composer {
             .top(px(3.0))
             .left(px(4.0))
             .child(icon(Lucide::Paperclip, px(15.0), c.ink_2))
-            .when(!draft.sending, |button| {
+            .cursor_pointer()
+            .on_click({
                 let pictures = draft.pictures.clone();
-                button.cursor_pointer().on_click(move |_, _, cx| {
+                move |_, _, cx| {
                     pictures.update(cx, |pictures, cx| pictures.pick_files(cx));
-                })
-            })
-            .when(draft.sending, btn::inert);
+                }
+            });
         let input = div()
             .id("chat-message")
             .track_focus(&field.handle().tab_stop(false))
             .role(Role::MultilineTextInput)
-            .aria_label("보낼 말")
+            .aria_label(ui::say(cx, Str::ComposerPlaceholder))
             .aria_value(field.text().to_owned())
             .aria_placeholder(placeholder)
             .relative()
@@ -80,27 +87,38 @@ impl Composer {
                     .absolute()
                     .top(px(5.0))
                     .left(px(8.0 + ATTACH_INSET))
-                    .right(px(MODES_INSET))
+                    .right(px(mode_inset(cx)))
                     .truncate()
                     .text_color(c.ink_3)
                     .child(placeholder)
             }))
             .child(paperclip)
             .child(self.modes(mode, writable, plan, cx));
-        let sender = match (draft.sending, plan.count(), mode) {
-            (true, _, _) => "보내는 중".to_owned(),
-            (false, 0, _) => "받는 이를 고르면 보낼 수 있습니다".to_owned(),
-            (false, n, Kind::Interrupt) => format!("{n}명에게 중단하고 보내기"),
-            (false, _, _) if plan.outside_rooms > 0 => "고른 받는 이에게 보내기".to_owned(),
-            (false, n, _) => format!("{n}명에게 보내기"),
+        let count = plan.count();
+        let lang = *cx.global::<Lang>();
+        let sender = match (lang, count, mode) {
+            (_, 0, _) => local(
+                cx,
+                "받는 이를 고르면 보낼 수 있습니다",
+                "Choose recipients to send",
+            )
+            .to_owned(),
+            (Lang::Ko, n, Kind::Interrupt) => format!("{n}명에게 중단하고 보내기"),
+            (Lang::En, n, Kind::Interrupt) => format!("Interrupt and send to {n}"),
+            (_, _, _) if plan.outside_rooms > 0 => {
+                local(cx, "고른 받는 이에게 보내기", "Send to selected recipients").to_owned()
+            }
+            (Lang::Ko, n, _) => format!("{n}명에게 보내기"),
+            (Lang::En, n, _) => format!("Send to {n}"),
         };
         let warning = if plan.unavailable {
-            Some("보낼 수 없는 받는 이를 목록에서 빼 주세요.")
+            Some(unavailable_recipient(cx))
         } else if catalog.is_none() {
-            self.data
-                .read(cx)
-                .error()
-                .or(Some("받는 이 목록을 불러올 때까지 기다려 주세요."))
+            self.data.read(cx).error().or(Some(local(
+                cx,
+                "받는 이 목록을 불러올 때까지 기다려 주세요.",
+                "Wait for the recipient list to load.",
+            )))
         } else {
             None
         };
@@ -122,7 +140,7 @@ impl Composer {
             })
             .when(!ready, |button| btn::inert(button).opacity(0.55))
             .when(plan.count() > 1 && plan.outside_rooms == 0, |button| {
-                button.child(format!("{}명에게", plan.count()))
+                button.child(recipient_count(plan.count(), lang))
             })
             .child(icon(Lucide::ArrowUp, px(15.0), ink));
         let viewer = self.viewer.clone();
@@ -153,24 +171,21 @@ impl Composer {
                     .pl(px(7.0))
                     .bg(c.surface)
                     .child(icon(Lucide::MessageSquare, px(13.0), c.ink_2))
-                    .child(div().min_w_0().truncate().child(quote.label()))
+                    .child(div().min_w_0().truncate().child(quote.label(cx)))
                     .child(
                         btn::ghost("chat-quote-remove", cx)
                             .role(Role::Button)
-                            .aria_label("인용문 빼기")
-                            .tooltip(tip("인용문 빼기".into()))
+                            .aria_label(local(cx, "인용문 빼기", "Remove quote"))
+                            .tooltip(tip(local(cx, "인용문 빼기", "Remove quote").into()))
                             .child(icon(Lucide::X, px(12.0), c.ink_2))
-                            .when(draft.sending, btn::inert)
-                            .when(!draft.sending, |button| {
-                                button.on_click(cx.listener(|this, _, window, cx| {
-                                    if let Some(draft) = this.draft_mut() {
-                                        draft.quote = None;
-                                    }
-                                    this.review = None;
-                                    this.focus_input(window, cx);
-                                    cx.notify();
-                                }))
-                            }),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                if let Some(draft) = this.draft_mut() {
+                                    draft.quote = None;
+                                }
+                                this.review = None;
+                                this.focus_input(window, cx);
+                                cx.notify();
+                            })),
                     )
             }))
             .children(
@@ -178,11 +193,7 @@ impl Composer {
                     .then(|| self.selected_chips(room, draft, catalog, cx)),
             )
             .children(attachments)
-            .children(busy.then(|| div().child("파일을 읽는 중")))
-            .children(
-                (draft.sending && !draft.pictures.read(cx).is_empty())
-                    .then(|| div().child("첨부 파일을 올리고 보내는 중")),
-            )
+            .children(busy.then(|| div().child(local(cx, "파일을 읽는 중", "Reading files…"))))
             .child(
                 div()
                     .id("chat-composer-row")
@@ -245,21 +256,31 @@ impl Composer {
         let local_rooms = data.rooms();
         for (index, target) in selected.iter().cloned().enumerate() {
             let label = match &target {
-                Target::Room(id) if id == &room.id => "방 전체",
-                _ => targets::name(&target, catalog, local_rooms).unwrap_or("알 수 없는 받는 이"),
+                Target::Room(id) if id == &room.id => local(cx, "방 전체", "Entire room"),
+                _ => targets::name(&target, catalog, local_rooms).unwrap_or(local(
+                    cx,
+                    "알 수 없는 받는 이",
+                    "Unknown recipient",
+                )),
             };
             let unavailable = catalog.is_some_and(|catalog| match &target {
                 Target::Room(id) => catalog.room(id).is_none(),
                 Target::Node(node) => catalog.node(*node).is_none(),
             });
-            let name = format!("{label} 빼기");
+            let name = match cx.global::<Lang>() {
+                Lang::Ko => format!("{label} 빼기"),
+                Lang::En => format!("Remove {label}"),
+            };
             let title = match &target {
                 Target::Room(id) => catalog
                     .and_then(|catalog| catalog.room(id))
                     .filter(|room| !room.members.is_empty())
                     .map_or_else(
                         || label.to_owned(),
-                        |room| format!("{label} · {}명", room.members.len()),
+                        |room| match cx.global::<Lang>() {
+                            Lang::Ko => format!("{label} · {}명", room.members.len()),
+                            Lang::En => format!("{label} · {} members", room.members.len()),
+                        },
                     ),
                 _ => label.to_owned(),
             };
@@ -286,7 +307,7 @@ impl Composer {
                     })
                     .when(!can_edit, btn::inert)
                     .child(div().truncate().max_w(px(180.0)).child(title))
-                    .children(unavailable.then_some("끝남"))
+                    .children(unavailable.then_some(ui::say(cx, Str::NodeStatusChipStopped)))
                     .child(icon(Lucide::X, px(12.0), c.ink_2)),
             );
         }
@@ -301,14 +322,22 @@ impl Composer {
         cx: &Context<Self>,
     ) -> gpui::Stateful<Div> {
         let c = ui::colors(cx);
+        let lang = *cx.global::<Lang>();
+        let recipient = local(cx, "받는 이", "Recipients");
         let label = match draft.selected() {
-            [] => "받는 이".to_owned(),
-            [target] => targets::name(target, catalog, self.data.read(cx).rooms())
-                .map_or_else(|| "받는 이".to_owned(), |name| format!("{name}에게")),
-            _ if plan.outside_rooms == 0 => format!("{}명에게", plan.count()),
-            _ => format!("{}곳에", plan.count()),
+            [] => recipient.to_owned(),
+            [target] => targets::name(target, catalog, self.data.read(cx).rooms()).map_or_else(
+                || recipient.to_owned(),
+                |name| ui::say_with(cx, Str::ComposerToNode, &[("name", name)]),
+            ),
+            _ if plan.outside_rooms == 0 => recipient_count(plan.count(), lang),
+            _ => match lang {
+                Lang::Ko => format!("{}곳에", plan.count()),
+                Lang::En => format!("To {} rooms", plan.count()),
+            },
         };
-        let title = format!("{label} · 받는 이 고르기 (Alt+L)");
+        let choose = local(cx, "받는 이 고르기 (Alt+L)", "Choose recipients (Alt+L)");
+        let title = format!("{label} · {choose}");
         btn::button("chat-picker-trigger", cx)
             .role(Role::Button)
             .track_focus(&self.trigger)
@@ -331,7 +360,7 @@ impl Composer {
                     }
                 }))
             })
-            .when(draft.sending, btn::inert)
+            .when(!self.writable(cx), btn::inert)
             .child(div().min_w_0().truncate().child(label))
             .child(icon(
                 if self.picker.open {
@@ -346,46 +375,192 @@ impl Composer {
 
     fn modes(&self, mode: Kind, writable: bool, plan: &Plan, cx: &Context<Self>) -> Div {
         let c = ui::colors(cx);
-        let mut modes = div()
-            .flex()
-            .absolute()
-            .right(px(4.0))
-            .top(px(3.0))
-            .items_center()
-            .gap(px(2.0));
-        for (index, &kind) in Kind::ALL.iter().enumerate() {
-            let disabled = !writable || (plan.queue_only && kind != Kind::Queue);
-            modes = modes.child(
-                btn::button(("chat-delivery", index), cx)
-                    .role(Role::Button)
-                    .aria_label(mode_label(kind))
-                    .tooltip(tip(match kind {
-                        Kind::Queue => "일반 · 하던 일이 끝나면 읽습니다",
-                        Kind::Steer => "조정 · 하던 일 사이에 읽습니다",
-                        Kind::Interrupt => "중단 · 하던 일을 멈추고 읽습니다",
+        let bounds = self.mode_bounds.clone();
+        let delivery = local(cx, "전달 방식", "Delivery mode");
+        let (line, fill) = match mode {
+            Kind::Queue => (c.line_strong, c.bg),
+            Kind::Steer => (c.run, mix(c.run, 0.13, c.surface)),
+            Kind::Interrupt => (c.err, mix(c.err, 0.13, c.surface)),
+        };
+        let active = Kind::ALL
+            .iter()
+            .position(|&kind| kind == mode)
+            .unwrap_or_default();
+        let chip = btn::button("chat-delivery", cx)
+            .track_focus(&self.mode_trigger)
+            .role(Role::Button)
+            .aria_label(format!("{delivery} · {}", mode_label(mode, cx)))
+            .aria_expanded(self.mode_menu)
+            .border_color(line)
+            .bg(fill)
+            .px(px(5.0))
+            .py_0()
+            .h(px(24.0))
+            .min_h(px(24.0))
+            .gap(px(2.0))
+            .text_size(px(ui::SMALL))
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(div().min_w_0().truncate().child(mode_label(mode, cx)))
+            .max_w(px(mode_inset(cx) - 4.0))
+            .child(icon(Lucide::ChevronDown, px(11.0), c.ink_2))
+            .when(!writable, |button| btn::inert(button).opacity(0.55))
+            .when(writable, |button| {
+                button.on_click(cx.listener(move |this, _, window, cx| {
+                    this.mode_menu = !this.mode_menu;
+                    if this.mode_menu {
+                        this.picker.open = false;
+                        window.focus(&this.mode_options[active], cx);
                     }
-                    .into()))
-                    .px_0()
-                    .py_0()
-                    .h(px(24.0))
-                    .w(px(40.0))
-                    .justify_center()
-                    .aria_toggled(Toggled::from(kind == mode))
-                    .when(kind == mode, |button| button.bg(c.accent_wash))
-                    .when(disabled, |button| btn::inert(button).opacity(0.55))
-                    .when(!disabled, |button| {
-                        button.on_click(cx.listener(move |this, _, _, cx| {
-                            if let Some(draft) = this.draft_mut() {
-                                draft.mode = kind;
-                            }
-                            this.review = None;
+                    cx.notify();
+                }))
+            });
+        let mut modes = div()
+            .absolute()
+            .bottom(px(3.0))
+            .right(px(3.0))
+            .child(
+                canvas(move |area, _, _| bounds.set(area), |_, _, _, _| {})
+                    .absolute()
+                    .size_full(),
+            )
+            .child(chip);
+        if writable && self.mode_menu {
+            let queue_only = plan.queue_only;
+            let bounds = self.mode_bounds.get();
+            let mut popup = div()
+                .id("chat-delivery-options")
+                .role(Role::Group)
+                .aria_label(delivery)
+                .w(px(300.0))
+                .p(px(6.0))
+                .gap(px(3.0))
+                .flex()
+                .flex_col()
+                .rounded(px(7.0))
+                .border_1()
+                .border_color(c.line_strong)
+                .bg(c.panel)
+                .occlude()
+                .on_mouse_down_out(
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                        if !this.mode_bounds.get().contains(&event.position) {
+                            this.mode_menu = false;
                             cx.notify();
-                        }))
-                    })
-                    .child(mode_label(kind)),
+                        }
+                    }),
+                )
+                .capture_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                    this.mode_key(event, queue_only, window, cx);
+                }))
+                .child(div().px(px(6.0)).text_color(c.ink_2).child(delivery));
+            for (index, &kind) in Kind::ALL.iter().enumerate() {
+                let disabled = queue_only && kind != Kind::Queue;
+                let description = mode_description(kind, cx);
+                let choice =
+                    btn::ghost(("chat-delivery-option", index), cx)
+                        .track_focus(&self.mode_options[index])
+                        .role(Role::Button)
+                        .aria_toggled(Toggled::from(kind == mode))
+                        .aria_label(format!("{} · {description}", mode_label(kind, cx)))
+                        .justify_start()
+                        .when(kind == mode, |row| row.bg(c.accent_wash))
+                        .when(disabled, |row| btn::inert(row).opacity(0.55))
+                        .when(!disabled, |row| {
+                            row.on_click(cx.listener(move |this, _, window, cx| {
+                                if let Some(draft) = this.draft_mut() {
+                                    draft.mode = kind;
+                                }
+                                this.mode_menu = false;
+                                this.review = None;
+                                window.focus(&this.mode_trigger, cx);
+                                cx.notify();
+                            }))
+                        })
+                        .child(div().size(px(14.0)).children(
+                            (kind == mode).then(|| icon(Lucide::Check, px(14.0), c.accent)),
+                        ))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .items_start()
+                                .child(
+                                    div()
+                                        .font_weight(FontWeight::SEMIBOLD)
+                                        .child(mode_label(kind, cx)),
+                                )
+                                .child(
+                                    div()
+                                        .text_size(px(ui::SMALL))
+                                        .text_color(c.ink_2)
+                                        .child(description),
+                                ),
+                        );
+                popup = popup.child(choice);
+            }
+            modes = modes.child(
+                deferred(
+                    anchored()
+                        .position(point(bounds.right(), bounds.top()))
+                        .anchor(Anchor::BottomRight)
+                        .offset(point(px(0.0), -px(6.0)))
+                        .snap_to_window()
+                        .child(popup),
+                )
+                .with_priority(1),
             );
         }
         modes
+    }
+
+    fn mode_key(
+        &mut self,
+        event: &KeyDownEvent,
+        queue_only: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let stroke = &event.keystroke;
+        if stroke.key == "tab"
+            && !(stroke.modifiers.alt || stroke.modifiers.control || stroke.modifiers.platform)
+        {
+            self.mode_menu = false;
+            window.focus(&self.mode_trigger, cx);
+            tab(event, window, cx);
+            cx.notify();
+            return;
+        }
+        if stroke.modifiers.modified() {
+            return;
+        }
+        match stroke.key.as_str() {
+            "escape" => {
+                self.mode_menu = false;
+                window.focus(&self.mode_trigger, cx);
+                cx.notify();
+            }
+            "up" | "down" => {
+                let current = self
+                    .mode_options
+                    .iter()
+                    .position(|focus| focus.is_focused(window))
+                    .unwrap_or_default();
+                let step = if stroke.key == "up" {
+                    self.mode_options.len() - 1
+                } else {
+                    1
+                };
+                let next = if queue_only {
+                    0
+                } else {
+                    (current + step) % self.mode_options.len()
+                };
+                window.focus(&self.mode_options[next], cx);
+            }
+            _ => return,
+        }
+        window.prevent_default();
+        cx.stop_propagation();
     }
 
     fn confirmation(
@@ -413,7 +588,11 @@ impl Composer {
             if let Some(since) = status::since_short(impact.since, lang) {
                 detail.push_str(&format!(" · {since}"));
             }
-            let task = impact.task.as_deref().unwrap_or("작업 내용 없음");
+            let task =
+                impact
+                    .task
+                    .as_deref()
+                    .unwrap_or(local(cx, "작업 내용 없음", "No task details"));
             detail.push_str(&format!(" · {task}"));
             rows = rows.child(
                 div()
@@ -426,7 +605,7 @@ impl Composer {
         div()
             .id("chat-interrupt-review")
             .role(Role::Group)
-            .aria_label("중단 확인")
+            .aria_label(local(cx, "중단 확인", "Confirm interruption"))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     this.cancel_review(window, cx);
@@ -440,13 +619,17 @@ impl Composer {
             .rounded(px(6.0))
             .border_1()
             .border_color(c.err)
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(format!("{}명의 일을 멈춥니다.", plan.count())),
-            )
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(match lang {
+                Lang::Ko => format!("{}명의 일을 멈춥니다.", plan.count()),
+                Lang::En if plan.count() == 1 => "Stop work for one agent.".to_owned(),
+                Lang::En => format!("Stop work for {} agents.", plan.count()),
+            }))
             .child(rows)
-            .child("멈춘 일은 이어서 하지 못합니다.")
+            .child(local(
+                cx,
+                "멈춘 일은 이어서 하지 못합니다.",
+                "Stopped work cannot resume.",
+            ))
             .child(
                 div()
                     .flex()
@@ -463,14 +646,41 @@ impl Composer {
                     .child(
                         btn::filled("chat-interrupt-confirm", c.err, c.err_ink, cx)
                             .child(if changes {
-                                "바뀐 작업 확인"
+                                local(cx, "바뀐 작업 확인", "Review changed work")
                             } else {
-                                "중단하고 보내기"
+                                local(cx, "중단하고 보내기", "Interrupt and send")
                             })
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.submit(SendIntent::ConfirmInterrupt, window, cx)
                             })),
                     ),
             )
+    }
+}
+
+fn recipient_count(count: usize, lang: Lang) -> String {
+    match lang {
+        Lang::Ko => format!("{count}명에게"),
+        Lang::En => format!("To {count}"),
+    }
+}
+
+fn mode_description(mode: Kind, cx: &gpui::App) -> &'static str {
+    match mode {
+        Kind::Queue => local(
+            cx,
+            "하던 일이 끝나면 읽습니다",
+            "Read after the current work ends",
+        ),
+        Kind::Steer => local(
+            cx,
+            "하던 일 사이에 읽습니다",
+            "Read between steps of the current work",
+        ),
+        Kind::Interrupt => local(
+            cx,
+            "하던 일을 멈추고 읽습니다",
+            "Stop the current work and read",
+        ),
     }
 }

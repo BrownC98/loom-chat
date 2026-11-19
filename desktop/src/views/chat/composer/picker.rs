@@ -13,9 +13,9 @@ use gpui::{
 };
 
 use super::targets::{Catalog, Target, group};
-use super::{Composer, state_label, tab};
+use super::{Composer, local, state_label, tab};
 use crate::scale::px;
-use crate::strings::Str;
+use crate::strings::{Lang, Str};
 use crate::theme::Colors;
 use crate::views::field::{self, Field, FieldEvent};
 use crate::views::icons::{Lucide, icon};
@@ -46,13 +46,13 @@ impl Filter {
         Self::Rooms,
     ];
 
-    fn label(self) -> &'static str {
+    fn label(self, cx: &App) -> &'static str {
         match self {
-            Self::All => "전체",
-            Self::Human => "내 답을 기다림",
-            Self::Working => "일하는 중",
-            Self::Idle => "쉬는 중",
-            Self::Rooms => "방",
+            Self::All => local(cx, "전체", "All"),
+            Self::Human => ui::say(cx, Str::NodeStatusChipAnswer),
+            Self::Working => ui::say(cx, Str::NodeStatusChipWorking),
+            Self::Idle => ui::say(cx, Str::NodeStatusChipIdle),
+            Self::Rooms => local(cx, "방", "Rooms"),
         }
     }
 
@@ -111,7 +111,16 @@ pub(super) struct Picker {
 
 impl Picker {
     pub fn new(cx: &mut Context<Composer>) -> Self {
-        let query = field::boxed("이름·방·하네스로 찾기", false, false, cx);
+        let query = field::boxed(
+            local(
+                cx,
+                "이름·방·하네스로 찾기",
+                "Find by name, room, or harness",
+            ),
+            false,
+            false,
+            cx,
+        );
         let query_subscription = cx.subscribe(&query, |this, _, event, cx| {
             if let FieldEvent::Changed = event {
                 this.picker.reset_highlight();
@@ -152,14 +161,16 @@ impl Picker {
         let members: HashSet<_> = room.members.iter().copied().collect();
         let pinned = matches!(room.kind, ChatRoomKind::Pinned);
         let mut listing = Listing::default();
-        let mut local = Vec::new();
+        let mut local_rows = Vec::new();
         let mut others = Vec::new();
         let mut last = None;
         for (index, agent) in catalog.agents.iter().enumerate() {
             let work = catalog
                 .room(&agent.work)
-                .map_or("작업 없음", |room| room.name.as_str());
-            if !matches(&[&agent.name, work, harness(agent)]) {
+                .map_or(local(cx, "작업 없음", "No task"), |room| {
+                    room.name.as_str()
+                });
+            if !matches(&[&agent.name, work, harness(agent, cx)]) {
                 continue;
             }
             let filter = Filter::of(&agent.status);
@@ -168,7 +179,7 @@ impl Picker {
                 continue;
             }
             if !pinned && members.contains(&agent.node) {
-                local.push(Row::Agent(index));
+                local_rows.push(Row::Agent(index));
             } else {
                 if last != Some(agent.work.as_str()) {
                     others.push(Row::Head(work.to_owned()));
@@ -177,9 +188,11 @@ impl Picker {
                 others.push(Row::Agent(index));
             }
         }
-        if !local.is_empty() {
-            listing.rows.push(Row::Head("이 방의 구성원".to_owned()));
-            listing.rows.extend(local);
+        if !local_rows.is_empty() {
+            listing.rows.push(Row::Head(
+                local(cx, "이 방의 구성원", "Members of this room").to_owned(),
+            ));
+            listing.rows.extend(local_rows);
         }
         listing.rows.extend(others);
         let mut rooms = Vec::new();
@@ -192,9 +205,14 @@ impl Picker {
             }
         }
         if !rooms.is_empty() {
-            listing
-                .rows
-                .push(Row::Head("방 · 구성원 모두가 받습니다".to_owned()));
+            listing.rows.push(Row::Head(
+                local(
+                    cx,
+                    "방 · 구성원 모두가 받습니다",
+                    "Rooms · Send to all members",
+                )
+                .to_owned(),
+            ));
             listing.rows.extend(rooms);
         }
         listing
@@ -204,9 +222,10 @@ impl Picker {
 impl Composer {
     pub fn open_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_room(window, cx);
-        if !self.writable(cx) {
+        if !self.writable(cx) || self.alerts.expanded {
             return;
         }
+        self.mode_menu = false;
         if !self.picker.open {
             self.picker.open = true;
             self.review = None;
@@ -343,7 +362,7 @@ impl Composer {
             .id("chat-recipient-picker")
             .track_focus(&self.picker.focus)
             .role(Role::Group)
-            .aria_label("받는 이 목록")
+            .aria_label(local(cx, "받는 이 목록", "Recipients"))
             .capture_key_down(cx.listener(Self::picker_key))
             .on_key_down(tab)
             .occlude()
@@ -375,7 +394,11 @@ impl Composer {
                     .child(if catalog.is_some() {
                         ui::say(cx, Str::InboxNoMatch)
                     } else {
-                        "받는 이 목록을 불러오는 중입니다."
+                        local(
+                            cx,
+                            "받는 이 목록을 불러오는 중입니다.",
+                            "Loading recipients…",
+                        )
                     }),
             )
         } else {
@@ -401,7 +424,7 @@ impl Composer {
                     .id("chat-picker-rows")
                     .track_focus(&self.picker.list_focus)
                     .role(Role::ListBox)
-                    .aria_label("검색 결과")
+                    .aria_label(local(cx, "검색 결과", "Search results"))
                     .focus_visible(move |style| style.border_color(c.accent))
                     .border_1()
                     .border_color(c.line)
@@ -416,7 +439,11 @@ impl Composer {
                     .id("chat-picker-query")
                     .track_focus(&query.handle().tab_stop(false))
                     .role(Role::TextInput)
-                    .aria_label("이름·방·하네스로 찾기")
+                    .aria_label(local(
+                        cx,
+                        "이름·방·하네스로 찾기",
+                        "Find by name, room, or harness",
+                    ))
                     .aria_value(query.text().to_owned())
                     .child(self.picker.query.clone()),
             )
@@ -429,7 +456,11 @@ impl Composer {
                 div()
                     .text_color(c.ink_2)
                     .text_size(px(ui::SMALL))
-                    .child("↑↓ 이동 · Space 선택 · Enter 적용 · Esc 닫기"),
+                    .child(local(
+                        cx,
+                        "↑↓ 이동 · Space 선택 · Enter 적용 · Esc 닫기",
+                        "↑↓ Move · Space Select · Enter Apply · Esc Close",
+                    )),
             );
         deferred(
             anchored()
@@ -449,32 +480,32 @@ impl Composer {
             .flex()
             .items_center()
             .gap(px(8.0))
-            .child(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child("받는 이 목록"),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .text_color(ui::colors(cx).ink_2)
-                    .child(format!("{picked}곳 고름")),
-            )
+            .child(div().font_weight(FontWeight::SEMIBOLD).child(local(
+                cx,
+                "받는 이 목록",
+                "Recipients",
+            )))
+            .child(div().flex_1().text_color(ui::colors(cx).ink_2).child(
+                match cx.global::<Lang>() {
+                    Lang::Ko => format!("{picked}곳 고름"),
+                    Lang::En => format!("{picked} selected"),
+                },
+            ))
             .child(
                 btn::ghost("chat-picker-clear", cx)
                     .role(Role::Button)
-                    .aria_label("받는 이 모두 빼기")
+                    .aria_label(local(cx, "받는 이 모두 빼기", "Remove all recipients"))
                     .when(picked > 0, |button| {
                         button.on_click(
                             cx.listener(|this, _, _, cx| this.replace_targets(Vec::new(), cx)),
                         )
                     })
                     .when(picked == 0, btn::inert)
-                    .child("모두 풀기"),
+                    .child(local(cx, "모두 풀기", "Clear all")),
             )
             .child(
                 btn::ghost("chat-picker-close", cx)
-                    .aria_label("받는 이 목록 닫기")
+                    .aria_label(local(cx, "받는 이 목록 닫기", "Close recipient list"))
                     .child(icon(Lucide::X, px(13.0), ui::colors(cx).ink_2))
                     .on_click(cx.listener(|this, _, window, cx| this.close_picker(window, cx))),
             )
@@ -486,7 +517,7 @@ impl Composer {
             .into_iter()
             .fold(div().flex().flex_wrap().gap(px(6.0)), |row, filter| {
                 let selected = filter == self.picker.filter;
-                let label = format!("{} {}", filter.label(), counts[filter as usize]);
+                let label = format!("{} {}", filter.label(cx), counts[filter as usize]);
                 row.child(
                     btn::button(("chat-picker-filter", filter as usize), cx)
                         .aria_label(label.clone())
@@ -543,11 +574,11 @@ impl Composer {
                     &agent.name,
                     format!(
                         "{}{} · {task}",
-                        harness(agent),
+                        harness(agent, cx),
                         if agent.modes.contains(&Kind::Steer) {
                             ""
                         } else {
-                            " · 일반만"
+                            local(cx, " · 일반만", " · Queue only")
                         }
                     ),
                     agent.last_activity,
@@ -567,13 +598,14 @@ impl Composer {
                     })
                     .count();
                 let summary = if room.members.is_empty() {
-                    "외부 에이전트 · 일반만".to_owned()
+                    local(cx, "외부 에이전트 · 일반만", "Outside agent · Queue only").to_owned()
                 } else {
-                    format!(
-                        "구성원 {}명 · {}명이 일하는 중",
-                        room.members.len(),
-                        working
-                    )
+                    match cx.global::<Lang>() {
+                        Lang::Ko => {
+                            format!("구성원 {}명 · {working}명이 일하는 중", room.members.len())
+                        }
+                        Lang::En => format!("{} members · {working} working", room.members.len()),
+                    }
                 };
                 (
                     &room.name,
@@ -652,11 +684,13 @@ impl Composer {
     }
 }
 
-fn harness(agent: &ChatRecipient) -> &str {
+fn harness<'a>(agent: &'a ChatRecipient, cx: &App) -> &'a str {
     agent
         .harness
         .as_ref()
-        .map_or("명령 노드", |id| id.0.as_str())
+        .map_or(local(cx, "명령 노드", "Command node"), |id| {
+            id.0.as_str()
+        })
 }
 
 fn state_color(state: &Status, c: &Colors) -> gpui::Rgba {

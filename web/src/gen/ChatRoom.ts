@@ -2,4 +2,4 @@
 import type { ChatRoomKind } from "./ChatRoomKind";
 import type { NodeId } from "./NodeId";
 
-export type ChatRoom = { id: string, name: string, kind: ChatRoomKind, archived: boolean, members: Array<NodeId>, outside: string, unread: number, questions: number, done: number, lastActivity: number | null, };
+export type ChatRoom = { id: string, name: string, kind: ChatRoomKind, archived: boolean, members: Array<NodeId>, outside: string, unread: number, questions: number, done: number, lastActivity: number | null, lastPreview?: string, };

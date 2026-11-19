@@ -1,5 +1,5 @@
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-use pulldown_cmark::{Alignment, Event, Options, Parser, Tag, TagEnd};
+use pulldown_cmark::{Alignment, CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 use api::graph::text::{Align, Block, TextPart, drawable_form, is_url};
 
@@ -230,7 +230,7 @@ struct Shaped {
     heading: Option<u8>,
     strong: usize,
     emphasis: usize,
-    code: Option<String>,
+    code: Option<(String, Option<String>)>,
     link: Option<(String, String)>,
     skip: usize,
 }
@@ -306,14 +306,21 @@ impl Shaped {
                     }
                 }
             }
-            Event::Start(Tag::CodeBlock(_)) => {
+            Event::Start(Tag::CodeBlock(kind)) => {
                 self.flush();
-                self.code = Some(String::new());
+                let language = match kind {
+                    CodeBlockKind::Fenced(info) => {
+                        info.split_whitespace().next().map(str::to_owned)
+                    }
+                    CodeBlockKind::Indented => None,
+                };
+                self.code = Some((String::new(), language));
             }
             Event::End(TagEnd::CodeBlock) => {
-                let text = self.code.take().unwrap_or_default();
+                let (text, language) = self.code.take().unwrap_or_default();
                 self.push(Block::Code {
                     text: text.trim_end_matches('\n').to_owned(),
+                    language,
                 });
             }
             Event::Start(Tag::Link { dest_url, .. })
@@ -349,7 +356,7 @@ impl Shaped {
             Event::Text(t) | Event::Code(t) | Event::Html(t) | Event::InlineHtml(t)
                 if self.code.is_some() || self.link.is_some() =>
             {
-                if let Some(block) = self.code.as_mut() {
+                if let Some((block, _)) = self.code.as_mut() {
                     block.push_str(&t);
                 } else if let Some((_, label)) = self.link.as_mut() {
                     label.push_str(&t);

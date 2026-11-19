@@ -19,6 +19,7 @@ use super::questions::key_label;
 use super::ui::{self, GAP, SMALL};
 use crate::scale::fixed as px;
 use crate::store::{BusyChanged, Store};
+use crate::strings::Lang;
 use crate::strings::Str;
 use crate::theme::mix;
 use crate::views::field::{self, Field, FieldEvent};
@@ -818,9 +819,11 @@ pub(crate) fn composer(
     let id = wait.wait.id.0;
     let c = ui::colors(cx);
     let ink = entry::tone_of(wait.tone, &c);
-    let label = match wait.tone {
-        WaitTone::Ask => format!("{name}에게 답"),
-        WaitTone::Done => format!("{name}에게 이어서 맡기기"),
+    let label = match (wait.tone, cx.global::<Lang>()) {
+        (WaitTone::Ask, Lang::Ko) => format!("{name}에게 답"),
+        (WaitTone::Ask, Lang::En) => format!("Reply to {name}"),
+        (WaitTone::Done, Lang::Ko) => format!("{name}에게 이어서 맡기기"),
+        (WaitTone::Done, Lang::En) => format!("Follow up with {name}"),
     };
     let field = scaled(answers, id, Slot::Answer, wait.tone, z, cx)?;
     let pictures = answers.read(cx).attached.get(&id)?.pictures.clone();
@@ -837,8 +840,9 @@ pub(crate) fn composer(
     );
     let clip = pictures.clone();
     let attach = crate::views::widgets::btn::ghost(("answer-attach", id as usize), cx)
-        .aria_label("그림 붙이기")
-        .tooltip(tip("그림 붙이기".into()))
+        .aria_label(ui::say(cx, Str::InboxAttachImage))
+        .tooltip(tip(ui::say(cx, Str::InboxAttachImage).into()))
+        .flex_none()
         .child(icon(Lucide::Paperclip, px(14.0 * z), ink))
         .on_click(move |_, _, cx| clip.update(cx, |pictures, cx| pictures.pick_files(cx)));
     Some(
@@ -855,7 +859,9 @@ pub(crate) fn composer(
                     .gap(px(6.0 * z))
                     .child(
                         div()
-                            .flex_none()
+                            .min_w_0()
+                            .max_w(px(220.0 * z))
+                            .truncate()
                             .rounded(px(5.0 * z))
                             .px(px(8.0 * z))
                             .py(px(4.0 * z))

@@ -11,6 +11,7 @@ use api::graph::docs::PostOutside;
 use api::graph::errors::{BRIEF_LIMIT_BYTES, Refusal};
 use api::graph::events::Who;
 use api::graph::messages::{Kind, MessageKind, Question};
+use api::graph::text::Block;
 use api::graph::waits::{Closed, HumanWait};
 use api::ids::{AccountId, AgentId, NodeId, RepoId};
 
@@ -26,6 +27,7 @@ const OUTSIDE_SUFFIX: &str = " (outside agent)";
 const NOTICE_KINDS: &str = "('batch', 'accountSwitched', 'noAccountLeft', 'relaunched', 'endpointFailed', 'created', 'removed', 'tidied')";
 const EVENT_NODE: &str = "(CASE WHEN json_valid(entry) THEN entry ->> '$.node.id' END)";
 const ROOM_COLUMNS: &str = "SELECT id, name, archived FROM chat_rooms";
+const PREVIEW_CHARS: usize = 100;
 
 struct Room {
     id: String,
@@ -744,13 +746,37 @@ fn editable(db: &Connection, group: u32) -> rusqlite::Result<Option<bool>> {
 
 fn room_view(db: &Connection, key: &hmac::Key, room: Room) -> Result<ChatRoom, Refusal> {
     let sql = timeline_sql(&room, Audience::Human);
-    let (at, unread, questions, done) = db.query_row(
+    let (at, unread, questions, done, last_preview) = db.query_row(
         &format!(
-            "{sql} SELECT max(at), coalesce(sum(unread), 0),
-            coalesce(sum(question), 0), coalesce(sum(done), 0) FROM timeline"
+            "{sql}, latest AS (
+                SELECT source, id FROM timeline WHERE source IN (0, 1)
+                ORDER BY at DESC, source DESC, id DESC LIMIT 1
+            )
+            SELECT max(at), coalesce(sum(unread), 0), coalesce(sum(question), 0),
+                coalesce(sum(done), 0), (
+                    SELECT coalesce(m.body, t.text) FROM latest
+                    LEFT JOIN messages m ON latest.source = 0 AND m.id = latest.id
+                    LEFT JOIN doc_talk t ON latest.source = 1 AND t.id = latest.id
+                ) FROM timeline"
         ),
         params![room.id, timeline_scope(&room)],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        |row| {
+            let text = row.get_ref(4)?.as_str_or_null()?;
+            let preview = text.and_then(|text| {
+                let mut chars = visible_message(text)
+                    .split_whitespace()
+                    .enumerate()
+                    .flat_map(|(index, word)| {
+                        (index > 0).then_some(' ').into_iter().chain(word.chars())
+                    });
+                let mut preview: String = chars.by_ref().take(PREVIEW_CHARS).collect();
+                if chars.next().is_some() {
+                    preview.push('…');
+                }
+                (!preview.is_empty()).then_some(preview)
+            });
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, preview))
+        },
     )?;
     let token = URL_SAFE_NO_PAD.encode(hmac::sign(key, room.id.as_bytes()).as_ref());
     Ok(ChatRoom {
@@ -764,6 +790,7 @@ fn room_view(db: &Connection, key: &hmac::Key, room: Room) -> Result<ChatRoom, R
         questions,
         done,
         last_activity: at,
+        last_preview,
     })
 }
 
@@ -966,12 +993,19 @@ fn read_message(db: &Connection, room: &str, id: i64) -> rusqlite::Result<ChatMe
                 Some(MessageKind::Answer { question: Question::Message { id } }) => Some(id),
                 _ => None,
             };
+            let text: String = row.get(4)?;
+            let blocks = message_blocks(if origin == ChatOrigin::Outside {
+                visible_message(&text)
+            } else {
+                &text
+            });
             Ok(ChatMessage {
                 id: row.get(0)?,
                 group: row.get(1)?,
                 origin,
                 from,
-                text: row.get(4)?,
+                text,
+                blocks,
                 mode: Some(from_json(row, 5)?),
                 what,
                 reply_to,
@@ -1039,6 +1073,23 @@ fn display_outside(name: &str) -> String {
     doc_talk::outside_name(name).unwrap_or_else(|_| "외부 에이전트".to_owned())
 }
 
+fn visible_message(text: &str) -> &str {
+    const INTRO: &str = "An agent outside loom that calls itself ";
+    const SUFFIX: &str = "\nReply in the room with loom answer <this message id> \"<reply>\".";
+    if text.starts_with(INTRO)
+        && let Some((_, body)) = text.split_once('\n')
+        && let Some(body) = body.strip_suffix(SUFFIX)
+    {
+        return body;
+    }
+    text
+}
+
+fn message_blocks(text: &str) -> Option<Vec<Block>> {
+    let blocks = crate::link_text::markdown(text);
+    (!blocks.is_empty()).then_some(blocks)
+}
+
 fn origin(from: &Who) -> ChatOrigin {
     match (from.id, from.name.as_str()) {
         (Some(_), _) => ChatOrigin::Agent,
@@ -1077,6 +1128,8 @@ fn read_talk(db: &Connection, id: i64) -> rusqlite::Result<ChatMessage> {
                 ),
                 _ => (ChatOrigin::Agent, row.get(2)?),
             };
+            let text: String = row.get(4)?;
+            let blocks = message_blocks(&text);
             Ok(ChatMessage {
                 id: row.get(0)?,
                 group: None,
@@ -1085,7 +1138,8 @@ fn read_talk(db: &Connection, id: i64) -> rusqlite::Result<ChatMessage> {
                     name,
                 },
                 origin,
-                text: row.get(4)?,
+                text,
+                blocks,
                 mode: None,
                 what: None,
                 reply_to: row.get(5)?,

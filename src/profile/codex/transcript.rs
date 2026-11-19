@@ -52,7 +52,7 @@ fn find(dir: &Path, depth: usize, suffix: &str) -> io::Result<Option<PathBuf>> {
 pub(super) fn decode(entry: &Value, items: &mut Vec<Kind>) -> Parsed {
     let payload = &entry["payload"];
     match entry["type"].as_str().ok_or(Format)? {
-        "event_msg" => items.extend(event(payload)?),
+        "event_msg" => event(payload, items)?,
         "response_item" => items.extend(response(payload)?),
         "session_meta" | "turn_context" | "compacted" | "token_usage_record" | "world_state" => {
             if !payload.is_object() {
@@ -64,9 +64,9 @@ pub(super) fn decode(entry: &Value, items: &mut Vec<Kind>) -> Parsed {
     Ok(())
 }
 
-fn event(payload: &Value) -> Result<Option<Kind>, Format> {
-    Ok(Some(match payload["type"].as_str().ok_or(Format)? {
-        "item_completed" => return completed(&payload["item"]),
+fn event(payload: &Value, items: &mut Vec<Kind>) -> Parsed {
+    let kind = match payload["type"].as_str().ok_or(Format)? {
+        "item_completed" => return completed(&payload["item"], items),
         "user_message" => Kind::User(payload["message"].as_str().ok_or(Format)?.to_owned()),
         "agent_message" => Kind::Assistant(payload["message"].as_str().ok_or(Format)?.to_owned()),
         "agent_reasoning" => Kind::Thinking(payload["text"].as_str().and_then(summary)),
@@ -92,16 +92,35 @@ fn event(payload: &Value) -> Result<Option<Kind>, Format> {
         | "mcp_tool_call_end"
         | "web_search_begin"
         | "web_search_end"
-        | "warning" => return Ok(None),
+        | "warning" => return Ok(()),
         _ => return Err(Format),
-    }))
+    };
+    items.push(kind);
+    Ok(())
 }
 
-fn completed(item: &Value) -> Result<Option<Kind>, Format> {
+fn completed(item: &Value, items: &mut Vec<Kind>) -> Parsed {
     let kind = match item["type"].as_str().ok_or(Format)? {
         "UserMessage" | "userMessage" => Kind::User(text(&item["content"])?),
         "AgentMessage" | "agentMessage" => Kind::Assistant(text(&item["content"])?),
         "Reasoning" | "reasoning" => Kind::Thinking(output_summary(&item["summary_text"])),
+        "Extension" | "extension" if item["kind"] == "web.search" => {
+            let id = identifier(&item["id"]);
+            items.push(Kind::ToolCall {
+                id: id.clone(),
+                name: "web.search".to_owned(),
+                summary: item["query"].as_str().and_then(summary),
+            });
+            Kind::ToolResult {
+                id,
+                summary: item["results"]
+                    .as_array()
+                    .and_then(|results| results.first())
+                    .and_then(|result| result["snippet"].as_str())
+                    .and_then(summary),
+                failed: None,
+            }
+        }
         "CommandExecution"
         | "commandExecution"
         | "ImageView"
@@ -121,10 +140,13 @@ fn completed(item: &Value) -> Result<Option<Kind>, Format> {
         | "CollabAgentToolCall"
         | "collabAgentToolCall"
         | "EnteredReviewMode"
-        | "ExitedReviewMode" => return Ok(None),
+        | "ExitedReviewMode"
+        | "Extension"
+        | "extension" => return Ok(()),
         _ => return Err(Format),
     };
-    Ok(Some(kind))
+    items.push(kind);
+    Ok(())
 }
 
 fn text(content: &Value) -> Result<String, Format> {

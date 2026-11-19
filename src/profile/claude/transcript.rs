@@ -32,7 +32,8 @@ pub(super) fn decode(entry: &Value, items: &mut Vec<Kind>) -> Parsed {
             };
             items.extend(status.map(Kind::Status));
         }
-        "ai-title"
+        "agent-name"
+        | "ai-title"
         | "api-request"
         | "api-request-blob"
         | "api-request-shape"

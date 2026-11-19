@@ -505,6 +505,9 @@ const ko: typeof en = {
   },
   room: {
     title: '채팅방',
+    find: '방 이름·구성원 찾기',
+    name: '방 이름',
+    findAgents: '에이전트 찾기',
     tab: '채팅방 · {{name}}',
     copyLink: '링크 복사',
     copied: '복사했습니다',

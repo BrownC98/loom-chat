@@ -12,12 +12,13 @@ use gpui::{
 };
 
 use crate::scale::px;
-use crate::views::field::{self, Field, FieldEvent, Form};
+use crate::strings::{Lang, Str};
+use crate::views::field::{self, Field, FieldEvent};
 use crate::views::icons::{Lucide, agent_mark, icon};
-use crate::views::ui::colors;
+use crate::views::ui::{colors, say};
 use crate::views::widgets::btn;
 
-use super::{ChatData, note};
+use super::{ChatData, note, words};
 
 const PANEL_WIDTH: f32 = 380.0;
 const PANEL_LEFT: f32 = 288.0;
@@ -57,8 +58,8 @@ impl CreateRoom {
         trigger: FocusHandle,
         cx: &mut Context<Self>,
     ) -> Self {
-        let name = field::form("방 이름", false, false, Form::Plain, cx);
-        let search = field::form("에이전트 찾기", false, false, Form::Plain, cx);
+        let name = field::plain_label(Str::RoomName, cx);
+        let search = field::plain_label(Str::RoomFindAgents, cx);
         cx.observe(&data, |this, _, cx| {
             if this.open {
                 cx.notify();
@@ -132,7 +133,7 @@ impl CreateRoom {
         }
         let name = self.name.read(cx).text().trim().to_owned();
         if name.is_empty() {
-            self.error = Some("방 이름을 입력해 주세요.".into());
+            self.error = Some(words(cx, "방 이름을 입력해 주세요.", "Enter a room name.").into());
             window.focus(&self.name.read(cx).handle(), cx);
             cx.notify();
             return;
@@ -183,10 +184,11 @@ impl CreateRoom {
             .collect();
         let mut groups = BTreeMap::new();
         for agent in &recipients.agents {
-            let work = works
-                .get(agent.work.as_str())
-                .copied()
-                .unwrap_or("작업 없음");
+            let work = works.get(agent.work.as_str()).copied().unwrap_or(words(
+                cx,
+                "작업 없음",
+                "No work",
+            ));
             if !agent.name.to_lowercase().contains(&query) && !work.to_lowercase().contains(&query)
             {
                 continue;
@@ -217,14 +219,26 @@ impl CreateRoom {
             let data = self.data.read(cx);
             let label = if data.recipients().is_none() {
                 if data.loading() {
-                    "구성원을 불러옵니다."
+                    words(cx, "구성원을 불러옵니다.", "Loading members…")
                 } else {
-                    "구성원을 불러오지 못했습니다."
+                    words(
+                        cx,
+                        "구성원을 불러오지 못했습니다.",
+                        "Could not load members.",
+                    )
                 }
             } else if self.search.read(cx).is_blank() {
-                "고를 수 있는 구성원이 없습니다."
+                words(
+                    cx,
+                    "고를 수 있는 구성원이 없습니다.",
+                    "There are no members to select.",
+                )
             } else {
-                "검색에 맞는 구성원이 없습니다."
+                words(
+                    cx,
+                    "검색에 맞는 구성원이 없습니다.",
+                    "No members match your search.",
+                )
             };
             return picker.child(note(label, cx)).when(
                 data.recipients().is_none() && !data.loading(),
@@ -232,7 +246,7 @@ impl CreateRoom {
                     picker.child(
                         div().p(px(6.0)).child(
                             btn::button("chat-create-retry-members", cx)
-                                .child("다시 불러오기")
+                                .child(say(cx, Str::StatusBarRefresh))
                                 .on_click(cx.listener(|this, _, _, cx| {
                                     this.data.update(cx, |data, cx| data.refresh(cx));
                                 })),
@@ -302,7 +316,12 @@ impl CreateRoom {
                     .min_w_0()
                     .truncate()
                     .text_color(c.ink_2)
-                    .child(choice.harness.clone().unwrap_or_else(|| "터미널".into())),
+                    .child(
+                        choice
+                            .harness
+                            .clone()
+                            .unwrap_or_else(|| say(cx, Str::NodeTerminal).into()),
+                    ),
             );
         let row = if self.saving {
             row
@@ -329,7 +348,7 @@ impl Render for CreateRoom {
         let c = colors(cx);
         let view = window.viewport_size();
         let cancel = btn::button("chat-create-cancel", cx)
-            .child("취소")
+            .child(say(cx, Str::CommonCancel))
             .on_click(cx.listener(|this, _, window, cx| this.close(window, cx)));
         let save = btn::tabbable(div().id("chat-create-save"), cx)
             .flex()
@@ -340,15 +359,16 @@ impl Render for CreateRoom {
             .bg(if self.saving { c.panel } else { c.accent })
             .text_color(if self.saving { c.ink_2 } else { c.accent_ink })
             .child(if self.saving {
-                "방을 만듭니다"
+                words(cx, "방을 만듭니다", "Creating room…")
             } else {
-                "방 만들기"
+                words(cx, "방 만들기", "Create room")
             })
             .when(!self.saving, |save| {
                 save.cursor_pointer()
                     .hover(move |style| style.bg(c.accent_ink).text_color(c.accent))
                     .on_click(cx.listener(|this, _, window, cx| this.save(window, cx)))
             });
+        let selected = self.selected.len();
         let panel = div()
             .id("chat-create-panel")
             .flex()
@@ -378,31 +398,30 @@ impl Render for CreateRoom {
                 div()
                     .text_size(px(14.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("새 방"),
+                    .child(words(cx, "새 방", "New room")),
             )
-            .child(field_label("방 이름", &self.name))
+            .child(field_label(say(cx, Str::RoomName), &self.name))
             .children(
                 self.error
                     .clone()
                     .map(|error| div().text_color(c.err).child(error)),
             )
-            .child(field_label("구성원", &self.search))
+            .child(field_label(words(cx, "구성원", "Members"), &self.search))
             .child(self.picker(cx))
-            .child(
-                div()
-                    .text_color(c.ink_2)
-                    .child("이 방에서 고른 구성원과 대화합니다. 구성원은 하던 일을 계속합니다."),
-            )
+            .child(div().text_color(c.ink_2).child(words(
+                cx,
+                "이 방에서 고른 구성원과 대화합니다. 구성원은 하던 일을 계속합니다.",
+                "Chat with the members you select. Members continue their current work.",
+            )))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap(px(6.0))
-                    .child(
-                        div()
-                            .mr_auto()
-                            .child(format!("구성원 {}명", self.selected.len())),
-                    )
+                    .child(div().mr_auto().child(match cx.global::<Lang>() {
+                        Lang::Ko => format!("구성원 {selected}명"),
+                        Lang::En => format!("Members: {selected}"),
+                    }))
                     .child(if self.saving {
                         btn::inert(cancel)
                     } else {

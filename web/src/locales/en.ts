@@ -503,6 +503,9 @@ const en = {
   },
   room: {
     title: 'Chat room',
+    find: 'Find rooms and members',
+    name: 'Room name',
+    findAgents: 'Find agents',
     tab: 'Chat room · {{name}}',
     copyLink: 'Copy link',
     copied: 'Copied',

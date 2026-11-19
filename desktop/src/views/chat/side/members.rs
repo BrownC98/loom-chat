@@ -5,12 +5,12 @@ use api::graph::chat::{ChatRoom, ChatRoomKind};
 use api::ids::NodeId;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, ClipboardItem, Context, Div, FontWeight, InteractiveElement, ParentElement, Role,
+    App, Context, Div, FontWeight, InteractiveElement, ParentElement, Role,
     StatefulInteractiveElement, Styled, div, uniform_list,
 };
 
+use super::super::{keep_ime_focus, room_title};
 use super::{SideEvent, SideSlot, SideTab, room_waiting, words};
-use crate::fonts;
 use crate::scale::px;
 use crate::strings::Lang;
 use crate::theme::Colors;
@@ -139,7 +139,9 @@ impl Row {
                         .repos
                         .get(&node.place.repo)
                         .map(|repo| repo.name.as_str()),
-                    index.work_at(&node.place).map(|room| room.name.as_str()),
+                    index
+                        .work_at(&node.place)
+                        .map(|room| room_title(room, |repo| index.repos.get(&repo).copied(), cx)),
                 ]
                 .into_iter()
                 .flatten()
@@ -148,7 +150,7 @@ impl Row {
             }
             Entry::Work(work) => {
                 row.id = work.id.clone();
-                row.name = work.name.clone();
+                row.name = room_title(work, |repo| index.repos.get(&repo).copied(), cx).to_owned();
                 row.room = Some(work.id.clone());
                 let folder = matches!(&work.kind, ChatRoomKind::Work { place }
                     if index.repos.get(&place.repo).is_some_and(|repo| !repo.git));
@@ -298,6 +300,9 @@ impl Row {
             .justify_center()
             .tooltip(tip(label.to_owned()))
             .child(icon(glyph, px(14.0), c.ink_2))
+            .when(matches!(action, Action::Room(_)), |button| {
+                button.capture_any_mouse_down(keep_ime_focus)
+            })
             .on_click(cx.listener(move |this, _, window, cx| match &action {
                 Action::Room(room) => cx.emit(SideEvent::OpenRoom(room.clone())),
                 Action::Terminal(node) => {
@@ -494,7 +499,8 @@ impl SideSlot {
             }
             _ => {
                 let count = member_count(room.members.len(), cx);
-                let summary = format!("{} · {count}", room.name);
+                let title = room_title(room, |repo| index.repos.get(&repo).copied(), cx);
+                let summary = format!("{title} · {count}");
                 let working = room
                     .members
                     .iter()
@@ -568,114 +574,6 @@ impl SideSlot {
                     .max_h(px(ROW_HEIGHT * count as f32)),
             );
         }
-        panel = panel.child(legend(cx));
-        if !room.archived
-            && !room.outside.is_empty()
-            && let Some(base) = data.graph().read(cx).base()
-        {
-            panel = panel.child(div().px(px(12.0)).pb(px(10.0)).child(self.invite(
-                format!("{}{}", base.trim_end_matches('/'), room.outside),
-                cx,
-            )));
-        }
         panel
     }
-    fn invite(&self, address: String, cx: &Context<Self>) -> Div {
-        let c = ui::colors(cx);
-        let copy_label = if self.copied {
-            words(cx, "복사됨", "Copied")
-        } else {
-            words(cx, "복사", "Copy")
-        };
-        div()
-            .mt(px(12.0))
-            .p(px(10.0))
-            .flex()
-            .flex_col()
-            .gap(px(6.0))
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(c.line_strong)
-            .bg(c.surface)
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(words(
-                cx,
-                "외부 에이전트 초대",
-                "Invite an outside agent",
-            )))
-            .child(div().text_size(px(SMALL)).text_color(c.ink_2).child(words(
-                cx,
-                "주소를 받은 외부 에이전트는 이 방의 말을 읽고 씁니다.",
-                "Anyone with this address can read and write in this room.",
-            )))
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .pl(px(8.0))
-                    .p_1()
-                    .rounded(px(6.0))
-                    .bg(c.bg)
-                    .border_1()
-                    .border_color(c.line)
-                    .child(
-                        div()
-                            .id("chat-outside-address")
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(SMALL))
-                            .font_family(fonts::TERMINAL_FAMILY)
-                            .tooltip(tip(address.clone()))
-                            .child(address.clone()),
-                    )
-                    .child(
-                        btn::button("chat-outside-copy", cx)
-                            .role(Role::Button)
-                            .aria_label(copy_label)
-                            .flex_none()
-                            .child(icon(
-                                if self.copied {
-                                    Lucide::Check
-                                } else {
-                                    Lucide::Copy
-                                },
-                                px(13.0),
-                                c.ink_2,
-                            ))
-                            .child(copy_label)
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.write_to_clipboard(ClipboardItem::new_string(address.clone()));
-                                this.copied = true;
-                                cx.notify();
-                            })),
-                    ),
-            )
-    }
-}
-
-fn legend(cx: &App) -> Div {
-    let c = ui::colors(cx);
-    let states = [State::Human, State::Working, State::Rest, State::Stopped];
-    div()
-        .flex()
-        .flex_none()
-        .flex_wrap()
-        .items_center()
-        .gap_x(px(10.0))
-        .gap_y(px(4.0))
-        .px(px(12.0))
-        .py(px(8.0))
-        .border_t_1()
-        .border_color(c.line)
-        .text_size(px(SMALL))
-        .text_color(c.ink_2)
-        .children(states.map(|state| {
-            div()
-                .flex()
-                .items_center()
-                .gap(px(5.0))
-                .child(state.dot(&c))
-                .child(state.label(cx))
-        }))
 }

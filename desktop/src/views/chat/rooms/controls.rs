@@ -12,17 +12,18 @@ use gpui::{
 
 use crate::scale::px;
 use crate::store::Store;
+use crate::strings::Str;
 use crate::views::field::Field;
 use crate::views::icons::{Lucide, icon};
 use crate::views::new_node::NewNodeView;
 use crate::views::tooltip::tip;
-use crate::views::ui::colors;
+use crate::views::ui::{colors, say};
 use crate::views::widgets::btn;
 use crate::views::workspace::{AddRepo, calls, pop};
 use crate::views::worktree::{Closed, DeleteWorktreeView, Doomed, NewWorktreeView};
 
 use super::list::Index;
-use super::{Rooms, chevron, note};
+use super::{Rooms, chevron, note, words};
 
 const MENU_WIDTH: f32 = 244.0;
 const PICKER_WIDTH: f32 = 360.0;
@@ -208,23 +209,43 @@ impl Rooms {
             Overlay::Panel { at, panel } => (*at, panel),
         };
         let (title, width, body) = match panel {
-            Panel::Workspace => ("작업공간", PICKER_WIDTH, self.workspace_menu(index, cx)),
-            Panel::New => ("새로 만들기", MENU_WIDTH, self.new_menu(index, at, cx)),
-            Panel::AgentPlace => ("새 에이전트", PICKER_WIDTH, self.agent_places(index, cx)),
-            Panel::WorktreeRepo => ("새 워크트리", PICKER_WIDTH, self.worktree_repos(index, cx)),
+            Panel::Workspace => (
+                say(cx, Str::TreeRepos),
+                PICKER_WIDTH,
+                self.workspace_menu(index, cx),
+            ),
+            Panel::New => (
+                words(cx, "새로 만들기", "New"),
+                MENU_WIDTH,
+                self.new_menu(index, at, cx),
+            ),
+            Panel::AgentPlace => (
+                words(cx, "새 에이전트", "New agent"),
+                PICKER_WIDTH,
+                self.agent_places(index, cx),
+            ),
+            Panel::WorktreeRepo => (
+                say(cx, Str::RepoNewWorktree),
+                PICKER_WIDTH,
+                self.worktree_repos(index, cx),
+            ),
             Panel::Agent(node) => (
-                "에이전트 메뉴",
+                words(cx, "에이전트 메뉴", "Agent menu"),
                 MENU_WIDTH,
                 self.agent_menu(index, *node, at, cx),
             ),
             Panel::Parent(node) => (
-                "부모 바꾸기",
+                words(cx, "부모 바꾸기", "Change parent"),
                 PICKER_WIDTH,
                 self.parent_menu(index, *node, cx),
             ),
-            Panel::Work(place) => ("워크트리 메뉴", MENU_WIDTH, self.work_menu(place, at, cx)),
+            Panel::Work(place) => (
+                words(cx, "워크트리 메뉴", "Worktree menu"),
+                MENU_WIDTH,
+                self.work_menu(place, at, cx),
+            ),
             Panel::Rename { field, saving, .. } => (
-                "이름 바꾸기",
+                say(cx, Str::RenameAction),
                 MENU_WIDTH,
                 self.rename_form(field, *saving, cx),
             ),

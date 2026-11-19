@@ -255,7 +255,10 @@ impl Composer {
                     window.focus(&self.picker.list_focus, cx);
                 }
             }
-            "enter" if in_list || in_query => self.toggle_highlight(cx),
+            "enter" if in_list || in_query => {
+                self.close_picker(window, cx);
+                self.focus_input(window, cx);
+            }
             "space" if in_list => self.toggle_highlight(cx),
             _ => return,
         }
@@ -426,7 +429,7 @@ impl Composer {
                 div()
                     .text_color(c.ink_2)
                     .text_size(px(ui::SMALL))
-                    .child("↑↓ 이동 · Space 선택 · Esc 닫기"),
+                    .child("↑↓ 이동 · Space 선택 · Enter 적용 · Esc 닫기"),
             );
         deferred(
             anchored()

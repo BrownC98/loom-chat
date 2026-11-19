@@ -126,6 +126,8 @@ impl Plan {
                 .then(|| self.direct.iter().copied().map(NodeId).collect()),
             rooms: (!self.rooms.is_empty()).then(|| self.rooms.iter().cloned().collect()),
             room: attach.then(|| current.id.clone()),
+            confirmed_nodes: (mode == Kind::Interrupt)
+                .then(|| self.nodes.iter().copied().map(NodeId).collect()),
         }
     }
 }

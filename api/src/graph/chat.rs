@@ -77,6 +77,9 @@ pub struct SendChat {
     pub rooms: Option<Vec<String>>,
     #[ts(optional)]
     pub room: Option<String>,
+    #[serde(default)]
+    #[ts(optional)]
+    pub confirmed_nodes: Option<Vec<NodeId>>,
 }
 
 #[derive(Serialize, Deserialize, TS)]

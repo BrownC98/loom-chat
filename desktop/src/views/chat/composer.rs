@@ -349,6 +349,7 @@ impl Composer {
                 }
             });
             if !sent {
+                data.update(cx, |data, cx| data.refresh(cx));
                 return;
             }
             if let Some(wait) = wait {

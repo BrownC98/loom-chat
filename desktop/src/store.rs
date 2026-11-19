@@ -222,7 +222,7 @@ impl Store {
             busy: HashSet::new(),
             unreached: HashSet::new(),
         };
-        store.watch_repos(cx);
+        store.set_graph_visible(true, cx);
         store
     }
 
@@ -230,14 +230,16 @@ impl Store {
         let Some(watch) = &self.watch else {
             return;
         };
-        if watch.graph_visible() == visible {
-            return;
-        }
-        watch.set_graph_visible(visible);
         if visible {
-            watch.reload();
-            self.watch_repos(cx);
+            if !watch.graph_visible() {
+                watch.set_graph_visible(true);
+                watch.reload();
+            }
+            if self.repo_watch.is_none() {
+                self.watch_repos(cx);
+            }
         } else {
+            watch.set_graph_visible(false);
             self.repo_watch = None;
         }
     }

@@ -7,6 +7,7 @@ use api::graph::chat::{
     ChatSession, ChatTranscript, EditChat, SaveChatRoom, SendChat,
 };
 use gpui::{Context, Entity, Subscription, Task};
+use ureq::http::Method;
 
 use crate::link;
 use crate::problem::Failure;
@@ -386,13 +387,13 @@ impl ChatData {
     ) -> Task<Result<ChatRoom, String>> {
         self.graph
             .read(cx)
-            .call(cx, move |base| post(base, ROOMS, &req))
+            .call(cx, move |base| send_json(base, ROOMS, Method::POST, &req))
     }
 
     pub fn send(&self, req: SendChat, cx: &mut Context<Self>) -> Task<Result<ChatMessage, String>> {
-        self.graph
-            .read(cx)
-            .call(cx, move |base| post(base, MESSAGES, &req))
+        self.graph.read(cx).call(cx, move |base| {
+            send_json(base, MESSAGES, Method::POST, &req)
+        })
     }
 
     pub fn edit(
@@ -402,7 +403,12 @@ impl ChatData {
         cx: &mut Context<Self>,
     ) -> Task<Result<ChatMessage, String>> {
         self.graph.read(cx).call(cx, move |base| {
-            link::patch(base, &format!("{MESSAGES}/{id}"), &EditChat { text })
+            send_json(
+                base,
+                &format!("{MESSAGES}/{id}"),
+                Method::PATCH,
+                &EditChat { text },
+            )
         })
     }
 
@@ -438,11 +444,12 @@ fn read_page(
     }
 }
 
-fn post<T: serde::de::DeserializeOwned>(
+fn send_json<T: serde::de::DeserializeOwned>(
     base: &str,
     path: &str,
+    method: Method,
     req: &impl serde::Serialize,
 ) -> Result<T, Failure> {
     let body = serde_json::to_string(req).map_err(|error| Failure::Other(error.to_string()))?;
-    link::post(base, path, Some(body))
+    link::send_json(base, path, method, Some(body))
 }

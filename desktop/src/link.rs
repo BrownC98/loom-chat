@@ -17,6 +17,7 @@ use api::repos::RepoView;
 use api::settings::SettingsView;
 use api::settings::places::DistroView;
 use serde::Serialize;
+use ureq::http::{Method, Request};
 
 use crate::problem::Failure;
 
@@ -258,7 +259,7 @@ pub fn post<T: serde::de::DeserializeOwned>(
     path: &str,
     body: Option<String>,
 ) -> Result<T, Failure> {
-    post_within(base, path, body, HTTP_LIMIT)
+    send_json(base, path, Method::POST, body)
 }
 
 pub fn post_within<T: serde::de::DeserializeOwned>(
@@ -267,35 +268,35 @@ pub fn post_within<T: serde::de::DeserializeOwned>(
     body: Option<String>,
     limit: Duration,
 ) -> Result<T, Failure> {
-    let request = agent_within(limit).post(format!("{base}{path}"));
-    let sent = match body {
-        Some(body) => request
-            .header("content-type", "application/json")
-            .send(body),
-        None => request.send_empty(),
-    };
-    json_response(sent, "POST", path)
+    send_json_within(base, path, Method::POST, body, limit)
 }
 
-pub fn patch<T: serde::de::DeserializeOwned>(
+pub fn send_json<T: serde::de::DeserializeOwned>(
     base: &str,
     path: &str,
-    body: &impl Serialize,
+    method: Method,
+    body: Option<String>,
 ) -> Result<T, Failure> {
-    let text = serde_json::to_string(body).map_err(|e| Failure::Other(e.to_string()))?;
-    let sent = agent()
-        .patch(format!("{base}{path}"))
-        .header("content-type", "application/json")
-        .send(text);
-    json_response(sent, "PATCH", path)
+    send_json_within(base, path, method, body, HTTP_LIMIT)
 }
 
-fn json_response<T: serde::de::DeserializeOwned>(
-    sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
-    method: &str,
+fn send_json_within<T: serde::de::DeserializeOwned>(
+    base: &str,
     path: &str,
+    method: Method,
+    body: Option<String>,
+    limit: Duration,
 ) -> Result<T, Failure> {
-    let response = answer(sent)?
+    let mut request = Request::builder()
+        .method(method.clone())
+        .uri(format!("{base}{path}"));
+    if body.is_some() {
+        request = request.header("content-type", "application/json");
+    }
+    let request = request
+        .body(body.as_deref().unwrap_or_default().as_bytes())
+        .map_err(|e| Failure::Other(e.to_string()))?;
+    let response = answer(agent_within(limit).run(request))?
         .body_mut()
         .read_to_string()
         .map_err(|e| Failure::Other(e.to_string()))?;

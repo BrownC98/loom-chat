@@ -952,8 +952,11 @@ fn insert(
     body: &str,
 ) -> rusqlite::Result<MessageId> {
     db.execute(
-        "INSERT INTO messages (recipient, recipient_name, sender, sender_name, kind, body, what, held)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO messages (
+            recipient, recipient_node_id, recipient_name, sender, sender_node_id, sender_name,
+            kind, body, what, held
+         )
+         VALUES (?1, ?1, ?2, ?3, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![
             to.and_then(|to| to.id).map(|id| id.0),
             to.map(|to| to.name.as_str()),

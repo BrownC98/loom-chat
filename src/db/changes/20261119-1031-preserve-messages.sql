@@ -2,6 +2,8 @@ CREATE TABLE messages_preserved (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     recipient INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
     sender INTEGER REFERENCES nodes(id) ON DELETE SET NULL,
+    recipient_node_id INTEGER CHECK (recipient IS NULL OR recipient_node_id IS recipient),
+    sender_node_id INTEGER CHECK (sender IS NULL OR sender_node_id IS sender),
     sender_name TEXT NOT NULL,
     kind TEXT NOT NULL,
     body TEXT NOT NULL,
@@ -12,16 +14,23 @@ CREATE TABLE messages_preserved (
     refused INTEGER NOT NULL DEFAULT 0,
     recipient_name TEXT CHECK (recipient IS NULL OR recipient_name IS NOT NULL),
     created_at INTEGER NOT NULL DEFAULT (unixepoch()),
-    held INTEGER NOT NULL DEFAULT 0 CHECK (held IN (0, 1) AND (held = 0 OR recipient IS NULL))
+    held INTEGER NOT NULL DEFAULT 0 CHECK (held IN (0, 1) AND (held = 0 OR (recipient IS NULL AND sender IS NOT NULL)))
 );
 
 WITH event_entries AS (
-    SELECT message, at, CASE WHEN json_valid(entry) THEN entry END AS entry FROM events
+    SELECT id, message, at, CASE WHEN json_valid(entry) THEN entry END AS entry FROM events
 ),
-message_times AS (
+message_events AS (
     SELECT message, min(at) AS first_at,
         min(at) FILTER (WHERE entry ->> 'kind' = 'message' AND entry ->> 'step' IN ('sent', 'held')) AS created_at,
-        max(entry ->> '$.to.name') FILTER (WHERE entry ->> 'kind' = 'message' AND entry ->> 'step' = 'sent') AS recipient_name
+        max(entry ->> '$.from.id') FILTER (
+            WHERE entry ->> 'kind' = 'message' AND entry ->> 'step' IN ('sent', 'held', 'delivered')
+            AND json_type(entry, '$.from.id') = 'integer'
+        ) AS sender_node_id,
+        max(id) FILTER (
+            WHERE entry ->> 'kind' = 'message' AND entry ->> 'step' IN ('sent', 'delivered')
+            AND (entry ->> '$.to.name' IS NOT NULL OR json_type(entry, '$.to.id') = 'integer')
+        ) AS recipient_event
     FROM event_entries WHERE message IS NOT NULL GROUP BY message
 ),
 inbox_answers AS (
@@ -35,17 +44,21 @@ closed_answers AS (
     GROUP BY node, wait_id
 )
 INSERT INTO messages_preserved (
-    id, recipient, sender, sender_name, kind, body, delivered, sent_at, what, printed, refused,
-    recipient_name, created_at, held
+    id, recipient, sender, recipient_node_id, sender_node_id, sender_name, kind, body, delivered,
+    sent_at, what, printed, refused, recipient_name, created_at, held
 )
-SELECT m.id, m.recipient, m.sender, m.sender_name, m.kind, m.body, m.delivered, m.sent_at, m.what, m.printed, m.refused,
-    coalesce(n.name, e.recipient_name),
+SELECT m.id, m.recipient, m.sender,
+    coalesce(m.recipient, CASE WHEN json_type(address.entry, '$.to.id') = 'integer' THEN address.entry ->> '$.to.id' END),
+    coalesce(m.sender, e.sender_node_id),
+    m.sender_name, m.kind, m.body, m.delivered, m.sent_at, m.what, m.printed, m.refused,
+    coalesce(n.name, address.entry ->> '$.to.name'),
     coalesce(e.created_at, (SELECT min(at) FROM doc_talk WHERE message = m.id),
         a.at, c.at, m.sent_at, e.first_at, unixepoch()),
     m.recipient IS NULL AND m.sender IS NOT NULL
 FROM messages m
 LEFT JOIN nodes n ON n.id = m.recipient
-LEFT JOIN message_times e ON e.message = m.id
+LEFT JOIN message_events e ON e.message = m.id
+LEFT JOIN event_entries address ON address.id = e.recipient_event
 LEFT JOIN inbox_answers a ON m.what ->> 'kind' = 'answer' AND m.what ->> '$.question.in' = 'inbox'
     AND a.wait = m.what ->> '$.question.id'
 LEFT JOIN closed_answers c ON m.what ->> 'kind' = 'answer' AND m.what ->> '$.question.in' = 'inbox'

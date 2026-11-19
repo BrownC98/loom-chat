@@ -268,8 +268,7 @@ impl Graph {
             },
             None,
         )?;
-        waits::drop_on_removal(&tx, id)?;
-        tx.execute("DELETE FROM nodes WHERE id = ?1", [id.0])?;
+        delete_node(&tx, id)?;
         tx.commit()?;
         self.publish_nodes();
         Ok(())
@@ -1101,12 +1100,21 @@ fn remove_in(tx: &Connection, id: NodeId) -> rusqlite::Result<Option<Removal>> {
         None,
     )?;
     tx.execute("UPDATE nodes SET parent = NULL WHERE parent = ?1", [id.0])?;
-    waits::drop_on_removal(tx, id)?;
-    tx.execute("DELETE FROM nodes WHERE id = ?1", [id.0])?;
+    delete_node(tx, id)?;
     Ok(Some(Removal {
         children,
         waiting_parent,
     }))
+}
+
+fn delete_node(tx: &Connection, id: NodeId) -> rusqlite::Result<()> {
+    waits::drop_on_removal(tx, id)?;
+    tx.execute(
+        "UPDATE messages SET held = 0 WHERE sender = ?1 AND recipient IS NULL AND held = 1",
+        [id.0],
+    )?;
+    tx.execute("DELETE FROM nodes WHERE id = ?1", [id.0])?;
+    Ok(())
 }
 
 struct Adoption {
@@ -1247,15 +1255,18 @@ fn adopt_in(
     )?;
     tx.execute(
         "INSERT INTO messages (
-            sender, sender_name, kind, body, delivered, sent_at, what, printed, refused, recipient_name, created_at
+            sender, sender_node_id, sender_name, kind, body, delivered, sent_at, what, printed,
+            refused, recipient_node_id, recipient_name, created_at
          )
-         SELECT sender, sender_name, kind, body, delivered, sent_at, what, printed, refused, recipient_name, created_at
-         FROM messages WHERE recipient IS NULL AND held = 1 AND sender = ?1 AND recipient_name IS NOT NULL
+         SELECT sender, sender_node_id, sender_name, kind, body, delivered, sent_at, what, printed,
+            refused, recipient_node_id, recipient_name, created_at
+         FROM messages WHERE recipient IS NULL AND held = 1 AND sender = ?1
+             AND (recipient_node_id IS NOT NULL OR recipient_name IS NOT NULL)
          ORDER BY id",
         [child.0],
     )?;
     let moved = tx.execute(
-        "UPDATE messages SET recipient = ?2, recipient_name = ?3, held = 0,
+        "UPDATE messages SET recipient = ?2, recipient_node_id = ?2, recipient_name = ?3, held = 0,
              sent_at = NULL, printed = 0, refused = 0
          WHERE recipient IS NULL AND held = 1 AND sender = ?1",
         params![child.0, parent.0, parent_name],

@@ -19,12 +19,8 @@ use crate::views::scrollbar::Bar;
 use crate::views::widgets::btn;
 use what::{Category, Ctx, Family, Seg, Tone};
 
-pub(crate) use super::body::Target as EventLink;
-pub(crate) use super::body::open as open_link;
-pub(crate) use what::{hidden, who_of};
-
 pub mod refusal;
-mod what;
+pub(crate) mod what;
 
 const CATEGORIES: [(Category, Str); 3] = [
     (Category::Node, Str::EventsCategoryNode),

@@ -15,7 +15,8 @@ use crate::scale::px;
 use crate::store::Store;
 use crate::strings::Str;
 use crate::views::dock::Dock;
-use crate::views::dock::events::{self, EventRow};
+use crate::views::dock::body;
+use crate::views::dock::events::{EventRow, what};
 use crate::views::dock::ui;
 use crate::views::scrollbar::Bar;
 
@@ -104,7 +105,7 @@ impl History {
             }
             Load::Ready(log) if record.id > log.last => {
                 log.last = record.id;
-                if !events::hidden(&record.entry) {
+                if !what::hidden(&record.entry) {
                     log.records.insert(0, record.clone());
                     log.records.truncate(HISTORY_LIMIT);
                 }
@@ -216,13 +217,7 @@ impl SideSlot {
         }
         let graph = graph.clone();
         let rows = Dock::document_rows(shown, cx, move |id, cx| {
-            let result = graph
-                .read(cx)
-                .doc_url(&id)
-                .and_then(|url| ui::open_url(&url));
-            if let Err(error) = result {
-                graph.update(cx, |store, cx| store.tell(error, cx));
-            }
+            follow_link(&graph, body::Target::Doc(id), cx);
         });
         div()
             .size_full()
@@ -252,7 +247,7 @@ impl SideSlot {
             .iter()
             .enumerate()
             .filter(|(_, record)| {
-                events::who_of(&record.entry)
+                what::who_of(&record.entry)
                     .iter()
                     .any(|who| who.id.is_some_and(|id| members.contains(&id)))
             })
@@ -311,7 +306,7 @@ impl SideSlot {
                     cx.notify();
                 }
             }),
-            move |target, cx| open_event_link(&follow, target, cx),
+            move |target, cx| follow_link(&follow, target, cx),
         )
     }
 }
@@ -320,8 +315,8 @@ fn notice(text: Str, cx: &App) -> Div {
     ui::note(ui::say(cx, text).to_owned(), false, cx)
 }
 
-fn open_event_link(store: &Entity<Store>, target: events::EventLink, cx: &mut App) {
-    let task = events::open_link(store, target, cx);
+fn follow_link(store: &Entity<Store>, target: body::Target, cx: &mut App) {
+    let task = body::open(store, target, cx);
     let store = store.downgrade();
     cx.spawn(async move |cx| {
         if let Err(error) = task.await {

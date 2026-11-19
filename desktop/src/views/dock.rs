@@ -28,7 +28,7 @@ use crate::views::pictures::Shelf;
 pub(crate) mod answers;
 mod arrange;
 mod blocks;
-mod body;
+pub(crate) mod body;
 mod commits;
 mod docs;
 pub(crate) mod entry;

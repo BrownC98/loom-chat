@@ -2,4 +2,4 @@
 import type { Kind } from "./Kind";
 import type { NodeId } from "./NodeId";
 
-export type SendChat = { text: string, mode: Kind, nodes?: Array<NodeId>, rooms?: Array<string>, room?: string, confirmed_nodes?: Array<NodeId>, };
+export type SendChat = { text: string, mode: Kind, nodes?: Array<NodeId>, rooms?: Array<string>, room?: string, confirmed_nodes?: Array<NodeId>, attachment_nodes?: Array<NodeId>, };

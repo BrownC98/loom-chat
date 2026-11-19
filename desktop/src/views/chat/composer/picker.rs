@@ -1,7 +1,9 @@
+use std::collections::HashSet;
 use std::ops::Range;
 
+use api::graph::Status;
+use api::graph::chat::{ChatRecipient, ChatRoom, ChatRoomKind};
 use api::graph::messages::Kind;
-use api::graph::{Status, chat::ChatRecipient};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     Anchor, AnyElement, App, Context, Entity, FocusHandle, FontWeight, InteractiveElement,
@@ -134,7 +136,11 @@ impl Picker {
         self.scroll.scroll_to_item(0, ScrollStrategy::Top);
     }
 
-    fn listing(&self, catalog: &Catalog, cx: &App) -> Listing {
+    pub fn query_focus(&self, cx: &App) -> FocusHandle {
+        self.query.read(cx).handle()
+    }
+
+    fn listing(&self, room: &ChatRoom, catalog: &Catalog, cx: &App) -> Listing {
         let query = self.query.read(cx).text().trim().to_lowercase();
         let matches = |values: &[&str]| {
             query.split_whitespace().all(|part| {
@@ -143,39 +149,53 @@ impl Picker {
                     .any(|value| value.to_lowercase().contains(part))
             })
         };
+        let members: HashSet<_> = room.members.iter().copied().collect();
+        let pinned = matches!(room.kind, ChatRoomKind::Pinned);
         let mut listing = Listing::default();
-        for (index, room) in catalog.rooms.iter().enumerate() {
-            if !group(room) || !matches(&[&room.name]) {
-                continue;
-            }
-            listing.count(Filter::Rooms);
-            if matches!(self.filter, Filter::All | Filter::Rooms) {
-                if listing.rows.is_empty() {
-                    listing
-                        .rows
-                        .push(Row::Head("방 · 구성원 모두가 받습니다".to_owned()));
-                }
-                listing.rows.push(Row::Room(index));
-            }
-        }
+        let mut local = Vec::new();
+        let mut others = Vec::new();
         let mut last = None;
         for (index, agent) in catalog.agents.iter().enumerate() {
             let work = catalog
                 .room(&agent.work)
                 .map_or("작업 없음", |room| room.name.as_str());
-            let harness = harness(agent);
-            if !matches(&[&agent.name, work, harness]) {
+            if !matches(&[&agent.name, work, harness(agent)]) {
                 continue;
             }
             let filter = Filter::of(&agent.status);
             listing.count(filter);
-            if self.filter == Filter::All || self.filter == filter {
+            if self.filter != Filter::All && self.filter != filter {
+                continue;
+            }
+            if !pinned && members.contains(&agent.node) {
+                local.push(Row::Agent(index));
+            } else {
                 if last != Some(agent.work.as_str()) {
-                    listing.rows.push(Row::Head(work.to_owned()));
+                    others.push(Row::Head(work.to_owned()));
                     last = Some(agent.work.as_str());
                 }
-                listing.rows.push(Row::Agent(index));
+                others.push(Row::Agent(index));
             }
+        }
+        if !local.is_empty() {
+            listing.rows.push(Row::Head("이 방의 구성원".to_owned()));
+            listing.rows.extend(local);
+        }
+        listing.rows.extend(others);
+        let mut rooms = Vec::new();
+        for (index, room) in catalog.rooms.iter().enumerate() {
+            if group(room) && matches(&[&room.name]) {
+                listing.count(Filter::Rooms);
+                if matches!(self.filter, Filter::All | Filter::Rooms) {
+                    rooms.push(Row::Room(index));
+                }
+            }
+        }
+        if !rooms.is_empty() {
+            listing
+                .rows
+                .push(Row::Head("방 · 구성원 모두가 받습니다".to_owned()));
+            listing.rows.extend(rooms);
         }
         listing
     }
@@ -244,11 +264,12 @@ impl Composer {
     }
 
     fn move_highlight(&mut self, by: isize, cx: &mut Context<Self>) -> bool {
-        let Some(recipients) = self.data.read(cx).recipients() else {
+        let data = self.data.read(cx);
+        let Some((room, recipients)) = data.room().zip(data.recipients()) else {
             return false;
         };
         let catalog = Catalog::new(recipients);
-        let listing = self.picker.listing(&catalog, cx);
+        let listing = self.picker.listing(room, &catalog, cx);
         let rows: Vec<_> = listing
             .rows
             .iter()
@@ -277,11 +298,12 @@ impl Composer {
     }
 
     fn toggle_highlight(&mut self, cx: &mut Context<Self>) {
-        let Some(recipients) = self.data.read(cx).recipients() else {
+        let data = self.data.read(cx);
+        let Some((room, recipients)) = data.room().zip(data.recipients()) else {
             return;
         };
         let catalog = Catalog::new(recipients);
-        let listing = self.picker.listing(&catalog, cx);
+        let listing = self.picker.listing(room, &catalog, cx);
         let mut targets = listing.rows.iter().filter_map(|row| row.target(&catalog));
         let target = if let Some(current) = &self.picker.highlight {
             targets.find(|target| target == current)
@@ -301,8 +323,13 @@ impl Composer {
         cx: &Context<Self>,
     ) -> AnyElement {
         let c = ui::colors(cx);
-        let listing =
-            catalog.map_or_else(Listing::default, |catalog| self.picker.listing(catalog, cx));
+        let data = self.data.read(cx);
+        let listing = data
+            .room()
+            .zip(catalog)
+            .map_or_else(Listing::default, |(room, catalog)| {
+                self.picker.listing(room, catalog, cx)
+            });
         let bounds = self.bounds.get();
         let available = (bounds.origin.y - px(164.0)).max(px(68.0));
         let list_height =
@@ -391,6 +418,10 @@ impl Composer {
                     .child(self.picker.query.clone()),
             )
             .child(self.filters(listing.counts, cx))
+            .children(data.room().zip(self.draft()).and_then(|(room, draft)| {
+                (!draft.selected().is_empty())
+                    .then(|| self.selected_chips(room, draft, catalog, cx))
+            }))
             .child(
                 div()
                     .text_color(c.ink_2)

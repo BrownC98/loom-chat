@@ -11,9 +11,16 @@
 - [랩터-3](~/.agents/skills/raptor-3/SKILL.md): 설계·구현할 때마다 부품 수를 최소로 만든다. 코드를 쓰기 전, 목록에 없는 부품을 더할 때, 커밋하기 전에 요구가 없는 부품을 지운다.
 - [ste-orwell](~/.agents/skills/ste-orwell/SKILL.md): 모든 글에 ASD-STE100과 조지 오웰의 글쓰기 6원칙을 적용한다. 사람에게 보이는 글은 한국어, 에이전트끼리 주고받는 글은 영어로 쓴다.
 
+## 포크 격리
+
+- 이 포크의 브랜치는 `loom ready <브랜치> --no-deploy`로 보낸다. 자식 브랜치에도 같은 명령을 쓴다.
+- `--no-deploy`는 원격 CI를 건너뛴다. 병합 큐는 `scripts/gate/check.sh`로 검사한다.
+- 이 포크에는 설치본을 교체하는 `scripts/host.sh`와 그 설치본을 확인하는 `scripts/gate/ship.sh`가 없다.
+- 포크 실행 파일은 아래 시험 절차의 임시 데이터 폴더와 빈 포트에서만 띄운다.
+
 ## 개발 환경
 
-호스트(WSL)에서 빌드·실행한다. 사람이 loom을 쓰는 곳과 같다. Rust 판은 `rust-toolchain.toml`, Node 판은 `.nvmrc`가 정한다. 저장소 폴더에서 아래 명령을 쓴다. 무거운 빌드와 cargo 검사·생성 명령은 `memcap -m <예약량>` 아래에서 돌린다. memcap은 메모리가 예약량을 덮을 때만 명령을 띄우고, 아니면 stderr에 대기 줄을 쓰고 차례로 기다린다. 예약량은 그 명령의 상한이기도 하다: 넘으면 그 명령만 끊긴다. 예약량은 처음부터 빌드한 cgroup `memory.peak` 최대값을 512MiB 단위로 올린 값이다. 실측(2026-10-31): clippy 2771MiB, test 4411MiB, Windows clippy 2663MiB, `cargo build` 2289MiB. 그래서 clippy와 빌드는 3G, test는 4608M이다. `scripts/host.sh`의 release 빌드는 3584M이다(2026-11-08 실측, 처음부터: windows-gnu 3258MiB, Linux 2970MiB. 고친 뒤 다시: 2701MiB). 병합 관문(`scripts/gate/check.sh`)은 메모리를 보지 않고 cargo 단계를 Linux 갈래와 Windows 갈래로 늘 함께 돌린다. main과 비교해 `desktop/`·`api/`·`fixtures/`·`web/src/`·`rust-toolchain.toml`이 바뀌었으면 데스크톱 갈래(fmt, clippy, 배치 고정값 시험)도 함께 돌린다.
+호스트(WSL)에서 빌드·실행한다. 사람이 loom을 쓰는 곳과 같다. Rust 판은 `rust-toolchain.toml`, Node 판은 `.nvmrc`가 정한다. 저장소 폴더에서 아래 명령을 쓴다. 무거운 빌드와 cargo 검사·생성 명령은 `memcap -m <예약량>` 아래에서 돌린다. memcap은 메모리가 예약량을 덮을 때만 명령을 띄우고, 아니면 stderr에 대기 줄을 쓰고 차례로 기다린다. 예약량은 그 명령의 상한이기도 하다: 넘으면 그 명령만 끊긴다. 예약량은 처음부터 빌드한 cgroup `memory.peak` 최대값을 512MiB 단위로 올린 값이다. 실측(2026-10-31): clippy 2771MiB, test 4411MiB, Windows clippy 2663MiB, `cargo build` 2289MiB. 그래서 clippy와 빌드는 3G, test는 4608M이다. 병합 관문(`scripts/gate/check.sh`)은 메모리를 보지 않고 cargo 단계를 Linux 갈래와 Windows 갈래로 늘 함께 돌린다. main과 비교해 `desktop/`·`api/`·`fixtures/`·`web/src/`·`rust-toolchain.toml`이 바뀌었으면 데스크톱 갈래(fmt, clippy, 배치 고정값 시험)도 함께 돌린다.
 
 | 할 일 | 명령 |
 |---|---|
@@ -28,8 +35,7 @@
 | 데스크톱 띄우기(시험) | ① `cd desktop && memcap -m 4608M cargo build`. ② exe는 자기 폴더의 `loom`(없으면 PATH의 `loom`)에 `start`를 시킨다. 사람의 데몬을 건드리지 않으려면 임시 폴더에 exe와 `loom: http://…` 한 줄을 찍는 `loom` 스크립트를 나란히 둔다. ③ 숨은 X 화면에서만 띄운다: `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24" <임시 폴더>/loom-desktop`. 화면 사진과 xdotool도 그 안에서 쓴다. `DISPLAY=:0`(WSLg)에 띄우면 창이 사람의 Windows 화면에 뜬다(2026-11-18 사람 "누가 왜 자꾸 loom 창 띄우는거야?"). Wayland에서는 창이 열려도 그림이 오지 않는다(2026-11-01 실측) |
 | 화면 타입·순환 검사 | `npm --prefix web run check` |
 | 화면 빌드 | `npm --prefix web run build` |
-| 데몬 띄우기(시험) | `memcap -m 3G cargo build` 뒤 임시 git 저장소 폴더에서 `HOME=/tmp/<이름> <워크트리>/target/debug/loom serve --listen 127.0.0.1:<빈 포트>`. 다른 `HOME`이라 사람의 DB(`~/.loom`)를 건드리지 않는다. 데몬은 시작 폴더를 저장소로 등록하므로 이 저장소 폴더에서 띄우지 않는다(2026-10-23 실측: 이 저장소 폴더에서 띄운 시험 데몬에 사람의 loom 저장소가 들어갔다). `cargo run`은 쓰지 않는다(바꾼 `HOME`에서 rustup이 판을 찾지 못한다). WSL `~/loom/bin/loom`은 `HOME`을 무시하는 Windows `loom.exe`를 부르므로 다른 `HOME`의 `serve`·`start`·`stop`·`open`을 거부한다(`scripts/host.sh`·`install.sh`). 끝나면 `bash scripts/dev/stop-test-daemon.sh /tmp/<이름>`을 돌린다. 환경에 그 `HOME`이 있는 프로세스(데몬, pty-host, 훅)를 모두 끄고, 남으면 0이 아닌 코드로 끝난다. 보고에 그 출력을 넣는다. 근거: 시험 데몬의 pty-host가 워크트리를 지운 뒤 11시간 남았다(2026-10-25 사람 보고). Windows 시험 데몬의 `loom.exe`는 WSL에서 환경을 읽을 수 없어 이 스크립트가 찾지 못한다 |
-| 사람이 쓰는 loom 올리기 | 원래 체크아웃(main)에서 `bash scripts/host.sh`. WSL에서는 앱 옆 `%LOCALAPPDATA%\loom\loom.exe`(Windows 데몬)를, Linux에서는 `~/loom/bin/loom`을 바꾸고 데몬(포트 7420)을 다시 띄운다. 띄우기 전에 작업 폴더 뿌리의 주인 파일(`~/.cache/loom/.loom-owner`)을 그 데몬의 데이터 폴더로 쓴다: 데몬은 이 파일이 제 것일 때만 옛 작업 폴더를 지운다. 노드는 그대로 산다. 빌드할 커밋을 이미 올렸으면(`~/.loom/host-deployed`) 아무것도 하지 않고 끝난다: 같은 커밋으로 다시 올리려면 그 파일을 지운다 |
+| 데몬 띄우기(시험) | `memcap -m 3G cargo build` 뒤 임시 git 저장소 폴더에서 `HOME=/tmp/<이름> <워크트리>/target/debug/loom serve --listen 127.0.0.1:<빈 포트>`. 다른 `HOME`이라 사람의 DB(`~/.loom`)를 건드리지 않는다. 데몬은 시작 폴더를 저장소로 등록하므로 이 저장소 폴더에서 띄우지 않는다(2026-10-23 실측: 이 저장소 폴더에서 띄운 시험 데몬에 사람의 loom 저장소가 들어갔다). `cargo run`은 쓰지 않는다(바꾼 `HOME`에서 rustup이 판을 찾지 못한다). 시험에는 위 Linux 실행 파일을 경로로 직접 부른다. WSL의 설치본 `~/loom/bin/loom`은 Windows 데몬을 부른다. 끝나면 `bash scripts/dev/stop-test-daemon.sh /tmp/<이름>`을 돌린다. 환경에 그 `HOME`이 있는 프로세스(데몬, pty-host, 훅)를 모두 끄고, 남으면 0이 아닌 코드로 끝난다. 보고에 그 출력을 넣는다. 근거: 시험 데몬의 pty-host가 워크트리를 지운 뒤 11시간 남았다(2026-10-25 사람 보고). Windows 시험 데몬의 `loom.exe`는 WSL에서 환경을 읽을 수 없어 이 스크립트가 찾지 못한다 |
 
 - 데스크톱 빌드에 필요한 호스트 패키지(이 호스트에는 깔려 있다): `sudo apt-get install --no-install-recommends pkg-config libfontconfig-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-dev libwayland-dev libasound2-dev libvulkan-dev libssl-dev llvm`. `llvm`은 msvc 검사의 `llvm-rc`를 준다. gpui는 Zed git `rev 08cbb88`을 쓰므로 첫 `cargo fetch`가 약 0.5GB를 `~/.cargo/git`에 받는다.
 
@@ -159,7 +165,7 @@ AI도 컨텍스트 한계 때문에 코드 전체를 소유하지 못한다. 한
 - 구조가 잡히기 전에는 기능마다 어느 모듈·파일·인터페이스에 둘지 먼저 제안한다. 사용자가 확인한 뒤 구현한다.
 - 화면을 새로 만들거나 바꾸기 전에 목업을 사용자에게 승인받는다. 승인 전에는 화면 코드를 쓰지 않는다. 절차는 [o-mode "Mockup approval"](skills/o-mode/reference.md#mockup-approval)을 따른다.
 - 구조가 잡힌 뒤에는 기존 예(파일 경로)를 따라 만든다. 그래도 목표 달성을 위해 구조를 어기지 않았는지 매번 본다.
-- 편집은 언제나 작업마다 만든 워크트리에서 한다. 원래 체크아웃(main)에서는 병합과 `scripts/host.sh`만 한다. main 작업 폴더에 남은 미커밋 변경은 다른 작업의 병합·배포를 막는다.
+- 편집은 언제나 작업마다 만든 워크트리에서 한다. 원래 체크아웃(main)은 병합 큐가 쓴다. main 작업 폴더에 남은 미커밋 변경은 다른 작업의 병합을 막는다.
 - 개발이 끝나면 검사를 전부 통과한 뒤 바로 main에 병합하고 원격에 올린다. 전체 검사(`scripts/gate/check.sh`)는 담당이 돌리지 않는다: 병합 큐가 검토 뒤에 한 번 돌린다(2026-11-11 사람 결정 Q3082 A). 고친 범위의 가벼운 검사는 워크트리에서 돌린다. `loom check`는 큐의 검사가 실패한 뒤 고친 것을 확인할 때만 쓴다. 작업 브랜치와 워크트리는 병합 뒤 지운다. 커밋하지 않은 변경을 main에 두고 끝내지 않는다.
 - 리뷰에서 찾는 것: 아래 순서로 먼저 찾는다. 검토자는 새 `CARGO_TARGET_DIR`을 정하지 않는다.
   1. 쉬기·턴·다시 띄우기 상태의 경쟁: 잃은 메일, 잠금 밖의 확인, 다시 시도가 건너뛰는 보호.

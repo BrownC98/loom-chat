@@ -1,6 +1,6 @@
 use api::graph::docs::{DocGroup, DocRow};
 use gpui::{
-    Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement, Role,
     StatefulInteractiveElement, Styled, div,
 };
 
@@ -13,6 +13,7 @@ use crate::strings::Lang;
 use crate::strings::Str;
 use crate::views::icons::{Lucide, icon};
 use crate::views::tooltip::tip;
+use crate::views::widgets::btn;
 
 const GROUPS: [DocGroup; 2] = [DocGroup::Mockup, DocGroup::Report];
 
@@ -61,8 +62,6 @@ impl Dock {
     }
 
     pub(super) fn documents(&self, cx: &mut Context<Self>) -> Div {
-        let c = ui::colors(cx);
-        let lang = *cx.global::<Lang>();
         let chips = GROUPS.iter().map(|&kind| {
             let on = !self.docs.hidden.contains(&kind);
             ui::chip(("doc-kind", kind as usize), on, cx)
@@ -111,8 +110,25 @@ impl Dock {
                 cx,
             ));
         }
-        panel.child(div().flex().flex_col().px(px(8.0)).py(px(4.0)).children(
-            shown.into_iter().enumerate().map(|(index, doc)| {
+        let dock = cx.entity().downgrade();
+        panel.child(Self::document_rows(shown, cx, move |id, cx| {
+            let _ = dock.update(cx, |dock, cx| dock.follow(Target::Doc(id), cx));
+        }))
+    }
+
+    pub(crate) fn document_rows<'a>(
+        shown: impl IntoIterator<Item = &'a DocRow>,
+        cx: &App,
+        open: impl Fn(String, &mut App) + Clone + 'static,
+    ) -> Div {
+        let c = ui::colors(cx);
+        let lang = *cx.global::<Lang>();
+        div()
+            .flex()
+            .flex_col()
+            .px(px(8.0))
+            .py(px(4.0))
+            .children(shown.into_iter().enumerate().map(|(index, doc)| {
                 let openable = doc.source || doc.snapshot;
                 let mut meta = vec![ui::say(cx, kind_label(doc.kind)).to_owned()];
                 if openable {
@@ -130,8 +146,10 @@ impl Dock {
                 let id = doc.id.clone();
                 let ink = if openable { c.ink } else { c.ink_3 };
                 let title = if openable {
-                    div()
-                        .id(("doc", index))
+                    let open = open.clone();
+                    btn::tabbable(div().id(("doc", index)), cx)
+                        .role(Role::Link)
+                        .aria_label(doc.title.clone())
                         .flex()
                         .items_center()
                         .gap(px(3.0))
@@ -141,9 +159,7 @@ impl Dock {
                         .underline()
                         .child(div().min_w_0().truncate().child(doc.title.clone()))
                         .child(icon(Lucide::ExternalLink, px(12.0), c.ink))
-                        .on_click(cx.listener(move |dock, _, _, cx| {
-                            dock.follow(Target::Doc(id.clone()), cx)
-                        }))
+                        .on_click(move |_, _, cx| open(id.clone(), cx))
                         .into_any_element()
                 } else {
                     div()
@@ -191,7 +207,6 @@ impl Dock {
                                     .child(meta),
                             ),
                     )
-            }),
-        ))
+            }))
     }
 }

@@ -248,6 +248,16 @@ impl Graph {
         let tx = db.transaction()?;
         let catalog = rooms(&tx)?;
         let targets = Targets::from_request(&tx, &catalog, &req, self.linked)?;
+        if req.mode == Kind::Interrupt
+            && let Some(confirmed) = &req.confirmed_nodes
+        {
+            let confirmed: BTreeSet<_> = confirmed.iter().map(|node| node.0).collect();
+            if !targets.nodes.keys().copied().eq(confirmed) {
+                return Err(Refusal::BadSetting(
+                    "받는 이가 바뀌었습니다. 중단할 일을 다시 확인해 주세요.".into(),
+                ));
+            }
+        }
         let text = checked_text(&req.text)?;
         let group = enqueue(&tx, targets, HUMAN, req.mode, text)?;
         let message = group_message(&tx, PINNED, group)?;

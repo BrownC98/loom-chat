@@ -4,13 +4,22 @@ mod title;
 mod zoom;
 
 use api::settings::PaneWidths;
+use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyView, App, AppContext, Context, Entity, FocusHandle, Hsla, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels,
-    Render, StatefulInteractiveElement, Styled, Subscription, Window, div,
+    Render, SharedString, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
-use super::sidebar::Sidebar;
+use super::chat::{Chat, ChatEvent, Placement};
+use super::dock::{self, Dock};
+use super::icons::Lucide;
+use super::inputs::Inputs;
+use super::pictures::Shelf;
+use super::sidebar::{self, Sidebar};
+use super::widgets::{Label, segmented};
+use crate::canvas::view::{CanvasView, OpenChat};
+use crate::float::composer::{self, Composer};
 use crate::fonts;
 use crate::scale::{self, px};
 use crate::settings::{Dialog, DialogEvent};
@@ -39,17 +48,20 @@ struct Drag {
     now: f32,
 }
 
-pub fn zoom(store: Entity<Store>, window: &mut Window, cx: &mut App) -> Entity<zoom::Zoom> {
-    cx.new(|cx| zoom::Zoom::new(store, window, cx))
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    Graph,
+    Chat,
 }
 
 pub struct Shell {
     store: Entity<Store>,
     zoom: Entity<zoom::Zoom>,
-    main: AnyView,
-    left: Option<AnyView>,
-    right: Option<AnyView>,
-    layers: Vec<AnyView>,
+    main: Entity<CanvasView>,
+    left: Entity<Sidebar>,
+    right: Entity<Dock>,
+    composer: Entity<Composer>,
+    chat: Entity<Chat>,
     seen: PaneWidths,
     kept: PaneWidths,
     drag: Option<Drag>,
@@ -60,13 +72,32 @@ pub struct Shell {
 impl Shell {
     pub fn new(
         store: Entity<Store>,
-        zoom: Entity<zoom::Zoom>,
-        main: AnyView,
-        left: Option<AnyView>,
-        right: Option<AnyView>,
-        layers: Vec<AnyView>,
+        inputs: Entity<Inputs>,
+        shelf: Entity<Shelf>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let main = cx.new(|cx| CanvasView::new(store.clone(), inputs.clone(), window, cx));
+        let left = sidebar::sidebar(store.clone(), window, cx);
+        let right = dock::dock(store.clone(), shelf.clone(), inputs.clone(), window, cx);
+        let zoom = cx.new(|cx| zoom::Zoom::new(store.clone(), window, cx));
+        let composer = composer::composer(store.clone(), inputs, shelf, window, cx);
+        let chat = cx.new(|cx| Chat::new(store.clone(), window, cx));
+        cx.subscribe_in(&main, window, |this, _, event: &OpenChat, window, cx| {
+            this.chat.update(cx, |chat, cx| chat.preview(event.0, cx));
+            this.show_placement(Placement::Graph, window, cx);
+        })
+        .detach();
+        cx.subscribe_in(&chat, window, |this, _, event, window, cx| match event {
+            ChatEvent::OpenFull => this.show_placement(Placement::Full, window, cx),
+            ChatEvent::CloseGraphRoom => this.show_placement(Placement::Hidden, window, cx),
+            ChatEvent::GoGraph(nodes) => {
+                this.show_placement(Placement::Hidden, window, cx);
+                this.store
+                    .update(cx, |store, cx| store.show_nodes(nodes.clone(), cx));
+            }
+        })
+        .detach();
         cx.observe(&store, |this, store, cx| {
             let saved = store.read(cx).settings().pane_widths.clone();
             if saved != this.seen {
@@ -83,13 +114,35 @@ impl Shell {
             main,
             left,
             right,
-            layers,
+            composer,
+            chat,
             seen,
             kept: PaneWidths::default(),
             drag: None,
             focus: cx.focus_handle(),
             settings: None,
         }
+    }
+
+    fn show_placement(
+        &mut self,
+        placement: Placement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let graph = placement != Placement::Full;
+        self.main.update(cx, |view, cx| view.set_visible(graph, cx));
+        self.right.update(cx, |dock, cx| {
+            dock.set_visible(placement == Placement::Hidden, cx)
+        });
+        self.composer
+            .update(cx, |composer, cx| composer.set_visible(graph, window, cx));
+        self.store
+            .update(cx, |store, cx| store.set_graph_visible(graph, cx));
+        self.chat.update(cx, |chat, cx| chat.place(placement, cx));
+        self.drag = None;
+        window.focus(&self.focus, cx);
+        cx.notify();
     }
 
     fn open_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -123,13 +176,7 @@ impl Shell {
     }
 
     fn find(&mut self, cx: &mut Context<Self>) {
-        let sidebar = self
-            .left
-            .clone()
-            .and_then(|view| view.downcast::<Sidebar>().ok());
-        if let Some(sidebar) = sidebar {
-            sidebar.update(cx, |sidebar, cx| sidebar.reveal_find(cx));
-        }
+        self.left.update(cx, |sidebar, cx| sidebar.reveal_find(cx));
     }
 
     fn widths(&self, window: &Window, cx: &App) -> Widths {
@@ -254,6 +301,54 @@ impl Shell {
         };
         slot.children(view)
     }
+
+    fn graph(&self, preview: bool, window: &Window, cx: &Context<Self>) -> gpui::Div {
+        let widths = self.widths(window, cx);
+        let theme = cx.global::<Theme>();
+        let left = Self::slot(&widths, Pane::Side, theme, Some(self.left.clone().into()));
+        let (right, grip) = if preview {
+            (
+                div()
+                    .flex_none()
+                    .w(px(450.0).min(window.viewport_size().width * 0.46))
+                    .h_full()
+                    .border_l_1()
+                    .border_color(theme.colors.line)
+                    .bg(theme.colors.panel)
+                    .child(self.chat.clone()),
+                None,
+            )
+        } else {
+            (
+                Self::slot(&widths, Pane::Dock, theme, Some(self.right.clone().into())),
+                widths
+                    .open(Pane::Dock)
+                    .then(|| self.grip(Pane::Dock, &widths, cx)),
+            )
+        };
+        div()
+            .relative()
+            .size_full()
+            .flex()
+            .child(left)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .h_full()
+                    .child(self.main.clone())
+                    .child(self.zoom.clone())
+                    .child(self.composer.clone()),
+            )
+            .child(right)
+            .children(
+                widths
+                    .open(Pane::Side)
+                    .then(|| self.grip(Pane::Side, &widths, cx)),
+            )
+            .children(grip)
+    }
 }
 
 impl Render for Shell {
@@ -261,23 +356,42 @@ impl Render for Shell {
         if window.focused(cx).is_none() {
             window.focus(&self.focus, cx);
         }
-        let widths = self.widths(window, cx);
+        let placement = self.chat.read(cx).placement();
+        let mode = if placement == Placement::Full {
+            Mode::Chat
+        } else {
+            Mode::Graph
+        };
+        let current = cx.entity();
+        let switch = segmented(
+            "desktop-mode",
+            vec![
+                (
+                    Mode::Graph,
+                    Label::with_icon(SharedString::from("그래프"), Lucide::Workflow),
+                ),
+                (
+                    Mode::Chat,
+                    Label::with_icon(SharedString::from("채팅"), Lucide::MessageSquare),
+                ),
+            ],
+            mode,
+            move |selected, window, cx| {
+                if selected != mode {
+                    let placement = match selected {
+                        Mode::Chat => Placement::Full,
+                        Mode::Graph => Placement::Hidden,
+                    };
+                    current.update(cx, |this, cx| this.show_placement(placement, window, cx));
+                }
+            },
+            cx,
+        )
+        .aria_label("화면");
         let theme = cx.global::<Theme>();
         let lang = *cx.global::<Lang>();
-        let title = title::bar(window, &theme.colors, lang);
+        let title = title::bar(window, &theme.colors, lang, switch);
         let status = status::bar(&self.store, &theme.colors);
-        let left = Self::slot(&widths, Pane::Side, theme, self.left.clone());
-        let right = Self::slot(&widths, Pane::Dock, theme, self.right.clone());
-        let side_grip = if widths.open(Pane::Side) {
-            Some(self.grip(Pane::Side, &widths, cx))
-        } else {
-            None
-        };
-        let dock_grip = if widths.open(Pane::Dock) {
-            Some(self.grip(Pane::Dock, &widths, cx))
-        } else {
-            None
-        };
         div()
             .size_full()
             .flex()
@@ -288,12 +402,28 @@ impl Render for Shell {
             .text_color(theme.colors.ink)
             .capture_key_down(cx.listener(|this, e: &KeyDownEvent, window, cx| {
                 let stroke = &e.keystroke;
+                let placement = this.chat.read(cx).placement();
+                if placement != Placement::Hidden
+                    && stroke.modifiers.alt
+                    && !stroke.modifiers.secondary(cx)
+                    && stroke.key.eq_ignore_ascii_case("l")
+                {
+                    if !e.is_held && this.settings.is_none() {
+                        this.chat
+                            .update(cx, |chat, cx| chat.open_picker(window, cx));
+                    }
+                    cx.stop_propagation();
+                    return;
+                }
                 if !stroke.modifiers.secondary(cx) || stroke.modifiers.alt {
                     return;
                 }
                 if stroke.key == "," {
                     this.open_settings(window, cx);
                     cx.stop_propagation();
+                    return;
+                }
+                if placement == Placement::Full {
                     return;
                 }
                 let shift = stroke.modifiers.shift;
@@ -337,21 +467,10 @@ impl Render for Shell {
                     .relative()
                     .flex_1()
                     .min_h_0()
-                    .flex()
-                    .child(left)
-                    .child(
-                        div()
-                            .relative()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
-                            .child(self.main.clone())
-                            .child(self.zoom.clone())
-                            .children(self.layers.clone()),
-                    )
-                    .child(right)
-                    .children(side_grip)
-                    .children(dock_grip),
+                    .map(|body| match placement {
+                        Placement::Full => body.child(self.chat.clone()),
+                        _ => body.child(self.graph(placement == Placement::Graph, window, cx)),
+                    }),
             )
             .child(status)
             .children(self.settings.as_ref().map(|(dialog, _)| dialog.clone()))

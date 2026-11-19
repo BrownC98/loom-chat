@@ -70,9 +70,16 @@ fn reload(base: &str, repo: RepoId, rows: usize) -> Result<Fetched, Failure> {
 }
 
 impl Dock {
-    pub(super) fn commits_enter(&mut self, cx: &mut Context<Self>) {
-        self.commits_follow(cx);
+    pub(super) fn stop_commit_refresh(&mut self) {
         self.commits.poll += 1;
+    }
+
+    pub(super) fn commits_enter(&mut self, cx: &mut Context<Self>) {
+        if !self.visible {
+            return;
+        }
+        self.commits_follow(cx);
+        self.stop_commit_refresh();
         let token = self.commits.poll;
         cx.spawn(async move |this, cx| {
             loop {

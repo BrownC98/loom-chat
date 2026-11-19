@@ -52,7 +52,7 @@ impl Dock {
         cx.spawn(async move |this, cx| {
             cx.background_executor().timer(TYPE_PAUSE).await;
             let _ = this.update(cx, |dock, cx| {
-                if dock.search_text(cx) == query {
+                if dock.visible && dock.search_text(cx) == query {
                     dock.load_history(cx);
                 }
             });

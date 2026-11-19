@@ -553,6 +553,7 @@ pub struct Actions {
     pub bookmark: Press,
     pub wake: Press,
     pub status: Press,
+    pub room: Option<Press>,
     pub expand: Press,
     pub menu: Press,
     pub rename: Press,
@@ -923,6 +924,20 @@ fn actions(face: &Face, expand: bool, zoom: f32, colors: &Colors) -> Vec<AnyElem
         );
     }
     out.push(bookmark_button(face, zoom, colors).into_any_element());
+    if let Some(room) = &face.actions.room {
+        out.push(
+            ghost(
+                ElementId::NamedInteger("chat-room".into(), node as u64),
+                None,
+                Lucide::MessageSquare,
+                Str::NodeOpenRoom.text(lang),
+                room,
+                zoom,
+                colors,
+            )
+            .into_any_element(),
+        );
+    }
     if expand {
         let (glyph, tip) = if face.collapse {
             (Lucide::Minimize2, Str::NodeCollapse)

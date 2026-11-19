@@ -28,7 +28,7 @@ use crate::views::pictures::Shelf;
 pub(crate) mod answers;
 mod arrange;
 mod blocks;
-mod body;
+pub(crate) mod body;
 mod commits;
 mod docs;
 pub(crate) mod entry;
@@ -129,6 +129,7 @@ struct Docs {
 
 pub struct Dock {
     store: Entity<Store>,
+    visible: bool,
     tab: Tab,
     inbox: Inbox,
     answers: Entity<Answers>,
@@ -172,6 +173,7 @@ pub fn dock(
         let search = field::new(Str::InboxSearchPlaceholder, cx);
         let mut dock = Dock {
             store: store.clone(),
+            visible: true,
             tab: Tab::Questions,
             inbox: Inbox::New,
             answers: cx.new(|cx| Answers::new(store.clone(), shelf, cx)),
@@ -210,9 +212,12 @@ pub fn dock(
             subscriptions: Vec::new(),
         };
         dock.subscriptions
-            .push(cx.observe(&store, |dock: &mut Dock, _, cx| dock.sync(cx)));
-        dock.subscriptions
-            .push(cx.observe(&store, |dock: &mut Dock, _, cx| dock.commits_follow(cx)));
+            .push(cx.observe(&store, |dock: &mut Dock, _, cx| {
+                if dock.visible {
+                    dock.sync(cx);
+                    dock.commits_follow(cx);
+                }
+            }));
         dock.subscriptions
             .push(cx.observe(&dock.answers, |_, _, cx| cx.notify()));
         dock.subscriptions
@@ -231,7 +236,11 @@ pub fn dock(
                 FieldEvent::Changed => {}
             }));
         dock.subscriptions
-            .push(cx.subscribe(&store, |dock, _, event, cx| dock.feed(event, cx)));
+            .push(cx.subscribe(&store, |dock, _, event, cx| {
+                if dock.visible {
+                    dock.feed(event, cx);
+                }
+            }));
         dock.subscriptions
             .push(cx.subscribe(&store, |dock, _, event: &ShowEvents, cx| {
                 dock.choose_tab(Tab::Events, cx);
@@ -246,6 +255,26 @@ pub fn dock(
 }
 
 impl Dock {
+    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        if !visible {
+            self.stop_commit_refresh();
+            self.terminal = None;
+            self.focus_due = false;
+            return;
+        }
+        self.sync(cx);
+        match self.tab {
+            Tab::Commits => self.commits_enter(cx),
+            Tab::Docs => self.load_docs(cx),
+            Tab::Events => self.load_events(cx),
+            _ => {}
+        }
+    }
+
     fn choose_tab(&mut self, tab: Tab, cx: &mut Context<Self>) {
         self.tab = tab;
         self.fault = None;

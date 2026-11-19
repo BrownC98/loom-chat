@@ -211,6 +211,7 @@ impl Dock {
                 this.store
                     .update(cx, |store, cx| store.open_node_status(id, at, button, cx))
             }),
+            room: None,
             expand: press(|this, id, _, _, cx| this.store.update(cx, |store, cx| store.go(id, cx))),
             menu: press(|this, id, e, _, cx| {
                 let (at, button) = (e.position, this.anchors.get(&format!("menu:{id}")));

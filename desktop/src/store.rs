@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
-use api::canvas::{CardSize, Placed};
+use api::canvas::{CardSize, Layout, Placed};
 use api::graph::docs::DocRow;
 use api::graph::events::{Entry, EventLog, SwitchCause};
 use api::graph::waits::{AnswerWait, ChooseOption, ClosedPage, PressKeys, Prompt, TypeText};
@@ -13,13 +13,13 @@ use api::repos::{PlaceView, RepoView};
 use api::settings::places::ReachView;
 use api::settings::{ArrangeDirection, GraphScope, SettingsView};
 use gpui::{
-    App, AppContext, Bounds, Context, EventEmitter, Image, ImageFormat, Pixels, Task, Window,
-    WindowAppearance,
+    AnyWindowHandle, App, AppContext, Bounds, Context, EventEmitter, Image, ImageFormat, Pixels,
+    Task, Window, WindowAppearance,
 };
 
 use crate::canvas::drag::Arrange;
 use crate::canvas::repos::{chosen_repo, groups_of};
-use crate::link::{self, Fresh, Graph, Loaded, Snapshot};
+use crate::link::{self, Fresh, Graph, GraphRead, GraphView, LinkState, Snapshot};
 use crate::problem::Failure;
 use crate::{scale, strings, theme};
 
@@ -37,6 +37,10 @@ pub enum SentPart {
 pub struct Store {
     base: Option<String>,
     status: String,
+    connection: LinkState,
+    watch: Option<link::Watch>,
+    window: AnyWindowHandle,
+    repo_watch: Option<Task<()>>,
     snapshot: Option<Snapshot>,
     revision: u64,
     loaded: u64,
@@ -103,6 +107,7 @@ pub struct DraftChanged(pub u32, pub Slot);
 pub struct BusyChanged;
 
 impl EventEmitter<GraphEvent> for Store {}
+impl EventEmitter<LinkState> for Store {}
 impl EventEmitter<Arrange> for Store {}
 impl EventEmitter<ZoomTo> for Store {}
 impl EventEmitter<NodeMenu> for Store {}
@@ -120,12 +125,13 @@ fn newer(at: &mut u64, order: u64) -> bool {
     newer
 }
 
-fn unreached_of(base: &str, hosts: Vec<String>) -> HashSet<String> {
+fn unreached_of(base: &str, hosts: Vec<String>, graph: &GraphRead) -> HashSet<String> {
     hosts
         .into_iter()
+        .take_while(|_| graph.is_current())
         .filter(|host| {
             matches!(
-                link::read::<Option<ReachView>>(base, &format!("/api/ssh/{}", link::escape(host))),
+                graph.read::<Option<ReachView>>(base, &format!("/api/ssh/{}", link::escape(host))),
                 Ok(Some(reach)) if !matches!(reach, ReachView::Reached { .. })
             )
         })
@@ -164,10 +170,13 @@ impl Store {
     ) -> Self {
         let settings = SettingsView::default();
         apply_settings(&settings, cx);
-        let (base, status, failure) = match started {
+        let (base, status, failure, watch) = match started {
             Ok(base) => {
                 let (graph, inbox) = async_channel::unbounded();
-                let failure = link::watch(&base, graph).err();
+                let (watch, failure) = match link::watch(&base, graph) {
+                    Ok(watch) => (Some(watch), None),
+                    Err(error) => (None, Some(error)),
+                };
                 let status = failure.clone().unwrap_or_else(|| base.clone());
                 cx.spawn_in(window, async move |this, cx| {
                     while let Ok(event) = inbox.recv().await {
@@ -180,58 +189,23 @@ impl Store {
                     }
                 })
                 .detach();
-                let reach_base = base.clone();
-                cx.spawn_in(window, async move |this, cx| {
-                    loop {
-                        cx.background_executor().timer(REPOS_EVERY).await;
-                        let Ok(visible) = this.update_in(cx, |_, window, _| window.is_visible())
-                        else {
-                            break;
-                        };
-                        let base = reach_base.clone();
-                        let order = link::order();
-                        let repos: Option<Vec<RepoView>> = match visible {
-                            true => cx
-                                .background_spawn(async move { link::read(&base, "/api/repos") })
-                                .await
-                                .ok(),
-                            false => None,
-                        };
-                        let Ok(hosts) = this.update(cx, |store, cx| {
-                            if let Some(repos) = repos {
-                                store.keep_repos(order, repos, cx);
-                            }
-                            store.ssh_hosts()
-                        }) else {
-                            break;
-                        };
-                        if hosts.is_empty() {
-                            continue;
-                        }
-                        let base = reach_base.clone();
-                        let down = cx
-                            .background_spawn(async move { unreached_of(&base, hosts) })
-                            .await;
-                        let kept = this.update(cx, |store, cx| {
-                            if store.unreached != down {
-                                store.unreached = down;
-                                cx.notify();
-                            }
-                        });
-                        if kept.is_err() {
-                            break;
-                        }
-                    }
-                })
-                .detach();
-                (Some(base), status, failure)
+                (Some(base), status, failure, watch)
             }
-            Err(error) => (None, error.clone(), Some(error)),
+            Err(error) => (None, error.clone(), Some(error), None),
         };
         let notice = failure.map(|text| Notice { text });
-        Self {
+        let connection = if watch.is_some() {
+            LinkState::Reconnecting
+        } else {
+            LinkState::Lost
+        };
+        let mut store = Self {
             base,
             status,
+            connection,
+            watch,
+            window: window.window_handle(),
+            repo_watch: None,
             snapshot: None,
             revision: 0,
             loaded: 0,
@@ -255,7 +229,82 @@ impl Store {
             drafts: HashMap::new(),
             busy: HashSet::new(),
             unreached: HashSet::new(),
+        };
+        store.set_graph_visible(true, cx);
+        store
+    }
+
+    pub fn set_graph_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        let Some(watch) = &self.watch else {
+            return;
+        };
+        if visible {
+            if !watch.graph_visible() {
+                watch.set_graph_visible(true);
+                watch.reload();
+            }
+            if self.repo_watch.is_none() {
+                self.watch_repos(cx);
+            }
+        } else {
+            watch.set_graph_visible(false);
+            self.repo_watch = None;
         }
+    }
+
+    fn watch_repos(&mut self, cx: &Context<Self>) {
+        let Some((base, graph)) = self
+            .base
+            .clone()
+            .zip(self.watch.as_ref().and_then(link::Watch::graph_read))
+        else {
+            return;
+        };
+        let window = self.window;
+        self.repo_watch = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(REPOS_EVERY).await;
+                let Ok(visible) = window.update(cx, |_, window, _| window.is_visible()) else {
+                    break;
+                };
+                let order = link::order();
+                let repos = if visible {
+                    let read_base = base.clone();
+                    let reading = graph.clone();
+                    cx.background_spawn(async move { reading.read(&read_base, "/api/repos").ok() })
+                        .await
+                } else {
+                    None
+                };
+                let Ok(hosts) = this.update(cx, |store, cx| {
+                    if let Some(repos) = repos {
+                        store.keep_repos(order, repos, cx);
+                    }
+                    store.ssh_hosts()
+                }) else {
+                    break;
+                };
+                if hosts.is_empty() {
+                    continue;
+                }
+                let read_base = base.clone();
+                let reading = graph.clone();
+                let down = cx
+                    .background_spawn(async move { unreached_of(&read_base, hosts, &reading) })
+                    .await;
+                if this
+                    .update(cx, |store, cx| {
+                        if store.unreached != down {
+                            store.unreached = down;
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        }));
     }
 
     fn ssh_hosts(&self) -> Vec<String> {
@@ -286,6 +335,10 @@ impl Store {
 
     pub fn base(&self) -> Option<&str> {
         self.base.as_deref()
+    }
+
+    pub fn connection(&self) -> LinkState {
+        self.connection
     }
 
     pub fn snapshot(&self) -> Option<&Snapshot> {
@@ -595,16 +648,18 @@ impl Store {
         cx.notify();
     }
 
-    fn take_settings(&mut self, settings: SettingsView, cx: &mut Context<Self>) {
+    fn take_settings(&mut self, settings: SettingsView, cx: &mut Context<Self>) -> bool {
         let key = serde_json::to_string(&settings).unwrap_or_default();
-        if key != self.settings_key {
-            apply_settings(&settings, cx);
-            if settings.closed_panes.dock {
-                self.picked = None;
-            }
-            self.settings = settings;
-            self.settings_key = key;
+        if key == self.settings_key {
+            return false;
         }
+        apply_settings(&settings, cx);
+        if settings.closed_panes.dock {
+            self.picked = None;
+        }
+        self.settings = settings;
+        self.settings_key = key;
+        true
     }
 
     pub fn set_pane_open(&mut self, pane: &str, open: bool, cx: &mut Context<Self>) {
@@ -642,109 +697,121 @@ impl Store {
         }
     }
 
-    pub fn reload(&self, cx: &mut Context<Self>) {
-        let Some(base) = self.base.clone() else {
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            let event = cx.background_spawn(async move { link::load(&base) }).await;
-            let _ = this.update(cx, |store, cx| store.apply(event, cx));
-        })
-        .detach();
+    pub fn reload(&self, _: &mut Context<Self>) {
+        if let Some(watch) = &self.watch {
+            watch.reload();
+        }
     }
 
     fn apply(&mut self, event: Graph, cx: &mut Context<Self>) {
+        let accepts_graph = |order| {
+            self.watch
+                .as_ref()
+                .is_some_and(|watch| watch.accepts_graph(order))
+        };
         match event {
-            Graph::Loaded(loaded) => self.load(*loaded, cx),
-            Graph::Nodes(fresh) => self.refresh(*fresh),
+            Graph::Connection(state) => {
+                self.connection = state;
+                cx.emit(state);
+                return;
+            }
+            Graph::Nodes(mut fresh) => {
+                if !accepts_graph(fresh.order) {
+                    fresh.view = None;
+                }
+                if !self.refresh(*fresh) {
+                    return;
+                }
+            }
+            Graph::Settings { order, result } => match result {
+                Ok(settings) => self.keep_settings(order, *settings, cx),
+                Err(error) if order > self.settings_from => self.fail(error, cx),
+                Err(_) => return,
+            },
             Graph::Feed(event) => {
                 if let GraphEvent::Recorded { record } = event.as_ref()
                     && matches!(&record.entry, Entry::AccountSwitched { why, .. } if *why != SwitchCause::Manual)
                 {
                     self.reload(cx);
                 }
-                cx.emit(*event)
-            }
-            Graph::Link => {}
-            Graph::Failed { order, error } => {
-                if order <= self.loaded.max(self.nodes_at) {
+                let nodes = matches!(*event, GraphEvent::Nodes);
+                cx.emit(*event);
+                if nodes || !self.watch.as_ref().is_some_and(link::Watch::graph_visible) {
                     return;
                 }
-                let text = error.text(*cx.global::<strings::Lang>());
-                let text = if text.is_empty() {
-                    "connection closed".to_owned()
-                } else {
-                    text
-                };
-                self.notice = Some(Notice { text });
             }
+            Graph::Failed { order, error }
+                if accepts_graph(order) && order > self.loaded.max(self.nodes_at) =>
+            {
+                self.fail(error, cx);
+            }
+            _ => return,
         }
         cx.notify();
     }
 
-    fn load(&mut self, loaded: Loaded, cx: &mut Context<Self>) {
-        let Loaded {
-            order,
-            snapshot: read,
-            settings,
-        } = loaded;
-        let Some(snapshot) = &mut self.snapshot else {
-            self.snapshot = Some(read);
-            (self.loaded, self.nodes_at, self.repos_at) = (order, order, order);
-            self.keep_settings(order, settings, cx);
-            self.revision += 1;
-            self.reselect();
-            return;
+    fn fail(&mut self, error: Failure, cx: &Context<Self>) {
+        let text = error.text(*cx.global::<strings::Lang>());
+        let text = if text.is_empty() {
+            "connection closed".to_owned()
+        } else {
+            text
         };
-        let mut used = false;
-        if newer(&mut self.nodes_at, order) {
-            snapshot.nodes = read.nodes;
-            used = true;
-        }
-        if newer(&mut self.repos_at, order) {
-            snapshot.repos = read.repos;
-            used = true;
-        }
-        if newer(&mut self.loaded, order) {
-            snapshot.layout = read.layout;
-            snapshot.sizes = read.sizes;
-            self.keep_settings(order, settings, cx);
-            used = true;
-        }
-        if used {
-            self.revision += 1;
-            self.reselect();
-        }
+        self.notice = Some(Notice { text });
     }
 
     fn keep_settings(&mut self, order: u64, settings: SettingsView, cx: &mut Context<Self>) {
         self.status = self.base.clone().unwrap_or_default();
-        if self.unsaved.is_empty() && order > self.settings_from {
+        if self.unsaved.is_empty() && newer(&mut self.settings_from, order) {
             self.confirmed = settings.clone();
-            self.take_settings(settings, cx);
+            if self.take_settings(settings, cx) && self.snapshot.is_some() {
+                self.revision += 1;
+            }
         }
     }
 
-    fn refresh(&mut self, fresh: Fresh) {
-        let Some(snapshot) = &mut self.snapshot else {
-            return;
-        };
+    fn refresh(&mut self, fresh: Fresh) -> bool {
+        let snapshot = self.snapshot.get_or_insert_with(|| Snapshot {
+            nodes: Vec::new(),
+            repos: Vec::new(),
+            layout: Layout {
+                placed: Vec::new(),
+                arranged: Vec::new(),
+            },
+            sizes: Vec::new(),
+        });
         let mut used = false;
         if newer(&mut self.nodes_at, fresh.order) {
             snapshot.nodes = fresh.nodes;
             used = true;
         }
-        if let Some(repos) = fresh.repos
-            && newer(&mut self.repos_at, fresh.order)
-        {
-            snapshot.repos = repos;
-            used = true;
+        if let Some(view) = fresh.view {
+            let repos = match view {
+                GraphView::Repos(repos) => repos,
+                GraphView::Full {
+                    repos,
+                    layout,
+                    sizes,
+                } => {
+                    if newer(&mut self.loaded, fresh.order) {
+                        snapshot.layout = layout;
+                        snapshot.sizes = sizes;
+                        used = true;
+                    }
+                    repos
+                }
+            };
+            if newer(&mut self.repos_at, fresh.order) {
+                snapshot.repos = repos;
+                used = true;
+            }
         }
         if used {
             self.status = self.base.clone().unwrap_or_default();
             self.revision += 1;
             self.reselect();
         }
+        used
     }
 
     fn keep_repos(&mut self, order: u64, repos: Vec<RepoView>, cx: &mut Context<Self>) {
@@ -802,13 +869,13 @@ impl Store {
 
     pub(crate) fn call<T: Send + 'static>(
         &self,
-        cx: &mut Context<Self>,
+        cx: &App,
         work: impl FnOnce(&str) -> Result<T, Failure> + Send + 'static,
     ) -> Task<Result<T, String>> {
         let Some(base) = self.base.clone() else {
             return Task::ready(Err(self.status.clone()));
         };
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |cx| {
             let done = cx.background_spawn(async move { work(&base) }).await;
             done.map_err(|failure| failure.text(cx.update(|app| *app.global::<strings::Lang>())))
         })
@@ -985,13 +1052,6 @@ impl Store {
     pub fn doc_url(&self, id: &str) -> Result<String, String> {
         match &self.base {
             Some(base) => Ok(format!("{base}/docs/{id}")),
-            None => Err(self.status.clone()),
-        }
-    }
-
-    pub fn room_url(&self, node: u32) -> Result<String, String> {
-        match &self.base {
-            Some(base) => Ok(format!("{base}/rooms/{node}")),
             None => Err(self.status.clone()),
         }
     }

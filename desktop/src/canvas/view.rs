@@ -4,10 +4,10 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    App, AppContext, Bounds, Context, Div, Entity, FocusHandle, FontWeight, InteractiveElement,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement, PinchEvent, Pixels, Point, Render, ScrollEvent, StatefulInteractiveElement,
-    Styled, Window, canvas, div, point, size,
+    App, AppContext, Bounds, Context, Div, Entity, EventEmitter, FocusHandle, FontWeight,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
+    MouseUpEvent, ParentElement, PinchEvent, Pixels, Point, Render, ScrollEvent,
+    StatefulInteractiveElement, Styled, Window, canvas, div, point, size,
 };
 
 use api::graph::pty::Pace;
@@ -70,8 +70,13 @@ struct Carry {
     started: bool,
 }
 
+pub struct OpenChat(pub NodeId);
+
+impl EventEmitter<OpenChat> for CanvasView {}
+
 pub struct CanvasView {
     pub(super) store: Entity<Store>,
+    visible: bool,
     inputs: Entity<Inputs>,
     focus: FocusHandle,
     moves: Moves,
@@ -141,13 +146,17 @@ impl CanvasView {
     ) -> Self {
         let mode = std::env::var("LOOM_DESKTOP_FRAMES").ok();
         cx.observe(&store, |this, _, cx| {
-            this.sync(cx);
-            cx.notify();
+            if this.visible {
+                this.sync(cx);
+                cx.notify();
+            }
         })
         .detach();
         cx.subscribe(&store, |this, _, event: &GraphEvent, cx| {
-            this.traffic.event(event, Instant::now());
-            cx.notify();
+            if this.visible {
+                this.traffic.event(event, Instant::now());
+                cx.notify();
+            }
         })
         .detach();
         cx.subscribe(&store, |this, _, event: &ZoomTo, cx| {
@@ -178,6 +187,7 @@ impl CanvasView {
         .detach();
         Self {
             store,
+            visible: true,
             inputs,
             focus: cx.focus_handle(),
             moves: Moves::default(),
@@ -208,6 +218,24 @@ impl CanvasView {
             titles: Vec::new(),
             tip: None,
         }
+    }
+
+    pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        if visible {
+            self.sync(cx);
+        } else {
+            self.live.clear();
+            self.focused = None;
+            self.menu = None;
+            self.pop = None;
+            self.glide = None;
+            self.traffic = Traffic::default();
+        }
+        cx.notify();
     }
 
     fn sync(&mut self, cx: &App) {

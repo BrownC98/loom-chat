@@ -58,6 +58,7 @@ struct Filed {
 
 pub struct Composer {
     store: Entity<Store>,
+    visible: bool,
     inputs: Entity<Inputs>,
     pane: Rc<Cell<Size<Pixels>>>,
     boxed: Rc<Cell<Size<Pixels>>>,
@@ -198,6 +199,7 @@ pub fn composer(
         let shared = pictures.clone();
         let mut composer = Composer {
             store: store.clone(),
+            visible: true,
             inputs: registry.clone(),
             pane: Rc::new(Cell::new(Size::default())),
             boxed: Rc::new(Cell::new(Size::default())),
@@ -352,7 +354,25 @@ impl Composer {
         self.aimed(cx).map(|a| a.node)
     }
 
+    pub fn set_visible(&mut self, visible: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.visible == visible {
+            return;
+        }
+        self.visible = visible;
+        if visible {
+            self.sync(window, cx);
+        } else {
+            self.listing = None;
+            self.grab = None;
+            self.store
+                .update(cx, |store, cx| store.set_composer(None, cx));
+        }
+    }
+
     fn sync(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.visible {
+            return;
+        }
         let selected = self.store.read(cx).selected();
         if selected != self.seen_selected {
             self.seen_selected = selected;

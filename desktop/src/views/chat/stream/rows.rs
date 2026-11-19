@@ -5,19 +5,21 @@ use api::graph::chat::{
     ChatTranscriptItem,
 };
 use api::graph::events::{BatchResult, Entry};
-use api::graph::messages::{Kind, MessageKind};
+use api::graph::messages::{Kind, MessageKind, Question};
+use api::graph::text::Block;
 use api::ids::NodeId;
 use api::repos::RepoView;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, Window, div, radians,
-    relative,
+    AnyElement, App, ClipboardItem, Context, Div, FontWeight, InteractiveElement, IntoElement,
+    ParentElement, Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, Window, div,
+    radians, relative,
 };
 
-use super::{Quote, Stream, StreamEvent, tr};
+use super::{Quote, RowContent, Stream, StreamEvent, tr};
 use crate::scale::px;
 use crate::strings::{Lang, Str};
+use crate::views::dock::blocks;
 use crate::views::icons::{Lucide, icon};
 use crate::views::prose::prose;
 use crate::views::tooltip::{self, tip};
@@ -25,6 +27,75 @@ use crate::views::ui;
 use crate::views::widgets::btn;
 
 const MESSAGE_GROUP: &str = "stream-message";
+const SENDER_WINDOW_MS: i64 = 3 * 60 * 1000;
+const BUBBLE_WIDTH: f32 = 720.0;
+const BUBBLE_SHARE: f32 = 0.72;
+
+pub(super) fn turn_boundary(item: &ChatItem) -> bool {
+    matches!(&item.entry, ChatEntry::Transcript { item: ChatTranscriptItem::Status { text } }
+        if matches!(text.trim(), "턴을 시작했습니다." | "턴이 끝났습니다."))
+}
+
+pub(super) fn hidden(item: &ChatItem) -> bool {
+    match &item.entry {
+        ChatEntry::Message { message } => {
+            super::super::message_text(message).trim().is_empty()
+                || (message.origin == ChatOrigin::Human
+                    && matches!(
+                        message.what,
+                        Some(MessageKind::Answer {
+                            question: Question::Inbox { .. }
+                        })
+                    ))
+        }
+        ChatEntry::Transcript { item } => match item {
+            ChatTranscriptItem::Assistant { text, .. } | ChatTranscriptItem::User { text } => {
+                text.trim().is_empty()
+            }
+            ChatTranscriptItem::Thinking { summary } => {
+                summary.as_deref().is_none_or(|text| text.trim().is_empty())
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[derive(PartialEq, Eq)]
+enum Sender<'a> {
+    Human,
+    Node(NodeId),
+    Outside(&'a str),
+    NamedAgent(&'a str),
+    Loom,
+}
+
+fn sender<'a>(item: &'a ChatItem, room: Option<&'a ChatRoom>) -> Option<Sender<'a>> {
+    match &item.entry {
+        ChatEntry::Message { message } => Some(match message.origin {
+            ChatOrigin::Human => Sender::Human,
+            ChatOrigin::Loom => Sender::Loom,
+            ChatOrigin::Agent => message
+                .from
+                .id
+                .map_or(Sender::NamedAgent(&message.from.name), Sender::Node),
+            ChatOrigin::Outside => Sender::Outside(&message.from.name),
+        }),
+        ChatEntry::Transcript {
+            item: ChatTranscriptItem::User { .. },
+        } => Some(Sender::Human),
+        ChatEntry::Transcript {
+            item: ChatTranscriptItem::Assistant { .. },
+        } => {
+            let room = room?;
+            match room.kind {
+                ChatRoomKind::Agent { node } => Some(Sender::Node(node)),
+                _ => Some(Sender::NamedAgent(&room.name)),
+            }
+        }
+        _ => None,
+    }
+}
 
 impl Stream {
     pub(super) fn row(
@@ -33,28 +104,62 @@ impl Stream {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let Some(item) = self
-            .rows
-            .visible
-            .get(index)
-            .and_then(|row| self.data.read(cx).items().get(row.item).cloned())
-        else {
-            return div().into_any_element();
-        };
-        let cursor = item.cursor;
+        let row = &self.rows.visible[index];
+        let cursor = row.cursor;
         let key = format!(
             "stream-{}-{}-{}",
             cursor.source as u8, cursor.id, cursor.part
         );
-        let body = window.with_element_namespace(key.clone(), |window| match &item.entry {
-            ChatEntry::Message { message } => self.message(&item, message, window, cx),
-            ChatEntry::Wait { .. } => self.wait_card(item, cx),
-            ChatEntry::Notice { event } => {
-                let (label, detail) = notice(event, cx);
-                self.folded(cursor, label, detail, cx)
-            }
-            ChatEntry::Transcript { item: transcript } => {
-                self.transcript(&item, transcript, window, cx)
+        let data = self.data.read(cx);
+        let previous = index
+            .checked_sub(1)
+            .and_then(|index| self.rows.visible.get(index));
+        let day = (cursor.at_ms > 0)
+            .then(|| {
+                ui::clock(
+                    cursor.at_ms.div_euclid(1000),
+                    tr(cx, "%Y년 %-m월 %-d일", "%b %-d, %Y"),
+                )
+            })
+            .filter(|day| !day.is_empty());
+        let date = day.filter(|day| {
+            previous.is_none_or(|row| {
+                ui::clock(
+                    row.cursor.at_ms.div_euclid(1000),
+                    tr(cx, "%Y년 %-m월 %-d일", "%b %-d, %Y"),
+                ) != *day
+            })
+        });
+        let grouped = date.is_none()
+            && row.item().is_some_and(|item| {
+                let item = &data.items()[item];
+                previous
+                    .and_then(|prev| prev.item())
+                    .map(|prev| &data.items()[prev])
+                    .is_some_and(|prev| {
+                        cursor.at_ms > 0
+                            && prev.cursor.at_ms > 0
+                            && cursor.at_ms.saturating_sub(prev.cursor.at_ms) <= SENDER_WINDOW_MS
+                            && sender(item, data.room())
+                                .is_some_and(|author| sender(prev, data.room()) == Some(author))
+                    })
+            });
+        let body = window.with_element_namespace(key.clone(), |window| {
+            let index = match &self.rows.visible[index].content {
+                RowContent::Activity(steps) => return self.activity(cursor, steps, cx),
+                RowContent::Item(index) => *index,
+            };
+            let item = self.data.read(cx).items()[index].clone();
+            match &item.entry {
+                ChatEntry::Message { message } => self.message(&item, message, grouped, window, cx),
+                ChatEntry::Wait { .. } => self.wait_card(item, window, cx),
+                ChatEntry::Notice { event } => {
+                    let (label, detail) = notice(event, cx);
+                    self.folded(cursor, label, detail, cx)
+                }
+                ChatEntry::Transcript { item: transcript } => {
+                    self.transcript(&item, transcript, grouped, window, cx)
+                }
             }
         });
         div()
@@ -62,7 +167,15 @@ impl Stream {
             .group(MESSAGE_GROUP)
             .w_full()
             .px(px(14.0))
-            .py(px(6.0))
+            .py(px(if grouped { 2.0 } else { 6.0 }))
+            .children(date.map(|day| {
+                div()
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .pb(px(8.0))
+                    .child(badge(day, ui::colors(cx).ink_2, cx))
+            }))
             .child(body)
             .into_any_element()
     }
@@ -141,6 +254,7 @@ impl Stream {
         &self,
         item: &Arc<ChatItem>,
         message: &ChatMessage,
+        grouped: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -155,40 +269,43 @@ impl Stream {
             .from
             .id
             .or_else(|| message.receipts.iter().find_map(|receipt| receipt.to.id));
+        let room = self.data.read(cx).room();
+        let agent = room.and_then(|room| match room.kind {
+            ChatRoomKind::Agent { node } => Some(node),
+            _ => None,
+        });
         let fold = (message.origin == ChatOrigin::Agent
             && !message.receipts.is_empty()
             && message
                 .receipts
                 .iter()
                 .all(|receipt| receipt.to.id.is_some())
-            && self.data.read(cx).room().is_some_and(|room| {
+            && room.is_some_and(|room| {
                 matches!(
                     room.kind,
                     ChatRoomKind::Work { .. } | ChatRoomKind::Custom | ChatRoomKind::Pinned
                 )
             }))
-        .then(|| self.is_expanded(item.cursor));
-        let source = self.message_source(message.room.as_deref(), node, cx);
-        let recipient = self
-            .data
-            .read(cx)
-            .room()
-            .and_then(|current| {
-                let named = message.room.as_ref()?;
-                (fold.is_none()
-                    && named == &current.id
-                    && !matches!(current.kind, ChatRoomKind::Pinned))
-                .then(|| current.name.clone())
+        .then(|| self.is_expanded(item.cursor, cx));
+        let recipient = room
+            .filter(|room| {
+                agent.is_none()
+                    && fold.is_none()
+                    && message.room.as_ref() == Some(&room.id)
+                    && !matches!(room.kind, ChatRoomKind::Pinned)
             })
+            .map(|room| room.name.clone())
             .or_else(|| {
                 let recipients: Vec<_> = message
                     .receipts
                     .iter()
+                    .filter(|receipt| agent.is_none() || receipt.to.id != agent)
                     .map(|receipt| receipt.to.name.as_str())
                     .collect();
                 (!recipients.is_empty()).then(|| recipients.join(", "))
             });
-        let author = match recipient {
+        let source = self.message_source(message.room.as_deref(), node, cx);
+        let author = match recipient.as_deref() {
             Some(recipient) => format!("{display} → {recipient}"),
             None => display.to_owned(),
         };
@@ -206,97 +323,173 @@ impl Stream {
                 .children(source.map(|badge| badge.max_w(relative(0.4))));
         }
         let author = if fold == Some(true) {
-            self.expand_button(item.cursor, div().min_w_0().truncate().child(author), cx)
-                .into_any_element()
+            Some(
+                self.expand_button(item.cursor, div().min_w_0().truncate().child(author), cx)
+                    .into_any_element(),
+            )
+        } else if grouped {
+            recipient.map(|recipient| meta(format!("→ {recipient}"), cx).into_any_element())
         } else {
-            div()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(prose(author))
-                .into_any_element()
+            Some(
+                div()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(prose(author))
+                    .into_any_element(),
+            )
         };
-        let header = flow()
-            .child(author)
-            .children(
-                (message.origin == ChatOrigin::Outside)
-                    .then(|| badge(tr(cx, "외부 에이전트", "Outside agent"), c.ink_2, cx)),
-            )
-            .children(
-                message
-                    .mode
-                    .map(|mode| badge(mode_name(mode, cx), c.ink_2, cx)),
-            )
-            .children(
-                message
-                    .what
-                    .as_ref()
-                    .and_then(|kind| message_kind(kind, cx))
-                    .map(|kind| badge(kind, c.ink_2, cx)),
-            )
-            .children(message.reply_to.map(|id| meta(format!("#{id}"), cx)))
-            .child(timestamp(item.cursor, cx))
-            .children(source);
-        let receipts = (!message.receipts.is_empty() || message.outside_read).then(|| {
-            flow()
-                .children(message.receipts.iter().enumerate().map(|(index, receipt)| {
-                    let (label, ink) = match receipt.state {
-                        ChatDelivery::Queued => (tr(cx, "대기 중", "Queued"), c.ink_2),
-                        ChatDelivery::Handed => (tr(cx, "전달됨", "Delivered"), c.ink_2),
-                        ChatDelivery::Printed => (tr(cx, "표시됨", "Shown"), c.ink_2),
-                        ChatDelivery::Read => (tr(cx, "읽음", "Read"), c.ok),
-                        ChatDelivery::Retrying => (tr(cx, "다시 전달 중", "Retrying"), c.warn),
-                        ChatDelivery::Ended => (tr(cx, "전달하지 못함", "Undelivered"), c.err),
-                    };
-                    let target = receipt.to.id.filter(|_| {
-                        matches!(receipt.state, ChatDelivery::Ended | ChatDelivery::Retrying)
-                    });
-                    let room = target.and_then(|node| {
-                        self.data.read(cx).rooms().iter().find_map(|room| {
-                        matches!(room.kind, ChatRoomKind::Agent { node: owner } if owner == node)
-                            .then(|| room.id.clone())
-                    })
-                    });
-                    flow()
-                        .child(badge(format!("{} {label}", receipt.to.name), ink, cx))
-                        .children(room.map(|id| {
-                            btn::ghost(("stream-delivery-room", index), cx)
-                                .child(tr(cx, "1:1 세션 열기", "Open session"))
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.emit(StreamEvent::OpenRoom(id.clone()))
-                                }))
-                        }))
-                }))
-                .children(
-                    message
-                        .outside_read
-                        .then(|| badge(tr(cx, "외부에서 읽음", "Read by outside agent"), c.ok, cx)),
-                )
+        let kind = message
+            .what
+            .as_ref()
+            .and_then(|kind| message_kind(kind, cx));
+        let mode = message.mode.and_then(|mode| match mode {
+            Kind::Queue => None,
+            Kind::Steer => Some(Str::EventsHowSteer),
+            Kind::Interrupt => Some(Str::EventsHowInterrupt),
         });
-        let actions = self.message_actions(item, cx);
+        let show_header = author.is_some()
+            || kind.is_some()
+            || mode.is_some()
+            || source.is_some()
+            || message.reply_to.is_some();
+        let receipts = self.receipts(message, agent, item.cursor, window, cx);
+        let header = show_header.then(|| {
+            flow()
+                .children(author)
+                .children(
+                    (message.origin == ChatOrigin::Outside && !grouped)
+                        .then(|| badge(tr(cx, "외부 에이전트", "Outside agent"), c.ink_2, cx)),
+                )
+                .children(mode.map(|mode| badge(ui::say(cx, mode), c.ink_2, cx)))
+                .children(kind.map(|kind| badge(kind, c.ink_2, cx)))
+                .children(
+                    (receipts.is_none() || agent.is_none()).then(|| timestamp(item.cursor, cx)),
+                )
+                .children(message.reply_to.map(|id| meta(format!("#{id}"), cx)))
+                .children(source)
+        });
+        let body = self.bubble(item, text, &[], window, cx);
+        let body = body.relative().children(
+            (header.is_none() && receipts.is_none()).then(|| hover_time(item.cursor, mine, cx)),
+        );
+        let editor = self.message_editor(item, cx);
         column()
             .when(mine, |column| column.items_end())
-            .child(header)
-            .child(bubble(
-                item,
-                text,
-                if mine { c.accent_wash } else { c.surface },
-                window,
-                cx,
-            ))
+            .children(header)
+            .child(body)
             .children(receipts)
-            .children(actions)
+            .children(editor)
+    }
+
+    fn receipts(
+        &self,
+        message: &ChatMessage,
+        agent: Option<NodeId>,
+        cursor: ChatCursor,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<Div> {
+        if message.receipts.is_empty() && !message.outside_read {
+            return None;
+        }
+        let c = ui::colors(cx);
+        let labels = message
+            .receipts
+            .iter()
+            .map(|receipt| {
+                let (label, ink) = match receipt.state {
+                    ChatDelivery::Queued => (tr(cx, "대기 중", "Queued"), c.ink_2),
+                    ChatDelivery::Handed => (tr(cx, "전달됨", "Delivered"), c.ink_2),
+                    ChatDelivery::Printed => (tr(cx, "표시됨", "Shown"), c.ink_2),
+                    ChatDelivery::Read => (tr(cx, "읽음", "Read"), c.ok),
+                    ChatDelivery::Retrying => (tr(cx, "다시 전달 중", "Retrying"), c.warn),
+                    ChatDelivery::Ended => (tr(cx, "전달하지 못함", "Undelivered"), c.err),
+                };
+                let label = if agent.is_some() && receipt.to.id == agent {
+                    label.to_owned()
+                } else {
+                    format!("{} {label}", receipt.to.name)
+                };
+                let room = receipt
+                    .to
+                    .id
+                    .filter(|_| {
+                        matches!(receipt.state, ChatDelivery::Ended | ChatDelivery::Retrying)
+                    })
+                    .and_then(|node| {
+                        self.data.read(cx).rooms().iter().find_map(|room|
+                    matches!(room.kind, ChatRoomKind::Agent { node: owner } if owner == node)
+                        .then(|| room.id.clone()))
+                    });
+                (label, ink, room)
+            })
+            .chain(message.outside_read.then(|| {
+                (
+                    tr(cx, "외부에서 읽음", "Read by outside agent").to_owned(),
+                    c.ok,
+                    None,
+                )
+            }))
+            .collect::<Vec<_>>();
+        let detail = labels
+            .iter()
+            .map(|(label, _, _)| label.as_str())
+            .collect::<Vec<_>>()
+            .join(" · ");
+        let caption = div()
+            .id("stream-receipts")
+            .flex()
+            .items_center()
+            .min_w_0()
+            .max_w_full()
+            .gap(px(4.0))
+            .overflow_hidden()
+            .text_size(px(ui::SMALL))
+            .whitespace_nowrap()
+            .tooltip(tip(detail))
+            .children(
+                labels
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, (label, ink, room))| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(2.0))
+                            .min_w_0()
+                            .child(div().min_w_0().truncate().text_color(ink).child(label))
+                            .children(room.map(|id| {
+                                let label = tr(cx, "1:1 세션 열기", "Open session");
+                                let key = format!("stream-delivery-{index}");
+                                action_button(&key, Lucide::ExternalLink, label, window, cx)
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        cx.emit(StreamEvent::OpenRoom(id.clone()))
+                                    }))
+                            }))
+                    }),
+            );
+        Some(
+            div()
+                .flex()
+                .min_w_0()
+                .max_w_full()
+                .items_center()
+                .gap(px(6.0))
+                .child(caption)
+                .children(agent.map(|_| timestamp(cursor, cx))),
+        )
     }
 
     fn transcript(
         &self,
         row: &Arc<ChatItem>,
         item: &ChatTranscriptItem,
+        grouped: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
-        let c = ui::colors(cx);
         let cursor = row.cursor;
         match item {
-            ChatTranscriptItem::User { text } | ChatTranscriptItem::Assistant { text } => {
+            ChatTranscriptItem::User { text } | ChatTranscriptItem::Assistant { text, .. } => {
                 let mine = matches!(item, ChatTranscriptItem::User { .. });
                 let name = if mine {
                     tr(cx, "나", "Me").to_owned()
@@ -307,68 +500,59 @@ impl Stream {
                         .map(|room| room.name.clone())
                         .unwrap_or_else(|| tr(cx, "에이전트", "Agent").to_owned())
                 };
+                let body = self.bubble(row, text, &[], window, cx);
                 column()
                     .when(mine, |column| column.items_end())
-                    .child(
+                    .children((!grouped).then(|| {
                         flow()
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
-                            .child(timestamp(cursor, cx)),
+                            .child(timestamp(cursor, cx))
+                    }))
+                    .child(
+                        body.relative()
+                            .children(grouped.then(|| hover_time(cursor, mine, cx))),
                     )
-                    .child(bubble(
-                        row,
-                        text,
-                        if mine { c.accent_wash } else { c.surface },
-                        window,
-                        cx,
-                    ))
             }
-            ChatTranscriptItem::ToolCall { name, summary, .. } => {
-                let label = tr(cx, "도구", "Tool");
-                self.folded(cursor, format!("{label} · {name}"), summary.clone(), cx)
-            }
-            ChatTranscriptItem::ToolResult {
-                summary, failed, ..
-            } => self.folded(
-                cursor,
-                if failed == &Some(true) {
-                    tr(cx, "도구 실패", "Tool failed")
+            ChatTranscriptItem::Status { text } => {
+                let text = if text == "턴이 멈췄습니다." {
+                    tr(cx, "턴이 멈췄습니다.", "The turn stopped.")
                 } else {
-                    tr(cx, "도구 결과", "Tool result")
-                }
-                .to_owned(),
-                summary.clone(),
-                cx,
-            ),
-            ChatTranscriptItem::Thinking { summary } => self.folded(
-                cursor,
-                tr(cx, "생각", "Thinking").to_owned(),
-                summary.clone(),
-                cx,
-            ),
-            ChatTranscriptItem::Status { text } => self.folded(
-                cursor,
-                tr(cx, "상태", "Status").to_owned(),
-                Some(text.clone()),
-                cx,
-            ),
+                    text
+                };
+                self.folded(
+                    cursor,
+                    tr(cx, "상태", "Status").to_owned(),
+                    Some(text.to_owned()),
+                    cx,
+                )
+            }
+            _ => div(),
         }
     }
 
-    fn is_expanded(&self, cursor: ChatCursor) -> bool {
-        self.room
-            .as_ref()
-            .and_then(|room| self.expanded.get(room))
-            .is_some_and(|rows| rows.contains(&cursor))
+    pub(super) fn is_expanded(&self, cursor: ChatCursor, cx: &App) -> bool {
+        let Some(expanded) = self.room.as_ref().and_then(|room| self.expanded.get(room)) else {
+            return false;
+        };
+        let Ok(index) = self
+            .rows
+            .visible
+            .binary_search_by_key(&cursor, |row| row.cursor)
+        else {
+            return false;
+        };
+        let last = self.rows.visible[index].last(self.data.read(cx).items());
+        expanded.range(cursor..=last).next().is_some()
     }
 
-    fn expand_button(
+    pub(super) fn expand_button(
         &self,
         cursor: ChatCursor,
         label: impl IntoElement,
-        cx: &mut Context<Self>,
+        cx: &Context<Self>,
     ) -> Stateful<Div> {
         let c = ui::colors(cx);
-        let expanded = self.is_expanded(cursor);
+        let expanded = self.is_expanded(cursor, cx);
         btn::ghost("stream-expand", cx)
             .min_w_0()
             .aria_expanded(expanded)
@@ -393,9 +577,15 @@ impl Stream {
                 else {
                     return;
                 };
+                let last = stream.rows.visible[index].last(stream.data.read(cx).items());
                 let expanded = stream.expanded.entry(room.clone()).or_default();
-                if !expanded.remove(&cursor) {
+                let keys: Vec<_> = expanded.range(cursor..=last).copied().collect();
+                if keys.is_empty() {
                     expanded.insert(cursor);
+                } else {
+                    for key in keys {
+                        expanded.remove(&key);
+                    }
                 }
                 stream.list.remeasure_items(index..index + 1);
                 cx.notify();
@@ -424,7 +614,7 @@ impl Stream {
             .child(flow().child(label).child(timestamp(cursor, cx)))
             .children(
                 detail
-                    .filter(|_| self.is_expanded(cursor))
+                    .filter(|_| self.is_expanded(cursor, cx))
                     .map(|text| div().px(px(6.0)).child(prose(text))),
             )
     }
@@ -474,9 +664,17 @@ pub(super) fn timestamp(cursor: ChatCursor, cx: &App) -> Div {
         .whitespace_nowrap()
         .text_size(px(ui::SMALL))
         .text_color(ui::colors(cx).ink_2)
-        .children(
-            (cursor.at_ms > 0).then(|| ui::clock(cursor.at_ms.div_euclid(1000), "%m.%d %H:%M")),
-        )
+        .children((cursor.at_ms > 0).then(|| ui::clock(cursor.at_ms.div_euclid(1000), "%H:%M")))
+}
+
+fn hover_time(cursor: ChatCursor, mine: bool, cx: &App) -> Div {
+    timestamp(cursor, cx)
+        .absolute()
+        .bottom_0()
+        .when(mine, |time| time.left_0())
+        .when(!mine, |time| time.right_0())
+        .opacity(0.0)
+        .group_hover(MESSAGE_GROUP, |style| style.opacity(1.0))
 }
 
 pub(super) fn badge(text: impl Into<String>, ink: Rgba, cx: &App) -> Div {
@@ -488,79 +686,130 @@ pub(super) fn badge(text: impl Into<String>, ink: Rgba, cx: &App) -> Div {
         .bg(ui::colors(cx).accent_wash)
 }
 
-fn bubble(
-    item: &Arc<ChatItem>,
-    text: &str,
-    fill: Rgba,
-    window: &mut Window,
-    cx: &mut Context<Stream>,
-) -> Div {
-    let c = ui::colors(cx);
-    let label = tr(cx, "전하기", "Forward");
-    let focus = window.use_keyed_state("forward-focus", cx, |_, cx| {
-        cx.focus_handle().tab_stop(true)
-    });
-    let focus = focus.read(cx);
-    let focused = focus.is_focused(window);
-    let quote = Quote(item.clone());
-    let body = div()
-        .min_w_0()
-        .rounded(px(8.0))
-        .border_1()
-        .border_color(c.line)
-        .bg(fill)
-        .px(px(11.0))
-        .py(px(7.0))
-        .child(prose(text.to_owned()));
-    div()
-        .flex()
-        .items_start()
-        .max_w_full()
-        .min_w_0()
-        .gap(px(6.0))
-        .child(body)
-        .child(
-            btn::ghost("stream-forward", cx)
-                .track_focus(focus)
-                .relative()
-                .flex_none()
-                .size(px(26.0))
-                .px(px(0.0))
-                .justify_center()
-                .opacity(0.0)
-                .group_hover(MESSAGE_GROUP, |style| style.opacity(1.0))
-                .focus(|style| style.opacity(1.0))
-                .aria_label(label)
-                .when(!focused, |button| button.tooltip(tip(label.to_owned())))
-                .when(focused, |button| {
-                    button.child(
-                        tooltip::label(label, cx)
-                            .whitespace_nowrap()
-                            .absolute()
-                            .right_0()
-                            .bottom_full()
-                            .mb(px(4.0)),
-                    )
-                })
-                .child(
-                    icon(Lucide::CornerLeftUp, px(14.0), c.ink_2).with_transformation(
-                        Transformation::rotate(radians(std::f32::consts::FRAC_PI_2)),
-                    ),
-                )
-                .on_click(cx.listener(move |stream, _, _, cx| {
-                    if stream.current(&quote.0, cx).is_some() {
-                        cx.emit(Quote(quote.0.clone()));
-                    }
-                })),
+impl Stream {
+    fn bubble(
+        &self,
+        item: &Arc<ChatItem>,
+        text: &str,
+        content: &[Block],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let c = ui::colors(cx);
+        let mine = matches!(sender(item, self.data.read(cx).room()), Some(Sender::Human));
+        let quote = Quote(item.clone());
+        let forward = (item.cursor.id >= 0).then(|| {
+            action_button(
+                "stream-forward",
+                Lucide::CornerLeftUp,
+                tr(cx, "전하기", "Forward"),
+                window,
+                cx,
+            )
+            .on_click(cx.listener(move |stream, _, _, cx| {
+                if stream.current(&quote.0, cx).is_some() {
+                    cx.emit(Quote(quote.0.clone()));
+                }
+            }))
+        });
+        let copy_text = text.to_owned();
+        let copy = action_button(
+            "stream-copy",
+            Lucide::Copy,
+            ui::say(cx, Str::TerminalCopy),
+            window,
+            cx,
         )
+        .on_click(move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()))
+        });
+        let edit = self.message_buttons(item, window, cx);
+        let actions = div()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(px(2.0))
+            .children(forward)
+            .child(copy)
+            .children(edit.into_iter().flatten());
+        let follow = self.follow(cx);
+        let ink = if mine { c.accent_ink } else { c.ink };
+        let links = if mine { c.accent_ink } else { c.accent };
+        let body = div()
+            .min_w_0()
+            .max_w(px(BUBBLE_WIDTH))
+            .rounded(px(8.0))
+            .bg(if mine { c.accent } else { c.surface })
+            .text_color(ink)
+            .when(!mine, |body| body.border_1().border_color(c.line))
+            .px(px(11.0))
+            .py(px(7.0))
+            .child(blocks::render_selectable(
+                "stream-body",
+                content,
+                text,
+                None,
+                links,
+                ui::TEXT * crate::scale::get(),
+                window,
+                cx,
+                follow,
+            ));
+        let body = div()
+            .flex()
+            .min_w_0()
+            .max_w(relative(BUBBLE_SHARE))
+            .child(body);
+        let row = div().flex().items_start().w_full().min_w_0().gap(px(6.0));
+        if mine {
+            row.justify_end().child(actions).child(body)
+        } else {
+            row.child(body).child(actions)
+        }
+    }
 }
 
-fn mode_name(mode: Kind, cx: &App) -> &'static str {
-    match mode {
-        Kind::Queue => tr(cx, "일반", "Queue"),
-        Kind::Steer => tr(cx, "조정", "Steer"),
-        Kind::Interrupt => tr(cx, "중단", "Interrupt"),
-    }
+pub(super) fn action_button(
+    id: &str,
+    glyph: Lucide,
+    label: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Stateful<Div> {
+    let focus_key = format!("{id}-focus");
+    let focus = window.use_keyed_state(focus_key, cx, |_, cx| cx.focus_handle().tab_stop(true));
+    let focus = focus.read(cx);
+    let focused = focus.is_focused(window);
+    let c = ui::colors(cx);
+    btn::ghost(id.to_owned(), cx)
+        .track_focus(focus)
+        .relative()
+        .flex_none()
+        .size(px(26.0))
+        .px(px(0.0))
+        .justify_center()
+        .opacity(0.0)
+        .group_hover(MESSAGE_GROUP, |style| style.opacity(1.0))
+        .focus(|style| style.opacity(1.0))
+        .aria_label(label)
+        .when(!focused, |button| button.tooltip(tip(label.to_owned())))
+        .when(focused, |button| {
+            button.child(
+                tooltip::label(label, cx)
+                    .whitespace_nowrap()
+                    .absolute()
+                    .right_0()
+                    .bottom_full()
+                    .mb(px(4.0)),
+            )
+        })
+        .child(
+            icon(glyph, px(14.0), c.ink_2).when(glyph == Lucide::CornerLeftUp, |icon| {
+                icon.with_transformation(Transformation::rotate(radians(
+                    std::f32::consts::FRAC_PI_2,
+                )))
+            }),
+        )
 }
 
 fn message_kind(kind: &MessageKind, cx: &App) -> Option<&'static str> {
@@ -569,7 +818,22 @@ fn message_kind(kind: &MessageKind, cx: &App) -> Option<&'static str> {
         MessageKind::Answer { .. } => Str::EventsTypeAnswer,
         MessageKind::Done { .. } => Str::EventsTypeDone,
         MessageKind::Note => return None,
-        _ => return Some(kind.word()),
+        MessageKind::Ready { .. } => Str::EventsTypeReady,
+        MessageKind::Verdict { judgment, .. } => match judgment {
+            api::graph::messages::Judgment::Pass => Str::EventsTypeVerdictPass,
+            api::graph::messages::Judgment::Block => Str::EventsTypeVerdictBlock,
+        },
+        MessageKind::Withdrawn { .. } => Str::EventsTypeWithdrawn,
+        MessageKind::Merged { .. } => Str::EventsTypeMerged,
+        MessageKind::Rework { .. } => Str::EventsTypeRework,
+        MessageKind::Failed { .. } => Str::EventsTypeFailed,
+        MessageKind::Exited { .. } => Str::EventsTypeExited,
+        MessageKind::SetupFailed { .. } => Str::EventsTypeSetupFailed,
+        MessageKind::Removed { .. } => Str::EventsTypeRemoved,
+        MessageKind::Adopted { .. } => Str::EventsTypeAdopted,
+        MessageKind::HumanInput { .. } => Str::EventsTypeHumanInput,
+        MessageKind::Idle => Str::EventsTypeIdle,
+        MessageKind::RulesChanged { .. } => Str::EventsTypeRulesChanged,
     };
     Some(ui::say(cx, label))
 }
@@ -596,7 +860,7 @@ fn notice(event: &Entry, cx: &App) -> (String, Option<String>) {
             failed,
             ..
         } => (
-            tr(cx, "계정 전환", "Account switch"),
+            ui::say(cx, Str::EventsKindAccountSwitched),
             Some(
                 [
                     count("전환", "Switched", moved),

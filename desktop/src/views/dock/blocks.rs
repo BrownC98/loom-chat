@@ -1,25 +1,33 @@
 use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::Duration;
 
 use api::graph::text::{Align, Block, TextPart};
 use api::graph::waits::WaitDoc;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement, Rgba,
-    StatefulInteractiveElement, Styled, div,
+    AnyElement, App, ClipboardItem, Div, ElementId, FontWeight, InteractiveElement, IntoElement,
+    MouseButton, ParentElement, RenderOnce, Rgba, StatefulInteractiveElement, Styled, Task, Window,
+    div,
 };
 
-use super::body::{self, Follow, Target};
+use super::body::{self, Follow, Selectable, Target};
 use super::ui;
 use crate::fonts;
 use crate::scale::fixed as px;
+use crate::strings::{Lang, Str};
 use crate::theme::Colors;
+use crate::views::icons::{Lucide, icon};
 use crate::views::prose::prose;
+use crate::views::tooltip::tip;
+use crate::views::widgets::btn;
 
 const GAP: f32 = 6.0;
 const TIGHT: f32 = 2.0;
 const CELL_MAX: f32 = 320.0;
+const CODE_GROUP: &str = "block-code";
+const COPIED_TIME: Duration = Duration::from_millis(1500);
 
 struct Draw<'a> {
     root: ElementId,
@@ -30,6 +38,7 @@ struct Draw<'a> {
     cx: &'a App,
     c: Colors,
     follow: Follow,
+    selection: Option<Selectable>,
 }
 
 fn mentions_doc(blocks: &[Block]) -> bool {
@@ -64,21 +73,59 @@ pub fn render(
         cx,
         c: ui::colors(cx),
         follow: Rc::new(follow),
+        selection: None,
     };
-    let mut column = div().flex().flex_col().gap(px(GAP)).min_w_0();
-    if blocks.is_empty() {
-        column = column.children(draw.text(&[], plain));
-    } else {
-        column = column.children(blocks.iter().map(|block| draw.block(block)));
-    }
-    if let Some(doc) = doc.filter(|_| !mentions_doc(blocks)) {
-        column =
-            column.child(body::tail(draw.id("doc"), doc, color, cx, &draw.follow).self_start());
-    }
-    column.into_any_element()
+    draw.render(blocks, plain).into_any_element()
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_selectable(
+    id: impl Into<ElementId>,
+    blocks: &[Block],
+    plain: &str,
+    doc: Option<&WaitDoc>,
+    color: Rgba,
+    size: f32,
+    window: &mut Window,
+    cx: &mut App,
+    follow: impl Fn(Target, &mut App) + 'static,
+) -> Div {
+    let id = id.into();
+    let selection = Selectable::new(id.clone(), window, cx);
+    let mut draw = Draw {
+        root: id,
+        next: Cell::new(0),
+        doc,
+        color,
+        size,
+        cx,
+        c: ui::colors(cx),
+        follow: Rc::new(follow),
+        selection: Some(selection),
+    };
+    let column = draw.render(blocks, plain);
+    draw.selection
+        .take()
+        .unwrap()
+        .attach(column, draw.follow, cx)
 }
 
 impl Draw<'_> {
+    fn render(&self, blocks: &[Block], plain: &str) -> Div {
+        let mut column = div().flex().flex_col().gap(px(GAP)).min_w_0();
+        if blocks.is_empty() {
+            column = column.children(self.text(&[], plain));
+        } else {
+            column = column.children(blocks.iter().map(|block| self.block(block)));
+        }
+        if let Some(doc) = self.doc.filter(|_| !mentions_doc(blocks)) {
+            column = column.child(
+                body::tail(self.id("doc"), doc, self.color, self.cx, &self.follow).self_start(),
+            );
+        }
+        column
+    }
+
     fn id(&self, kind: &str) -> ElementId {
         let at = self.next.get();
         self.next.set(at + 1);
@@ -86,6 +133,14 @@ impl Draw<'_> {
     }
 
     fn text(&self, parts: &[TextPart], plain: &str) -> Option<AnyElement> {
+        if let Some(selection) = &self.selection {
+            return selection
+                .text(
+                    body::build(parts, plain, self.doc, self.color, self.cx),
+                    self.cx,
+                )
+                .map(IntoElement::into_any_element);
+        }
         body::inline(
             self.id("text"),
             parts,
@@ -117,7 +172,7 @@ impl Draw<'_> {
                 .text_size(px(self.size + (4.0 - f32::from(*level)).clamp(0.0, 3.0)))
                 .children(self.text(parts, ""))
                 .into_any_element(),
-            Block::Code { text } => self.code(text.trim_end_matches('\n')),
+            Block::Code { text, .. } => self.code(text, None),
             Block::List { start, items } => self.list(*start, items),
             Block::Quote { blocks } => self
                 .stack(blocks, GAP)
@@ -136,21 +191,57 @@ impl Draw<'_> {
         }
     }
 
-    fn code(&self, text: &str) -> AnyElement {
-        let shown = prose(text.to_owned());
+    fn code(&self, text: &str, language: Option<&str>) -> AnyElement {
+        let shown = text.trim_end_matches('\n');
+        let shown = match &self.selection {
+            Some(selection) => selection
+                .text(body::build(&[], shown, None, self.color, self.cx), self.cx)
+                .map(IntoElement::into_any_element),
+            None => Some(prose(shown.to_owned()).into_any_element()),
+        };
+        let label = language.unwrap_or(match self.cx.global::<Lang>() {
+            Lang::Ko => "코드",
+            Lang::En => "Code",
+        });
         div()
             .id(self.id("code"))
+            .group(CODE_GROUP)
             .w_full()
             .min_w_0()
-            .overflow_x_scroll()
             .border_1()
             .border_color(self.c.line)
             .rounded(px(4.0))
             .bg(self.c.bg)
-            .font_family(fonts::TERMINAL_FAMILY)
-            .text_size(px(self.size - 1.0))
-            .whitespace_nowrap()
-            .child(div().flex_none().px(px(8.0)).py(px(6.0)).child(shown))
+            .text_color(self.c.ink)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(6.0))
+                    .border_b_1()
+                    .border_color(self.c.line)
+                    .pl(px(8.0))
+                    .pr(px(3.0))
+                    .text_size(px(self.size - 2.0))
+                    .text_color(self.c.ink_2)
+                    .child(div().min_w_0().truncate().child(label.to_owned()))
+                    .child(CodeCopy {
+                        id: self.id("code-copy"),
+                        text: text.to_owned(),
+                    }),
+            )
+            .child(
+                div()
+                    .id(self.id("code-scroll"))
+                    .w_full()
+                    .min_w_0()
+                    .overflow_x_scroll()
+                    .font_family(fonts::TERMINAL_FAMILY)
+                    .text_size(px(self.size - 1.0))
+                    .whitespace_nowrap()
+                    .child(div().flex_none().px(px(8.0)).py(px(6.0)).children(shown)),
+            )
             .into_any_element()
     }
 
@@ -239,5 +330,53 @@ impl Draw<'_> {
             .overflow_x_scroll()
             .child(grid)
             .into_any_element()
+    }
+}
+
+#[derive(IntoElement)]
+struct CodeCopy {
+    id: ElementId,
+    text: String,
+}
+
+impl RenderOnce for CodeCopy {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let copied = window.use_keyed_state(self.id.clone(), cx, |_, _| None::<Task<()>>);
+        let active = copied.read(cx).is_some();
+        let label = Str::TerminalCopy.text(*cx.global::<Lang>());
+        let c = ui::colors(cx);
+        btn::ghost(self.id, cx)
+            .flex_none()
+            .min_h(px(20.0))
+            .px(px(4.0))
+            .py_0()
+            .aria_label(label)
+            .tooltip(tip(label.to_owned()))
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .when(!active, |button| {
+                button
+                    .opacity(0.0)
+                    .group_hover(CODE_GROUP, |style| style.opacity(1.0))
+                    .focus(|style| style.opacity(1.0))
+            })
+            .child(icon(
+                if active { Lucide::Check } else { Lucide::Copy },
+                px(12.0),
+                c.ink_2,
+            ))
+            .children(active.then(|| Str::RoomCopied.text(*cx.global::<Lang>())))
+            .on_click(move |_, _, cx| {
+                cx.write_to_clipboard(ClipboardItem::new_string(self.text.clone()));
+                copied.update(cx, |copied, cx| {
+                    *copied = Some(cx.spawn(async move |state, cx| {
+                        cx.background_executor().timer(COPIED_TIME).await;
+                        let _ = state.update(cx, |copied, cx| {
+                            *copied = None;
+                            cx.notify();
+                        });
+                    }));
+                    cx.notify();
+                });
+            })
     }
 }

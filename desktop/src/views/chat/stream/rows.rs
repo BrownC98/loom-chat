@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use api::graph::chat::{
@@ -7,13 +9,14 @@ use api::graph::chat::{
 use api::graph::events::{BatchResult, Entry};
 use api::graph::messages::{Kind, MessageKind, Question};
 use api::graph::text::Block;
-use api::ids::NodeId;
+use api::graph::waits::WaitTone;
+use api::ids::{NodeId, WaitId};
 use api::repos::RepoView;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Div, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, Window, div,
-    radians, relative,
+    ParentElement, Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, Window,
+    canvas, div, radians, relative,
 };
 
 use super::{Quote, RowContent, Stream, StreamEvent, tr};
@@ -103,6 +106,7 @@ impl Stream {
     pub(super) fn row(
         &mut self,
         index: usize,
+        visible_waits: &Rc<RefCell<Vec<WaitId>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -154,7 +158,26 @@ impl Stream {
             let item = self.data.read(cx).items()[index].clone();
             match &item.entry {
                 ChatEntry::Message { message } => self.message(&item, message, grouped, window, cx),
-                ChatEntry::Wait { .. } => self.wait_card(item, window, cx),
+                ChatEntry::Wait { wait, closed, .. } => {
+                    let visible =
+                        (matches!(wait.tone, WaitTone::Ask) && closed.is_none()).then(|| {
+                            let id = wait.wait.id;
+                            let visible_waits = visible_waits.clone();
+                            canvas(
+                                |_, _, _| (),
+                                move |bounds, (), window, _| {
+                                    if bounds.intersects(&window.content_mask().bounds) {
+                                        visible_waits.borrow_mut().push(id);
+                                    }
+                                },
+                            )
+                            .absolute()
+                            .size_full()
+                        });
+                    self.wait_card(item, window, cx)
+                        .relative()
+                        .children(visible)
+                }
                 ChatEntry::Notice { event } => {
                     let (label, detail) = notice(event, cx);
                     self.folded(cursor, label, detail, cx)

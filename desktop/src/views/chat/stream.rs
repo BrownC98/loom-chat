@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -498,25 +500,6 @@ impl Stream {
         )
     }
 
-    fn visible_waits(&self, cx: &App) -> Vec<WaitId> {
-        let items = self.data.read(cx).items();
-        self.rows
-            .pending
-            .iter()
-            .filter(|&&row| {
-                self.list.item_is_above_viewport(row) == Some(false)
-                    && self.list.item_is_below_viewport(row) == Some(false)
-            })
-            .filter_map(|&row| {
-                let item = self.rows.visible.get(row)?.item()?;
-                match &items.get(item)?.entry {
-                    ChatEntry::Wait { wait, .. } => Some(wait.wait.id),
-                    _ => None,
-                }
-            })
-            .collect()
-    }
-
     fn toolbar(&self, cx: &mut Context<Self>) -> Option<Div> {
         let data = self.data.read(cx);
         let room = data.room()?;
@@ -620,6 +603,7 @@ impl Render for Stream {
         }
         let toolbar = self.toolbar(cx);
         let stream = cx.entity().downgrade();
+        let visible_waits = Rc::new(RefCell::new(Vec::new()));
         let data = self.data.read(cx);
         let c = ui::colors(cx);
         let content = if self.rows.visible.is_empty() {
@@ -640,10 +624,13 @@ impl Render for Stream {
                 .text_color(c.ink_2)
                 .child(label)
         } else {
+            let waits = visible_waits.clone();
             self.bar
                 .reserved(list(
                     self.list.clone(),
-                    cx.processor(|stream, index, window, cx| stream.row(index, window, cx)),
+                    cx.processor(move |stream, index, window, cx| {
+                        stream.row(index, &waits, window, cx)
+                    }),
                 ))
                 .flex_1()
                 .min_h_0()
@@ -727,16 +714,15 @@ impl Render for Stream {
                     .child(content)
                     .child(
                         canvas(
-                            move |_, _, cx| {
+                            |_, _, _| (),
+                            move |_, (), _, cx| {
+                                let ids = std::mem::take(&mut *visible_waits.borrow_mut());
                                 cx.defer(move |cx| {
-                                    let _ = stream.update(cx, |stream, cx| {
-                                        cx.emit(StreamEvent::VisibleWaits(
-                                            stream.visible_waits(cx),
-                                        ));
+                                    let _ = stream.update(cx, |_, cx| {
+                                        cx.emit(StreamEvent::VisibleWaits(ids));
                                     });
                                 });
                             },
-                            |_, (), _, _| (),
                         )
                         .absolute()
                         .size_full(),

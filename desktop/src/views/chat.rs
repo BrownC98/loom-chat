@@ -519,16 +519,17 @@ impl Chat {
                 Lang::En => format!("Members: {members} · Working: {working}"),
             },
         };
-        let actions = self
-            .rooms
-            .update(cx, |rooms, cx| rooms.room_actions(room, cx))
-            .map(|button| button.size(px(28.0)));
         let room_icon = match room.kind {
             ChatRoomKind::Pinned => Lucide::Mail,
             ChatRoomKind::Work { .. } if repo.is_none_or(|repo| repo.git) => Lucide::GitBranch,
             ChatRoomKind::Work { .. } => Lucide::Folder,
             _ => Lucide::MessageCircle,
         };
+        let show_working = agent.is_none() && working > 0;
+        let actions = self
+            .rooms
+            .update(cx, |rooms, cx| rooms.room_actions(room, cx))
+            .map(|button| button.size(px(28.0)));
         let selected = self.side.read(cx).tab();
         let side_buttons = [SideTab::Members, SideTab::Terminal].map(|tab| {
             let active = selected == Some(tab);
@@ -596,7 +597,7 @@ impl Chat {
                                 .min_w_0()
                                 .text_size(px(SMALL))
                                 .text_color(colors.ink_2)
-                                .when(agent.is_none() && working > 0, |facts| {
+                                .when(show_working, |facts| {
                                     facts.child(
                                         div()
                                             .size(px(7.0))

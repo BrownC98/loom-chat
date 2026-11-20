@@ -323,7 +323,11 @@ pub fn shutdown(base: &str) -> Result<(), Failure> {
 }
 
 pub fn delete(base: &str, path: &str) -> Result<(), Failure> {
-    answer(agent().delete(format!("{base}{path}")).call()).map(|_| ())
+    delete_within(base, path, HTTP_LIMIT)
+}
+
+pub fn delete_within(base: &str, path: &str, limit: Duration) -> Result<(), Failure> {
+    answer(agent_within(limit).delete(format!("{base}{path}")).call()).map(|_| ())
 }
 
 pub fn set_bookmark(base: &str, node: u32, on: bool) -> Result<(), Failure> {

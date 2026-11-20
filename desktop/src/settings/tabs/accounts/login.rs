@@ -118,7 +118,7 @@ pub struct Dialog {
 impl EventEmitter<Finished> for Dialog {}
 
 fn remove(base: &str, id: LoginId) -> Result<(), Failure> {
-    match link::delete(base, &format!("/api/logins/{id}")) {
+    match link::delete_within(base, &format!("/api/logins/{id}"), link::SLOW_LIMIT) {
         Err(Failure::Refused { status: 404, .. }) => Ok(()),
         result => result,
     }
@@ -164,15 +164,27 @@ impl Dialog {
             self.request.body.clone(),
         );
         cx.spawn_in(window, async move |this, cx| {
-            let read_base = base.clone();
-            let started = cx
-                .background_spawn(async move {
-                    if let Some(id) = prev {
-                        remove(&read_base, id).map_err(|error| (Some(id), error))?;
-                    }
-                    link::post::<LoginId>(&read_base, &path, body).map_err(|error| (None, error))
-                })
-                .await;
+            let closed = if let Some(id) = prev {
+                let base = base.clone();
+                cx.background_spawn(async move { remove(&base, id) }).await
+            } else {
+                Ok(())
+            };
+            if !this
+                .update(cx, |dialog, _| matches!(dialog.stage, Stage::Starting(_)))
+                .unwrap_or(false)
+            {
+                return;
+            }
+            let started = match closed {
+                Ok(()) => {
+                    let base = base.clone();
+                    cx.background_spawn(async move { link::post::<LoginId>(&base, &path, body) })
+                        .await
+                        .map_err(|error| (None, error))
+                }
+                Err(error) => Err((prev, error)),
+            };
             let started_id = started.as_ref().ok().copied();
             let accepted = this
                 .update_in(cx, |dialog, window, cx| {

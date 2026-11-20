@@ -10,6 +10,7 @@ use axum::{Extension, Json, Router};
 use futures_util::future::join_all;
 use portable_pty::CommandBuilder;
 use serde::Deserialize;
+use tokio::sync::watch;
 
 use api::settings::accounts::{AccountView, LoginId, LoginState, LoginTarget, PlaceUsage};
 
@@ -19,7 +20,7 @@ use super::ssh_hosts::{self, Reach};
 use super::{App, internal};
 use crate::accounts::Site;
 use crate::distro::Host;
-use crate::node_host::{Exit, NodeHost};
+use crate::node_host::{Exit, NodeHost, STOP_WAIT};
 use crate::place::{self, Machine};
 use crate::profile::{self, Accounted};
 use crate::settings::PatchProblem;
@@ -33,7 +34,7 @@ use api::settings::SettingsView;
 
 pub struct Logins {
     host: NodeHost<LoginId>,
-    states: Mutex<HashMap<LoginId, LoginState>>,
+    exits: Mutex<HashMap<LoginId, watch::Sender<Option<Exit>>>>,
     next: AtomicU32,
 }
 
@@ -41,7 +42,7 @@ impl Logins {
     pub fn new(dir: std::path::PathBuf) -> Self {
         Self {
             host: NodeHost::new(dir),
-            states: Mutex::default(),
+            exits: Mutex::default(),
             next: AtomicU32::default(),
         }
     }
@@ -281,24 +282,20 @@ fn start_login(
     discard: impl Fn() + Clone + Send + 'static,
 ) -> Result<LoginId, Problem> {
     let login = LoginId(app.logins.next.fetch_add(1, Ordering::Relaxed));
+    let (exit_state, _) = watch::channel(None);
     app.logins
-        .states
+        .exits
         .lock()
         .unwrap()
-        .insert(login, LoginState::Running);
+        .insert(login, exit_state.clone());
     let on_exit = {
         let app = app.clone();
         let discard = discard.clone();
         move |exit| {
-            let state = if exit == Exit::Command(0) {
-                LoginState::Succeeded
-            } else {
+            if exit != Exit::Command(0) {
                 discard();
-                LoginState::Failed
-            };
-            if let Some(slot) = app.logins.states.lock().unwrap().get_mut(&login) {
-                *slot = state;
             }
+            exit_state.send_replace(Some(exit));
             app.graph.publish_view_changed();
         }
     };
@@ -306,7 +303,7 @@ fn start_login(
         .host
         .spawn_while_linked(login, cmd, on_exit)
         .map_err(|e| {
-            app.logins.states.lock().unwrap().remove(&login);
+            app.logins.exits.lock().unwrap().remove(&login);
             discard();
             internal(e)
         })?;
@@ -427,16 +424,41 @@ async fn login_state(
     State(app): State<Arc<App>>,
     Path(id): Path<u32>,
 ) -> Result<Json<LoginState>, Problem> {
-    let states = app.logins.states.lock().unwrap();
-    let state = states.get(&LoginId(id)).ok_or(Problem::NoLogin)?;
-    Ok(Json(*state))
+    let exits = app.logins.exits.lock().unwrap();
+    let exit = *exits.get(&LoginId(id)).ok_or(Problem::NoLogin)?.borrow();
+    Ok(Json(match exit {
+        None => LoginState::Running,
+        Some(Exit::Command(0)) => LoginState::Succeeded,
+        Some(_) => LoginState::Failed,
+    }))
 }
 
-async fn close_login(State(app): State<Arc<App>>, Path(id): Path<u32>) -> Json<()> {
+async fn close_login(
+    State(app): State<Arc<App>>,
+    Path(id): Path<u32>,
+) -> Result<Json<()>, Problem> {
     let id = LoginId(id);
+    let exit = app
+        .logins
+        .exits
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(watch::Sender::subscribe);
     app.logins.host.kill(id);
-    app.logins.states.lock().unwrap().remove(&id);
-    Json(())
+    let Some(mut exit) = exit else {
+        return Ok(Json(()));
+    };
+    let confirmed = tokio::time::timeout(STOP_WAIT, exit.wait_for(Option::is_some))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .is_some_and(|exit| matches!(*exit, Some(Exit::Command(_) | Exit::Setup(_))));
+    if !confirmed {
+        return Err(internal("could not confirm that the login process stopped"));
+    }
+    app.logins.exits.lock().unwrap().remove(&id);
+    Ok(Json(()))
 }
 
 async fn login_pty(

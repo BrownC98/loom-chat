@@ -20,6 +20,7 @@ macro_rules! batches {
 }
 
 pub const BATCHES: &str = batches!();
+pub(super) const UPSTREAM_BATCHES: &str = "loom-batches";
 
 pub const SYNC: &str = r#"set -u
 target=$1

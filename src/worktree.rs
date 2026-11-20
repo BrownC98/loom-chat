@@ -343,7 +343,7 @@ pub async fn listed(files: Files<'_>, repo: &Path) -> Result<Vec<Worktree>, Stri
             Path::new(&w.path)
                 .parent()
                 .and_then(Path::file_name)
-                .is_none_or(|name| name != merge::BATCHES && name != "loom-batches")
+                .is_none_or(|name| name != merge::BATCHES && name != merge::UPSTREAM_BATCHES)
         })
         .collect())
 }

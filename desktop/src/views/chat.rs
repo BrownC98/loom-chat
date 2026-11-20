@@ -349,9 +349,7 @@ impl Chat {
         self.close_sidebar_overlay(window, cx);
         self.side.update(cx, |side, cx| {
             side.show(tab, cx);
-            if narrow(window) {
-                side.focus_tab(window, cx);
-            }
+            side.focus_tab(window, cx);
         });
     }
 

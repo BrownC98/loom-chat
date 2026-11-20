@@ -17,7 +17,7 @@ use super::ui;
 use crate::fonts;
 use crate::scale::fixed as px;
 use crate::strings::{Lang, Str};
-use crate::theme::Colors;
+use crate::theme::{Colors, mix};
 use crate::views::icons::{Lucide, icon};
 use crate::views::tooltip::tip;
 use crate::views::widgets::btn;
@@ -28,14 +28,43 @@ const CELL_MAX: f32 = 320.0;
 const CODE_GROUP: &str = "block-code";
 const COPIED_TIME: Duration = Duration::from_millis(1500);
 
+pub(crate) struct Style {
+    colors: Colors,
+    link: Rgba,
+    selected: Rgba,
+}
+
+impl Style {
+    pub(crate) fn new(colors: Colors, link: Rgba) -> Self {
+        Self {
+            colors,
+            link,
+            selected: colors.accent.opacity(0.25),
+        }
+    }
+
+    pub(crate) fn on_accent(mut colors: Colors) -> Self {
+        let ink = colors.accent_ink;
+        colors.bg = colors.accent;
+        colors.ink = ink;
+        colors.ink_2 = ink;
+        colors.line = mix(ink, 0.16, colors.bg);
+        colors.line_strong = mix(ink, 0.32, colors.bg);
+        Self {
+            colors,
+            link: ink,
+            selected: ink.opacity(0.25),
+        }
+    }
+}
+
 struct Draw<'a> {
     root: ElementId,
     next: Cell<usize>,
     doc: Option<&'a WaitDoc>,
-    color: Rgba,
     size: f32,
     cx: &'a App,
-    c: Colors,
+    style: Style,
     follow: Follow,
     selection: &'a Selectable,
 }
@@ -58,7 +87,7 @@ pub(crate) fn render_selectable(
     blocks: &[Block],
     plain: &str,
     doc: Option<&WaitDoc>,
-    color: Rgba,
+    style: Style,
     size: f32,
     window: &mut Window,
     cx: &mut App,
@@ -71,10 +100,9 @@ pub(crate) fn render_selectable(
         root: id,
         next: Cell::new(0),
         doc,
-        color,
         size,
         cx,
-        c: ui::colors(cx),
+        style,
         follow: follow.clone(),
         selection: &selection,
     };
@@ -92,7 +120,8 @@ impl Draw<'_> {
         }
         if let Some(doc) = self.doc.filter(|_| !mentions_doc(blocks)) {
             column = column.child(
-                body::tail(self.id("doc"), doc, self.color, self.cx, &self.follow).self_start(),
+                body::tail(self.id("doc"), doc, self.style.link, self.cx, &self.follow)
+                    .self_start(),
             );
         }
         column
@@ -107,8 +136,14 @@ impl Draw<'_> {
     fn text(&self, parts: &[TextPart], plain: &str) -> Option<AnyElement> {
         self.selection
             .text(
-                body::build(parts, plain, self.doc, self.color, self.cx),
-                self.cx,
+                body::build(
+                    parts,
+                    plain,
+                    self.doc,
+                    self.style.link,
+                    self.style.colors.line,
+                ),
+                self.style.selected,
             )
             .map(IntoElement::into_any_element)
     }
@@ -139,24 +174,23 @@ impl Draw<'_> {
                 .stack(blocks, GAP)
                 .pl(px(10.0))
                 .border_l(px(3.0))
-                .border_color(self.c.line_strong)
-                .text_color(self.c.ink_2)
+                .border_color(self.style.colors.line_strong)
+                .text_color(self.style.colors.ink_2)
                 .into_any_element(),
             Block::Table { align, head, rows } => self.table(align, head, rows),
             Block::Rule => div()
                 .my(px(2.0))
                 .h(px(1.0))
                 .w_full()
-                .bg(self.c.line_strong)
+                .bg(self.style.colors.line_strong)
                 .into_any_element(),
         }
     }
 
     fn code(&self, text: &str, language: Option<&str>) -> AnyElement {
         let shown = text.trim_end_matches('\n');
-        let shown = self
-            .selection
-            .text(body::build(&[], shown, None, self.color, self.cx), self.cx);
+        let shown = self.text(&[], shown);
+        let c = self.style.colors;
         let label = language.unwrap_or(match self.cx.global::<Lang>() {
             Lang::Ko => "코드",
             Lang::En => "Code",
@@ -167,10 +201,10 @@ impl Draw<'_> {
             .w_full()
             .min_w_0()
             .border_1()
-            .border_color(self.c.line)
+            .border_color(c.line)
             .rounded(px(4.0))
-            .bg(self.c.bg)
-            .text_color(self.c.ink)
+            .bg(c.bg)
+            .text_color(c.ink)
             .child(
                 div()
                     .flex()
@@ -178,11 +212,11 @@ impl Draw<'_> {
                     .justify_between()
                     .gap(px(6.0))
                     .border_b_1()
-                    .border_color(self.c.line)
+                    .border_color(c.line)
                     .pl(px(8.0))
                     .pr(px(3.0))
                     .text_size(px(self.size - 2.0))
-                    .text_color(self.c.ink_2)
+                    .text_color(c.ink_2)
                     .child(div().min_w_0().truncate().child(label.to_owned()))
                     .child(CodeCopy {
                         id: self.id("code-copy"),
@@ -232,7 +266,7 @@ impl Draw<'_> {
                             .pr(px(6.0))
                             .flex()
                             .justify_end()
-                            .text_color(self.c.ink_2)
+                            .text_color(self.style.colors.ink_2)
                             .child(marker),
                     )
                     .child(self.stack(item, TIGHT).flex_1())
@@ -246,13 +280,14 @@ impl Draw<'_> {
         head: &[Vec<TextPart>],
         rows: &[Vec<Vec<TextPart>>],
     ) -> AnyElement {
+        let c = self.style.colors;
         let mut grid = div()
             .grid()
             .grid_cols_max_content(head.len() as u16)
             .flex_none()
             .border_t_1()
             .border_l_1()
-            .border_color(self.c.line_strong);
+            .border_color(c.line_strong);
         for (row, cells) in std::iter::once(head)
             .chain(rows.iter().map(Vec::as_slice))
             .enumerate()
@@ -267,9 +302,9 @@ impl Draw<'_> {
                         .max_w(px(CELL_MAX))
                         .border_r_1()
                         .border_b_1()
-                        .border_color(self.c.line_strong)
+                        .border_color(c.line_strong)
                         .when(row == 0, |cell| {
-                            cell.bg(self.c.bg).font_weight(FontWeight::SEMIBOLD)
+                            cell.bg(c.bg).font_weight(FontWeight::SEMIBOLD)
                         })
                         .map(|cell| match side {
                             Align::Right => cell.justify_end(),

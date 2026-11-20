@@ -87,6 +87,7 @@ impl SideSlot {
             }),
             cx.observe(&graph, |this, _, cx| {
                 if this.panel.is_some() {
+                    this.sync_room(cx);
                     cx.notify();
                 }
             }),
@@ -154,7 +155,8 @@ impl SideSlot {
 
     fn sync_room(&mut self, cx: &mut Context<Self>) {
         let room = self.data.read(cx).room();
-        if self.room.as_ref() == room.map(|room| &room.id) {
+        let missing_docs = self.tab() == Some(SideTab::Docs) && !self.has_docs(cx);
+        if self.room.as_ref() == room.map(|room| &room.id) && !missing_docs {
             return;
         }
         let missing_terminal = self.tab() == Some(SideTab::Terminal)
@@ -165,7 +167,6 @@ impl SideSlot {
                         .iter()
                         .any(|member| member.terminal().is_some())
             });
-        let missing_docs = self.tab() == Some(SideTab::Docs) && !self.has_docs(cx);
         self.room = room.map(|room| room.id.clone());
         self.member = None;
         self.clear_tab(cx);
@@ -186,13 +187,10 @@ impl SideSlot {
         let docs = self.has_docs(cx);
         SideTab::ALL
             .into_iter()
-            .filter(|&tab| {
-                tab == selected
-                    || match tab {
-                        SideTab::Members | SideTab::Terminal => true,
-                        SideTab::Docs => docs,
-                        SideTab::History => false,
-                    }
+            .filter(|&tab| match tab {
+                SideTab::Members | SideTab::Terminal => true,
+                SideTab::Docs => docs,
+                SideTab::History => tab == selected,
             })
             .collect()
     }

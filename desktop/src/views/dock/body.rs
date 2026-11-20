@@ -135,7 +135,7 @@ fn inline(
         shown,
         links,
         styles,
-    } = build(parts, plain, doc, color, cx);
+    } = build(parts, plain, doc, color, ui::colors(cx).line);
     if shown.is_empty() {
         return None;
     }
@@ -158,7 +158,7 @@ pub(super) fn build(
     plain: &str,
     doc: Option<&WaitDoc>,
     color: Rgba,
-    cx: &App,
+    code_bg: Rgba,
 ) -> Built {
     let mut built = Built::default();
     for part in parts {
@@ -183,7 +183,7 @@ pub(super) fn build(
             TextPart::Code { text } => built.styled(
                 text,
                 HighlightStyle {
-                    background_color: Some(ui::colors(cx).line.into()),
+                    background_color: Some(code_bg.into()),
                     ..Default::default()
                 },
             ),
@@ -332,7 +332,7 @@ impl Selectable {
         }
     }
 
-    pub(super) fn text(&self, built: Built, cx: &App) -> Option<StyledText> {
+    pub(super) fn text(&self, built: Built, selected: Rgba) -> Option<StyledText> {
         let Built {
             shown,
             links,
@@ -350,9 +350,8 @@ impl Selectable {
         let len = shown.len();
         let range = shown.floor_char_boundary(self.range.start.saturating_sub(offset).min(len))
             ..shown.floor_char_boundary(self.range.end.saturating_sub(offset).min(len));
-        let c = ui::colors(cx);
         let selected = HighlightStyle {
-            background_color: Some(c.accent.opacity(0.25).into()),
+            background_color: Some(selected.into()),
             ..Default::default()
         };
         let styles = if range.is_empty() {

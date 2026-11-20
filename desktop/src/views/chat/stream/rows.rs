@@ -819,12 +819,8 @@ impl Stream {
             .rounded(px(BUBBLE_ROUND))
             .when(mine, |body| body.rounded_tr(px(BUBBLE_NOTCH)))
             .when(!mine, |body| body.rounded_tl(px(BUBBLE_NOTCH)))
-            .bg(if mine {
-                mix(c.accent, 0.10, c.surface)
-            } else {
-                c.surface
-            })
-            .text_color(c.ink)
+            .bg(if mine { c.accent } else { c.surface })
+            .text_color(if mine { c.accent_ink } else { c.ink })
             .when(!mine, |body| body.border_1().border_color(c.line_strong))
             .px(px(11.0))
             .py(px(7.0))
@@ -833,7 +829,11 @@ impl Stream {
                 content,
                 text,
                 None,
-                c.accent,
+                if mine {
+                    blocks::Style::on_accent(c)
+                } else {
+                    blocks::Style::new(c, c.accent)
+                },
                 ui::TEXT * crate::scale::get(),
                 window,
                 cx,

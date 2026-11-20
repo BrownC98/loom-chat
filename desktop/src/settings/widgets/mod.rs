@@ -7,7 +7,7 @@ mod select;
 mod switch;
 mod text;
 
-pub use crate::views::widgets::{Label, segmented, segmented_on};
+pub use crate::views::widgets::{Label, segmented};
 pub use btn::{button, ghost, inert, tabbable};
 pub use confirm::confirm;
 pub use list::{PITCH, list_box_on};

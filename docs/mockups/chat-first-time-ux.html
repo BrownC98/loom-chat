@@ -1,0 +1,843 @@
+<!doctype html>
+<html lang="ko" style="color-scheme: light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>R486 채팅 첫 사용자 개선 목업: 첫 대화 · 방 머리 · 설정</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+
+:root {
+  --bg: light-dark(oklch(97% 0 0), oklch(20.5% 0 0));
+  --panel: light-dark(oklch(98.5% 0 0), oklch(23.5% 0 0));
+  --surface: light-dark(oklch(100% 0 0), oklch(26.9% 0 0));
+  --surface-hover: light-dark(oklch(93.7% 0 0), oklch(32.9% 0 0));
+  --line: light-dark(oklch(92.2% 0 0), oklch(33% 0 0));
+  --line-strong: light-dark(oklch(87% 0 0), oklch(40% 0 0));
+  --ink: light-dark(oklch(20.5% 0 0), oklch(98.5% 0 0));
+  --ink-2: light-dark(oklch(37.1% 0 0), oklch(80% 0 0));
+  --ink-3: light-dark(oklch(50% 0 0), oklch(70.9% 0 0));
+  --accent: light-dark(oklch(20.5% 0 0), oklch(92.2% 0 0));
+  --accent-wash: light-dark(oklch(20.5% 0 0 / 0.07), oklch(92.2% 0 0 / 0.12));
+  --warn: light-dark(oklch(47% 0.12 87), oklch(80% 0.15 87));
+  --err: light-dark(oklch(55% 0.2 27), oklch(70% 0.17 25));
+  --font: 'Pretendard', system-ui, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --radius: 8px;
+}
+* { box-sizing: border-box; margin: 0; font-variant-ligatures: none !important; }
+html { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font); }
+button { font: inherit; color: inherit; }
+.doc { width: 1440px; margin: 0 auto; padding: 32px 40px 64px; display: grid; gap: 28px; }
+.who { display: flex; gap: 16px; font-size: 13px; color: var(--ink-2); }
+.who b { color: var(--ink); }
+h1 { font-size: 18px; text-wrap: balance; }
+h2 { font-size: 15px; text-wrap: balance; display: flex; gap: 8px; align-items: baseline; }
+h2 .tag { font: 12px var(--mono); color: var(--ink-3); }
+.lead { color: var(--ink-2); max-width: 900px; text-wrap: pretty; }
+.fig { display: grid; gap: 10px; }
+.note { font-size: 13px; color: var(--ink-2); max-width: 880px; }
+.note li { margin-left: 18px; }
+
+.decision { display: grid; gap: 6px; max-width: 880px; padding: 10px 12px; border: 1.5px solid var(--warn); border-radius: var(--radius); background: color-mix(in srgb, var(--warn) 6%, var(--surface)); }
+.fig + .decision { margin-top: -16px; }
+.decision > h3 { display: flex; gap: 8px; align-items: center; font-size: 14px; }
+.did { flex: none; display: inline-flex; align-items: center; height: 26px; padding: 0 8px; border: 1px solid color-mix(in oklch, var(--warn) 55%, transparent); border-radius: 5px; background: color-mix(in srgb, var(--warn) 10%, var(--surface)); color: var(--ink); font: 700 15px/24px var(--mono); }
+.opts { display: grid; gap: 6px; }
+.opt { display: flex; align-items: baseline; gap: 6px; min-height: 26px; padding: 3px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 13px; line-height: 1.4; }
+.opt .key { font: 600 11px var(--mono); color: var(--ink-3); }
+.opt[data-recommended] { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 10%, var(--surface)); }
+.opt .mark { margin-left: 6px; color: var(--warn); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.opt .sub { display: block; color: var(--ink-2); font-size: 12px; }
+.decision .why { font-size: 13px; color: var(--ink-2); }
+.decision .why li { margin-left: 18px; }
+.theme-toggle { position: fixed; top: 16px; right: 16px; height: 30px; padding: 0 12px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); font-size: 13px; cursor: pointer; }
+
+.theme-toggle { z-index: 80; }
+.theme-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.fig { position: relative; }
+.co { position: absolute; z-index: 63; max-width: 250px; display: flex; gap: 6px; align-items: flex-start; background: #fff; color: #171B22; border: 1.5px solid #D14343; border-radius: 6px; padding: 4px 8px 4px 5px; font: 12px/1.45 var(--font); box-shadow: 0 2px 8px rgb(0 0 0 / .18); }
+.co .dref { flex: none; height: 22px; margin-top: 1px; padding: 0 5px; border: 1px solid #C08A1E; border-radius: 4px; background: #FDF3DC; color: #171B22; font: 700 12px/20px var(--mono); font-style: normal; }
+.decision > .for { font-size: 13px; font-weight: 600; }
+.co b { flex: none; width: 22px; height: 22px; border-radius: 50%; background: #D14343; color: #fff; font-size: 14px; display: grid; place-items: center; margin-top: 1px; }
+.shotwrap { position: relative; justify-self: start; padding: 16px; border: 1px solid var(--line-strong); border-radius: 10px; background: #fff; }
+.doc { width: auto; max-width: 1440px; }
+.doc > *, .fig > * { min-width: 0; }
+.flow { width: auto; max-width: 1200px; }
+.fig > .xlwin { margin-bottom: 8px; }
+.lead-svg { position: absolute; left: 0; top: 0; pointer-events: none; z-index: 61; }
+.ov-box { position: absolute; box-sizing: border-box; border: 2px solid #D14343; border-radius: 6px; pointer-events: none; z-index: 60; }
+.ov-box.new { border-style: dashed; }
+.ov-badge { position: absolute; z-index: 62; width: 28px; height: 28px; border-radius: 50%; background: #D14343; color: #fff; font: 700 15px/28px var(--font); text-align: center; pointer-events: none; }
+.lead-svg polyline { fill: none; stroke: #D14343; stroke-width: 1.5; }
+.lead-svg circle { fill: #D14343; }
+.shotwrap .mk { position: absolute; }
+
+code { font-family: var(--mono); font-size: 12px; }
+.flow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
+.flow span { padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); }
+.flow i { font-style: normal; color: var(--ink-2); }
+.part { display: grid; gap: 12px; max-width: 1180px; padding: 18px 20px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); }
+.part > h2 { font-size: 15px; }
+.part > p { font-size: 13px; color: var(--ink-2); max-width: 900px; text-wrap: pretty; }
+.ftbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+.ftbl th, .ftbl td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.ftbl th { background: var(--panel); color: var(--ink-2); font-weight: 600; font-size: 12px; white-space: nowrap; }
+.ftbl tr:last-child td { border-bottom: 0; }
+.ftbl td:first-child { font-weight: 600; white-space: nowrap; }
+.ftbl .fx { display: inline-block; padding: 1px 7px; border-radius: 9px; font-size: 12px; font-weight: 600; background: var(--accent-wash); color: var(--ink); white-space: nowrap; }
+.ftbl .fx.fixed { background: var(--accent); color: var(--bg); }
+.flows { display: grid; gap: 10px; }
+.frow { display: grid; grid-template-columns: 190px minmax(0, 1fr) 74px; gap: 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.frow:last-child { border-bottom: 0; }
+.frow > b { font-weight: 600; }
+.frow .where { font: 600 12px var(--mono); color: var(--ink-2); text-align: right; white-space: nowrap; }
+
+.page { --line-strong: light-dark(oklch(80% 0 0), oklch(43.9% 0 0)); --term: light-dark(oklch(99.4% 0 0), oklch(14.5% 0 0)); --accent-ink: light-dark(oklch(98.5% 0 0), oklch(20.5% 0 0));
+  --run: light-dark(oklch(54.6% 0.245 263), oklch(70.7% 0.165 255)); --ok: light-dark(oklch(50% 0.13 149), oklch(76% 0.15 149)); --warn: light-dark(oklch(54% 0.12 87), oklch(80% 0.15 87)); --warn-ink: light-dark(oklch(100% 0 0), oklch(20.5% 0 0));
+  --err: light-dark(oklch(55% 0.22 28), oklch(70.4% 0.188 22)); --err-ink: light-dark(oklch(98.5% 0 0), oklch(20.5% 0 0)); --shadow: light-dark(oklch(0% 0 0 / 0.16), oklch(0% 0 0 / 0.55));
+  --lane-1: light-dark(oklch(58% 0.14 76), oklch(81.2% 0.17 76)); --lane-2: light-dark(oklch(55% 0.2 358), oklch(59.5% 0.222 358)); --lane-3: light-dark(oklch(50.8% 0.124 56), oklch(71% 0.083 43)); --lane-4: light-dark(oklch(52% 0.1 187), oklch(69.2% 0.101 187)); --lane-5: light-dark(oklch(52% 0.2 304), oklch(67.9% 0.212 304));
+  width: 1200px; border: 1px solid var(--line-strong); border-radius: 10px; overflow: hidden; background: var(--bg); box-shadow: 0 2px 10px var(--shadow); font-size: 13px; color: var(--ink); word-break: keep-all; }
+.page .i { width: 14px; height: 14px; flex: none; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.page .i.closed { transform: rotate(-90deg); }
+.page .spacer { flex: 1; }
+.page .area { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.tbar { display: flex; align-items: stretch; height: 36px; background: var(--panel); border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.tbar .mark { width: 16px; height: 16px; margin: 0 10px 0 14px; align-self: center; fill: var(--ink-2); }
+.tbar .crumb { align-self: center; font-weight: 600; color: var(--ink); margin-right: 14px; }
+.seg { align-self: center; display: inline-flex; padding: 2px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg); gap: 2px; }
+.seg .si { display: inline-flex; align-items: center; gap: 5px; padding: 0 10px; line-height: 16px; border-radius: 5px; font-size: 12px; color: var(--ink-2); font-weight: 500; }
+.seg .si.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px var(--shadow); }
+.tbar .cap { width: 46px; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+.tbar .cap .i { stroke-width: 1.5; }
+.sbar { display: flex; align-items: center; gap: 16px; height: 28px; padding: 0 14px; border-top: 1px solid var(--line); background: var(--panel); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+.app { display: grid; grid-template-columns: 280px minmax(0, 1fr) 64px; height: 800px; position: relative; }
+.app.open { grid-template-columns: 280px minmax(0, 1fr) 360px; }
+.app.graph { grid-template-columns: 220px minmax(0, 1fr) 420px; }
+.abtn { display: inline-flex; align-items: center; gap: 5px; height: 28px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 12px; font-weight: 500; white-space: nowrap; color: var(--ink); }
+.abtn.sm { height: 24px; padding: 0 8px; }
+.abtn.ghost { border-color: transparent; background: none; color: var(--ink-2); }
+.abtn.primary { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.abtn.danger { border-color: var(--err); background: var(--err); color: var(--err-ink); font-weight: 600; }
+.abtn.pressed { background: var(--accent-wash); border-color: var(--accent); }
+.abtn.off { opacity: 0.55; }
+.pill { display: inline-flex; align-items: center; gap: 3px; height: 18px; padding: 0 6px; border-radius: 9px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap; flex: none; }
+.pill.warn { border-color: var(--warn); background: var(--warn); color: var(--warn-ink); }
+.pill.out { background: var(--accent-wash); color: var(--ink); }
+.pill.gone { color: var(--ink-3); text-decoration: line-through; }
+.unread { flex: none; height: 18px; min-width: 18px; padding: 0 6px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 11px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; }
+.dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--ink-3); }
+.dot.waiting { background: var(--warn); box-shadow: 0 0 0 3px color-mix(in oklch, var(--warn) 25%, transparent); }
+.dot.running { background: var(--run); }
+.dot.done { background: var(--ok); }
+.dot.stopped { background: var(--err); }
+.av { flex: none; width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center; font-style: normal; font-size: 11px; font-weight: 700; color: var(--bg); }
+.av { --lane: var(--ink-3); background: color-mix(in oklch, var(--lane) 80%, light-dark(black, white)); }
+.av.l1 { --lane: var(--lane-1); } .av.l2 { --lane: var(--lane-2); } .av.l3 { --lane: var(--lane-3); } .av.l4 { --lane: var(--lane-4); } .av.l5 { --lane: var(--lane-5); }
+.av.out { border-radius: 50%; }
+
+.rooms { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.rhead { display: flex; align-items: center; padding: 10px 12px 6px 16px; }
+.rsearch { display: flex; align-items: center; gap: 6px; height: 28px; margin: 0 12px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); color: var(--ink-3); font-size: 12px; }
+.views { display: flex; gap: 3px; margin: 8px 12px 0; align-self: flex-start; }
+.vchip { height: 24px; padding: 0 6px; border-radius: 12px; border: 1px solid var(--line-strong); font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.vchip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.vchip.on { background: var(--accent-wash); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+.rsort { display: flex; align-items: center; gap: 6px; margin: 8px 12px 2px 16px; align-self: flex-start; font-size: 12px; color: var(--ink-3); }
+.rsort .sel { display: inline-flex; align-items: center; gap: 3px; color: var(--ink-2); font-weight: 600; }
+.rgroup { padding: 10px 12px 3px 10px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.rg { display: inline-flex; align-items: center; gap: 4px; }
+.rrow { display: grid; grid-template-columns: minmax(0, 1fr); gap: 1px; margin: 0 8px; padding: 5px 8px; border-radius: 6px; }
+.rrow.in { margin-left: 22px; }
+.rrow.on { background: var(--accent-wash); }
+.r1 { display: flex; align-items: center; gap: 6px; height: 20px; color: var(--ink-3); }
+.rname { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cnt { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.rname { min-width: 0; }
+.rtime { margin-left: auto; flex: none; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.r2 { display: flex; align-items: center; gap: 4px; height: 20px; padding-left: 13px; }
+.rsub { flex: 1; min-width: 0; font-size: 12px; color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rfold { display: flex; align-items: center; gap: 4px; margin: 0 8px 0 22px; padding: 4px 8px; font-size: 12px; color: var(--ink-2); align-self: flex-start; }
+.rhidden { margin: 10px 16px; font-size: 12px; color: var(--ink-2); align-self: flex-start; }
+.rhidden u { color: var(--ink); font-weight: 600; margin-left: 4px; }
+
+.conv { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; min-width: 0; background: var(--bg); }
+.chead { display: grid; gap: 6px; padding: 9px 16px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.ch1 { display: flex; align-items: center; gap: 8px; min-height: 28px; color: var(--ink-3); }
+.ch1 b { font-size: 14px; color: var(--ink); }
+.state { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--ink-2); }
+.members { display: flex; flex-wrap: wrap; gap: 5px; }
+.mchip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px 0 3px; border-radius: 12px; border: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.mchip.gone { color: var(--ink-3); text-decoration: line-through; }
+.banner > span { flex: 1; }
+.banner { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--warn) 9%, var(--surface)); font-size: 12px; color: var(--ink); }
+.msgs { display: flex; flex-direction: column; justify-content: flex-end; gap: 14px; padding: 16px 20px; min-height: 0; }
+.mrow { display: flex; flex-direction: column; gap: 3px; max-width: 74%; }
+.mrow.left { align-self: flex-start; align-items: flex-start; }
+.mrow.right { align-self: flex-end; align-items: flex-end; }
+.mhead { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.mhead b { color: var(--ink); font-weight: 600; }
+.kind { display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border-radius: 4px; background: var(--accent-wash); font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.kind.warn { background: color-mix(in srgb, var(--warn) 16%, var(--surface)); color: var(--ink); }
+.kind.ok { background: color-mix(in srgb, var(--ok) 14%, var(--surface)); color: var(--ink); }
+.kind.err { background: color-mix(in srgb, var(--err) 13%, var(--surface)); color: var(--ink); }
+.kind.run { background: color-mix(in srgb, var(--run) 13%, var(--surface)); color: var(--ink); }
+.bubble { padding: 7px 11px; border-radius: 10px; line-height: 1.5; font-size: 13px; }
+.bubble.ag { border: 1px solid var(--line-strong); background: var(--surface); border-top-left-radius: 3px; }
+.bubble.outb { border: 1px solid var(--line-strong); background: var(--accent-wash); border-top-left-radius: 3px; }
+.bubble.me { background: var(--accent); color: var(--accent-ink); border-top-right-radius: 3px; }
+.bubble.wait { background: var(--surface); color: var(--ink); border: 1px dashed var(--line-strong); }
+.bubble.fail { background: var(--surface); color: var(--ink); border: 1px solid var(--err); }
+.bubble.dim { color: var(--ink-2); }
+.bubble .caret { display: inline-block; width: 7px; height: 14px; margin-left: 2px; vertical-align: -2px; background: var(--ink-3); }
+.mmeta { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.macts { display: flex; gap: 4px; align-items: center; font-size: 12px; color: var(--ink-2); }
+.macts.err { color: var(--err); font-weight: 600; }
+.sysline { align-self: center; font-size: 12px; color: var(--ink-3); }
+.sysline span { display: inline-flex; align-items: center; gap: 4px; padding: 2px 10px; border-radius: 10px; background: var(--accent-wash); }
+.work { align-self: flex-start; display: grid; gap: 5px; min-width: 380px; }
+.wline { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+.tcard { display: flex; align-items: center; gap: 8px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel); font-size: 12px; color: var(--ink-2); }
+.tcard b { color: var(--ink); font-weight: 600; }
+.tcard code { color: var(--ink-2); }
+.tcard .ts { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--ink-2); display: inline-flex; align-items: center; gap: 5px; }
+.dcard { display: flex; align-items: center; gap: 8px; margin-top: 4px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.dcard b { color: var(--ink); font-weight: 600; }
+.dcard .go { margin-left: 8px; color: var(--ink); font-weight: 600; white-space: nowrap; }
+.plus { color: var(--ok); font-weight: 600; } .minus { color: var(--err); font-weight: 600; }
+.qcard { align-self: flex-start; width: 520px; display: grid; gap: 8px; padding: 10px 12px; border: 1.5px solid var(--warn); border-radius: 10px; background: var(--surface); }
+.qcard.appr { border-color: var(--line-strong); }
+.qtext { font-size: 13px; line-height: 1.5; }
+.qopts { display: grid; gap: 5px; }
+.qopt { display: flex; align-items: baseline; gap: 8px; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 13px; }
+.qopt .k { font: 600 11px var(--mono); color: var(--ink-3); }
+.qopt .rec { margin-left: auto; font-size: 11px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.qfree { display: flex; gap: 6px; }
+.qfree .cbox { flex: 1; min-height: 28px; padding: 4px 9px; }
+.qcmd { padding: 6px 10px; border-radius: 6px; background: var(--term); border: 1px solid var(--line); font: 12px/1.5 var(--mono); color: var(--ink); }
+.qacts { display: flex; gap: 6px; }
+.receipt { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; color: var(--ink-2); }
+.receipt b { color: var(--ink); font-weight: 600; }
+.receipt .i { color: var(--ok); }
+
+.compose { display: grid; gap: 8px; padding: 10px 16px 12px; border-top: 1px solid var(--line); background: var(--panel); }
+.cbar { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.clabel { color: var(--ink-3); font-weight: 600; font-size: 12px; }
+.chips { display: inline-flex; gap: 4px; }
+.chip { height: 24px; padding: 0 9px; border-radius: 12px; border: 1px solid var(--line-strong); font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; white-space: nowrap; }
+.chip.on { border-color: var(--accent); background: var(--accent-wash); color: var(--ink); font-weight: 600; }
+.chip.off { opacity: 0.55; text-decoration: line-through; }
+.hseg { display: inline-flex; padding: 2px; border: 1px solid var(--line-strong); border-radius: 7px; background: var(--bg); gap: 2px; }
+.hi { padding: 1px 10px; border-radius: 5px; font-size: 12px; color: var(--ink-2); }
+.hi.on { background: var(--surface); color: var(--ink); font-weight: 600; box-shadow: 0 1px 2px var(--shadow); }
+.hi.on.stop { background: var(--err); color: var(--err-ink); }
+.hi.off { opacity: 0.5; text-decoration: line-through; }
+.cbox { min-height: 40px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font-size: 13px; line-height: 1.45; }
+.cbox.ph { color: var(--ink-3); }
+.crow { display: flex; align-items: center; gap: 8px; }
+.crow .hint { flex: 1; font-size: 12px; color: var(--ink-2); }
+.stopbox { display: grid; gap: 2px; padding: 8px 10px; border: 1px solid var(--err); border-radius: 8px; background: color-mix(in srgb, var(--err) 7%, var(--surface)); font-size: 12px; color: var(--ink); }
+.stopbox b { font-weight: 600; }
+
+.srail { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 10px 0; gap: 6px; }
+.srail .area { margin-bottom: 4px; }
+.sgroup { display: grid; gap: 6px; }
+.sbtn { width: 40px; padding: 5px 0 4px; border-radius: 6px; display: grid; justify-items: center; gap: 2px; font-size: 11px; color: var(--ink-2); }
+.sbtn .i { width: 16px; height: 16px; }
+.sbtn.on { background: var(--accent-wash); color: var(--ink); font-weight: 600; }
+.slot { background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; min-width: 0; }
+.stabs { display: flex; align-items: center; gap: 2px; padding: 0 8px; border-bottom: 1px solid var(--line); height: 37px; }
+.stg { display: inline-flex; gap: 2px; }
+.stab { display: inline-flex; align-items: center; gap: 5px; height: 36px; padding: 0 7px; border-bottom: 2px solid transparent; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.stab.on { color: var(--ink); font-weight: 600; border-bottom-color: var(--accent); }
+.xbtn { width: 26px; height: 26px; display: grid; place-items: center; color: var(--ink-3); }
+.shead { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
+.shead b { color: var(--ink); font-size: 13px; }
+.sbody { padding: 12px 18px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; align-content: start; font-size: 12px; color: var(--ink-2); }
+.docv { margin: 12px 14px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); display: grid; gap: 8px; font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+.docv h5 { font-size: 14px; color: var(--ink); }
+.docv h6 { font-size: 12px; color: var(--ink); margin-top: 4px; }
+.mem { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 8px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--line); }
+.mem b { color: var(--ink); font-weight: 600; font-size: 13px; }
+.mem .ms { grid-column: 2; font-size: 12px; color: var(--ink-2); display: flex; align-items: center; gap: 5px; }
+.mem .abtn { grid-row: 1 / span 2; grid-column: 3; }
+.invite { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); }
+.invite .addr { display: flex; align-items: center; gap: 6px; padding: 4px 4px 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); font: 12px var(--mono); color: var(--ink); }
+.invite .addr span:first-child { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.termv { margin: 0; padding: 14px 18px; background: var(--term); font: 12px/1.6 var(--mono); color: var(--ink); white-space: pre; }
+.termv > span { display: inline-block; }
+.termv .d { color: var(--ink-3); } .termv .g { color: var(--ok); } .termv .b { color: var(--run); }
+.termnote { display: flex; align-items: center; gap: 8px; padding: 7px 16px; border-bottom: 1px solid var(--line); background: var(--surface); font-size: 12px; color: var(--ink-2); }
+.conv.term { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.files { display: grid; gap: 2px; }
+.file { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; font: 12px var(--mono); color: var(--ink); }
+.file.on { background: var(--accent-wash); }
+.file .n { margin-left: auto; font-variant-numeric: tabular-nums; }
+.hunk { margin: 0; border: 1px solid var(--line); border-radius: 8px; background: var(--term); font: 11px/1.7 var(--mono); color: var(--ink); }
+.hunk div { padding: 0 10px; white-space: pre; }
+.hunk .hh { border-radius: 7px 7px 0 0; background: var(--panel); color: var(--ink-3); border-bottom: 1px solid var(--line); }
+.hunk .a { background: color-mix(in srgb, var(--ok) 13%, transparent); }
+.hunk .r { background: color-mix(in srgb, var(--err) 12%, transparent); }
+
+.pop { position: absolute; left: 288px; top: 8px; z-index: 5; width: 380px; display: grid; gap: 10px; padding: 14px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 6px 16px var(--shadow); font-size: 13px; }
+.pop h4 { font-size: 14px; }
+.pop label { display: grid; gap: 4px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.field { height: 30px; display: flex; align-items: center; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font-size: 13px; font-weight: 400; color: var(--ink); }
+.field.focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash); }
+.picks { display: grid; border: 1px solid var(--line); border-radius: 8px; }
+.picks > :first-child { border-radius: 7px 7px 0 0; }
+.pgroup { padding: 5px 14px 3px; font-size: 11px; font-weight: 600; color: var(--ink-3); background: var(--panel); }
+.pick { display: flex; align-items: center; gap: 8px; padding: 5px 10px; font-size: 12px; color: var(--ink-2); }
+.pick b { color: var(--ink); font-weight: 600; }
+.box { width: 15px; height: 15px; flex: none; border: 1.5px solid var(--line-strong); border-radius: 4px; display: grid; place-items: center; background: var(--surface); }
+.box.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.box .i { width: 11px; height: 11px; stroke-width: 3; }
+.pnote { font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+.pacts { display: flex; align-items: center; gap: 8px; }
+
+.tree { background: var(--panel); border-right: 1px solid var(--line); padding: 10px 8px; display: flex; flex-direction: column; gap: 1px; font-size: 13px; }
+.tree .area { padding: 2px 8px 6px; }
+.trow { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border-radius: 6px; color: var(--ink-3); }
+.trow b { color: var(--ink); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.trow.d1 { padding-left: 22px; } .trow.d2 { padding-left: 36px; }
+.trow.on { background: var(--accent-wash); }
+.stage { padding: 64px 0 0 200px; }
+.canvas { position: relative; background-color: var(--bg); background-image: radial-gradient(var(--line-strong) 1px, transparent 1px); background-size: 20px 20px; overflow: hidden; }
+.eg { position: absolute; min-width: 1.5px; min-height: 1.5px; background: var(--line-strong); }
+.gframe { position: absolute; border: 1.5px dashed var(--ink-3); border-radius: 12px; }
+.gframe > span { position: absolute; left: 10px; top: -10px; padding: 0 6px; background: var(--bg); font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.ncard { position: absolute; width: 224px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 1px 4px var(--shadow); }
+.ncard.sel { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash), 0 1px 4px var(--shadow); }
+.nh { display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 10px; border-bottom: 1px solid var(--line); font-size: 12px; }
+.nh b { font-weight: 600; }
+.nh .hn { color: var(--ink-3); }
+.nb { padding: 7px 10px; height: 62px; background: var(--term); border-radius: 0 0 10px 10px; font: 11px/1.5 var(--mono); color: var(--ink-2); white-space: pre; overflow: hidden; }
+.slot .msgs { padding: 12px; gap: 10px; flex: 1; }
+.slot .mrow { max-width: 90%; }
+.slot .compose { padding: 8px 12px 10px; }
+
+.mems { display: grid; }
+.mems .mem:last-child { border-bottom: 0; }
+.slot .cbar { flex-wrap: wrap; }
+
+.pill.okp { border-color: var(--ok); background: var(--ok); color: var(--warn-ink); }
+.rrow.pin { margin-top: 8px; border: 1px solid var(--line-strong); background: var(--surface); }
+.rrow.pin.on { border-color: var(--accent); background: var(--accent-wash); }
+.rrow.pin .r2 { padding-left: 20px; }
+.termv.fill { flex: 1; padding: 12px 14px; font-size: 11.5px; overflow: hidden; }
+.fchips { display: flex; gap: 4px; }
+.fchip { height: 24px; padding: 0 9px; border-radius: 12px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 12px; color: var(--ink-2); display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+.fchip b { font-weight: 600; font-variant-numeric: tabular-nums; }
+.fchip.on { background: var(--accent-wash); border-color: var(--accent); color: var(--ink); font-weight: 600; }
+.chead > span { justify-self: start; }
+.qcard.donec { border-color: var(--ok); }
+.origin { font-size: 11px; color: var(--ink-3); }
+.golink { align-self: center; font-size: 12px; font-weight: 600; color: var(--ink-2); text-decoration: underline; text-underline-offset: 3px; white-space: nowrap; }
+.qacts { align-items: center; }
+.dlv { display: inline-flex; gap: 10px; font-size: 11px; color: var(--ink-2); }
+.dlv span { display: inline-flex; align-items: center; gap: 4px; }
+.dlv .i { width: 12px; height: 12px; color: var(--ok); }
+.tofield { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 10px; border: 1px dashed var(--line-strong); border-radius: 12px; font-size: 12px; font-weight: 600; color: var(--ink); background: var(--surface); }
+.chip .i { width: 11px; height: 11px; margin-left: 4px; color: var(--ink-3); }
+.chip .i:first-child { margin: 0 4px 0 0; width: 13px; height: 13px; }
+.compose { position: relative; }
+.tolist { position: absolute; left: 16px; bottom: calc(100% + 4px); z-index: 4; width: 560px; display: grid; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 6px 16px var(--shadow); font-size: 12px; }
+.lhead { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.lhead b { font-size: 13px; color: var(--ink); }
+.lrows { display: grid; margin: 8px 0; }
+.lrow { display: flex; align-items: center; gap: 7px; height: 30px; margin: 0 8px; padding: 0 6px; border-radius: 6px; color: var(--ink-2); }
+.lrow.on { background: var(--accent-wash); }
+.lrow b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.lrow > .i { width: 16px; height: 16px; margin: 0 2px; color: var(--ink-3); }
+.lrow .ls { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lrow .lt { flex: none; font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.lfoot { display: grid; gap: 6px; margin: 0 8px; padding: 8px 0 10px; border-top: 1px solid var(--line); }
+.lfind { display: flex; align-items: center; gap: 6px; height: 28px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 6px; background: var(--bg); color: var(--ink-3); box-shadow: 0 0 0 2px var(--accent-wash); }
+.lkey { font-size: 11px; color: var(--ink-3); }
+.part > h3 { font-size: 14px; margin-top: 8px; }
+.part a { color: var(--ink); font-weight: 600; text-underline-offset: 3px; }
+.part a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ftbl.rel td[colspan], .ftbl.rel td:empty { border-bottom: 0; }
+.msgs.top { justify-content: flex-start; }
+.lmain { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.lrow .lt { margin-left: auto; padding-left: 28px; }
+.lhead .lt2 { display: inline-flex; align-items: baseline; gap: 8px; }
+
+
+.wsel { display: flex; align-items: center; gap: 4px; margin: 10px 12px 0; }
+.wbtn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.wbtn b { color: var(--ink); font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.wbtn .i:last-child { margin-left: auto; }
+.wbtn.pressed { border-color: var(--accent); background: var(--accent-wash); }
+.ibtn { flex: none; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; color: var(--ink-2); }
+.ibtn.sm { width: 24px; height: 24px; }
+.pop h3 { font-size: 14px; }
+.ibtn.on { background: var(--accent-wash); color: var(--ink); }
+.rgroup { display: flex; align-items: center; min-height: 31px; }
+.rg { min-width: 0; white-space: nowrap; }
+.rg .repo { font-weight: 400; }
+.gtools { margin-left: auto; display: inline-flex; gap: 2px; }
+.menu { position: absolute; z-index: 6; display: grid; gap: 1px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 6px 16px var(--shadow); font-size: 13px; color: var(--ink); }
+.mi { display: flex; align-items: center; gap: 9px; min-height: 30px; padding: 4px 8px; border-radius: 6px; white-space: nowrap; }
+.mi.on { background: var(--surface-hover); }
+.mi > .i { width: 15px; height: 15px; color: var(--ink-2); }
+.mi small { display: block; font-size: 12px; color: var(--ink-2); }
+.mi .k { margin-left: auto; padding-left: 20px; font-size: 11px; color: var(--ink-3); }
+.mi.danger, .mi.danger > .i { color: var(--err); }
+.mi.off { opacity: 0.5; }
+.mrule { height: 1px; margin: 4px 2px; background: var(--line); }
+.wlist { position: absolute; left: 12px; top: 44px; z-index: 6; width: 520px; min-height: 290px; align-content: start; display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); box-shadow: 0 6px 16px var(--shadow); font-size: 13px; }
+.wrow { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; gap: 1px 8px; align-items: center; padding: 6px 8px; border-radius: 6px; color: var(--ink-2); }
+.wrow.on { background: var(--surface-hover); }
+.wrow > .i { color: var(--ink-3); }
+.w1 { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.w1 b { color: var(--ink); font-weight: 600; white-space: nowrap; }
+.w1 code { color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.w2 { grid-column: 2; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+.wacts { grid-row: 1 / span 2; grid-column: 3; display: inline-flex; gap: 4px; }
+.wfoot { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 16px 8px 14px; border-top: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
+.crumbs { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.dock { position: relative; padding: 8px 16px 12px; background: var(--bg); }
+.cmp { display: grid; gap: 6px; padding: 8px 8px 8px 10px; border: 1px solid var(--line-strong); border-radius: 14px; background: var(--panel); box-shadow: 0 4px 14px var(--shadow); font-size: 13px; }
+.cmp.focus { border-color: var(--accent); }
+.cline { display: flex; align-items: flex-end; gap: 6px; }
+.tgt { flex: none; display: inline-flex; align-items: center; gap: 5px; max-width: 240px; height: 30px; padding: 0 6px 0 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.tgt.ask { border-color: var(--warn); background: var(--warn); color: var(--warn-ink); }
+.tgt.none { border: 1px dashed var(--line-strong); background: var(--surface); color: var(--ink); }
+.fld { position: relative; flex: 1; min-width: 0; min-height: 30px; padding: 5px 10px 5px 30px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); line-height: 18px; color: var(--ink); }
+.fld.ph { color: var(--ink-3); }
+.fld.ask { border-color: var(--warn); }
+.fld.shut { background: var(--panel); }
+.fld .clip { position: absolute; left: 4px; top: 3px; width: 22px; height: 22px; display: grid; place-items: center; color: var(--ink-2); }
+.fld .clip .i { width: 16px; height: 16px; }
+.fld .keys { position: absolute; right: 8px; bottom: 5px; height: 18px; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.snd { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-width: 30px; height: 30px; padding: 0 6px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+.snd .i { width: 16px; height: 16px; }
+.snd.wide { padding: 0 8px 0 10px; }
+.snd.off { opacity: 0.4; }
+.snd.ask { background: var(--warn); color: var(--warn-ink); }
+.cfoot { display: flex; align-items: center; gap: 8px; min-height: 24px; padding-left: 2px; font-size: 12px; color: var(--ink-2); }
+.atts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pic { position: relative; flex: none; width: 44px; height: 44px; display: grid; place-items: center; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface-hover); color: var(--ink-3); }
+.pic .i { width: 20px; height: 20px; }
+.pic .px { position: absolute; right: -5px; top: -5px; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink-2); }
+.pic .px .i { width: 9px; height: 9px; stroke-width: 3; }
+.ftok { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 6px 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 12px; color: var(--ink); white-space: nowrap; }
+.ftok .i { width: 12px; height: 12px; color: var(--ink-3); }
+.ftok.q { max-width: 520px; }
+.ftok.q span { overflow: hidden; text-overflow: ellipsis; color: var(--ink-2); }
+.astrip { display: flex; align-items: center; gap: 8px; min-height: 26px; padding: 0 2px 0 8px; border-radius: 6px; font-size: 12.5px; color: var(--ink-2); white-space: nowrap; }
+.astrip b { color: var(--ink); font-weight: 600; }
+.astrip .sum { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.am { width: 14px; height: 14px; flex: none; }
+.am.q { color: var(--warn); } .am.d { color: var(--ok); }
+.qid { flex: none; display: inline-flex; align-items: center; height: 18px; padding: 0 6px; border: 1px solid var(--warn); border-radius: 4px; font: 600 11px var(--mono); color: var(--ink); }
+.qid.d { border-color: var(--ok); font-family: var(--font); }
+.acard { display: grid; gap: 8px; padding: 8px 10px; border: 1px solid var(--warn); border-radius: 10px; background: var(--surface); }
+.atop { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.atop b { color: var(--ink); font-weight: 600; }
+.ctx { display: grid; gap: 2px; padding: 6px 8px; border-radius: 6px; background: var(--panel); font-size: 12px; color: var(--ink-2); }
+.ctx b { color: var(--ink); font-weight: 600; }
+.chs { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.ch { display: inline-flex; align-items: center; gap: 7px; height: 28px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-size: 13px; white-space: nowrap; }
+.ch .kbd { font: 600 11px var(--mono); color: var(--ink-3); }
+.ch .rec { font-size: 11px; font-weight: 600; color: var(--ink-2); }
+.dock .tolist { left: 16px; }
+.tfold { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 4px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 12px; color: var(--ink-2); white-space: nowrap; }
+.tfold b { color: var(--ink); font-weight: 600; }
+.hov { display: inline-flex; gap: 4px; }
+.pop.agent { width: 400px; }
+.pick.on { background: var(--surface-hover); }
+.pick .st { margin-left: auto; font-size: 11px; color: var(--ink-3); white-space: nowrap; }
+.pick.off { opacity: 0.55; }
+.fig { padding-bottom: 22px; }
+.cfoot > .hintx { flex: 1; min-width: 0; }
+.gin { flex: 1; min-width: 0; display: flex; align-items: center; }
+.page .i.flip { transform: rotate(180deg); }
+
+.rrow.wt .r1 { gap: 5px; }
+.rrow.wt .r2 { padding-left: 19px; }
+.rrow.wt .gtools { margin: -2px 0 -2px auto; }
+.rgh { display: flex; align-items: center; gap: 4px; padding: 12px 12px 16px 10px; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.kids { position: relative; display: grid; margin: 10px 8px 4px 13px; }
+.kids::before { content: ""; position: absolute; left: 6px; top: -10px; height: 10px; border-left: 1px solid var(--ink-3); }
+.arow { display: flex; align-items: center; gap: 6px; height: 26px; padding: 0 3px; border-radius: 6px; font-size: 12px; color: var(--ink-2); }
+.arow.on { background: var(--accent-wash); }
+.arow > .i { color: var(--ink-3); margin-right: -2px; }
+.arow .rname { flex: none; font-size: 13px; }
+.arow .asub { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.arow .rtime { margin-left: 0; }
+.tgs { display: flex; flex: none; align-self: stretch; }
+.tg { position: relative; width: 14px; }
+.tg.v::before, .tg.t::before, .tg.el::before { content: ""; position: absolute; left: 6px; top: 0; bottom: 0; border-left: 1px solid var(--ink-3); }
+.tg.el::before { bottom: auto; height: 13px; }
+.tg.t::after, .tg.el::after { content: ""; position: absolute; left: 6px; top: 13px; width: 9px; border-top: 1px solid var(--ink-3); }
+.hup { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 4px 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); white-space: nowrap; }
+.hup > .i { color: var(--ink-3); }
+.hup b { color: var(--ink); font-weight: 600; font-size: 13px; }
+.hup .hs { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.hier { display: grid; }
+.hrow .tg.t::after, .hrow .tg.el::after { top: 16px; }
+.hrow .tg.el::before { height: 16px; }
+.hrow { display: flex; align-items: stretch; gap: 6px; min-height: 52px; padding-right: 4px; border-radius: 6px; }
+.hrow.one { min-height: 32px; }
+.hrow.on { background: var(--accent-wash); }
+.hmain { flex: 1; min-width: 0; display: grid; align-content: center; gap: 2px; }
+.h1 { display: flex; align-items: center; gap: 6px; height: 20px; white-space: nowrap; }
+.h1 b { color: var(--ink); font-weight: 600; font-size: 13px; }
+.h1 > .i { color: var(--ink-3); }
+.h2 { display: flex; height: 18px; padding-left: 13px; white-space: nowrap; }
+.h2 > span { display: inline-flex; align-items: center; gap: 5px; }
+.h2 .i { width: 12px; height: 12px; }
+.hacts { display: inline-flex; align-items: center; align-self: center; gap: 2px; }
+.hleg { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 6px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 11px; }
+.hleg span { display: inline-flex; align-items: center; gap: 6px; }
+.brow { display: flex; align-items: center; gap: 8px; }
+.tipw { position: relative; display: inline-flex; }
+.tip { position: absolute; left: 50%; top: calc(100% + 8px); transform: translateX(-50%); padding: 3px 8px; border-radius: 6px; background: var(--ink); color: var(--bg); font-size: 11px; font-weight: 600; white-space: nowrap; }
+.fld .mode { position: absolute; right: 3px; bottom: 3px; padding: 1px; }
+.fld .mode .hi { padding: 0 8px; }
+.fld.hm .keys { right: 140px; }
+.mhead { white-space: nowrap; }
+
+.dock.flat { padding: 10px 12px; border-top: 1px solid var(--line); background: var(--panel); }
+.tgt.plain { border-color: var(--line-strong); background: var(--surface); color: var(--ink); }
+.fld.m3 { padding-right: 132px; }
+.fld.m1 { padding-right: 62px; }
+.modes3 { position: absolute; right: 4px; top: 3px; display: flex; gap: 2px; }
+.modes3 .abtn { width: 40px; height: 24px; padding: 0; justify-content: center; }
+.dmode { position: absolute; right: 3px; bottom: 3px; display: inline-flex; align-items: center; gap: 2px; height: 24px; padding: 0 5px 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.dmode .i { width: 11px; height: 11px; }
+.dmode.open { box-shadow: 0 0 0 2px var(--accent-wash); }
+.dmode.steer { border-color: var(--run); background: color-mix(in srgb, var(--run) 13%, var(--surface)); color: var(--ink); }
+.dmode.stop { border-color: var(--err); background: color-mix(in srgb, var(--err) 13%, var(--surface)); color: var(--ink); }
+.snd.stop { background: var(--err); color: var(--err-ink); }
+.menu.dm { right: 0; bottom: calc(100% + 6px); width: 300px; line-height: 1.45; }
+.menu.dm .mhd { padding: 4px 8px 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.menu.dm .mi { align-items: flex-start; white-space: normal; }
+.menu.dm .mi > .i { margin-top: 3px; }
+.menu.dm .mi b { font-weight: 600; }
+.menu.dm .mkeys { padding: 6px 8px 2px; border-top: 1px solid var(--line); margin-top: 4px; font-size: 11px; color: var(--ink-2); }
+.i.none { visibility: hidden; }
+.cta { display: grid; justify-items: start; gap: 5px; margin: 8px 12px; width: max-content; }
+.cta p { font-size: 12px; color: var(--ink-2); line-height: 1.6; white-space: nowrap; }
+.empty { align-self: center; justify-self: center; color: var(--ink-2); }
+.conv.zero { grid-template-rows: auto auto minmax(0, 1fr) auto; }
+.conv.first { grid-template-rows: auto minmax(0, 1fr); }
+.frow2 { display: flex; gap: 4px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+.welcome { align-self: center; justify-self: center; width: 470px; display: grid; gap: 20px; justify-items: start; margin-bottom: 40px; }
+.welcome h3 { font-size: 18px; line-height: 1.35; }
+.welcome .wtop { display: grid; gap: 6px; }
+.welcome p { color: var(--ink-2); line-height: 1.6; }
+.wact { display: grid; gap: 6px; justify-items: start; }
+.wact .abtn { height: 34px; padding: 0 14px; font-size: 13px; border-radius: 8px; }
+.wact .abtn .i { width: 15px; height: 15px; }
+.wact small { font-size: 12px; color: var(--ink-2); }
+.whint { font-size: 12px; color: var(--ink-2); padding-top: 14px; border-top: 1px solid var(--line); justify-self: stretch; }
+.rnone { margin: 14px 16px; font-size: 12px; color: var(--ink-2); line-height: 1.6; }
+
+.lead a { color: var(--ink); font-weight: 600; text-underline-offset: 3px; }
+.lead a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tbar .ibtn { align-self: center; }
+.tbar .ibtn .i { width: 16px; height: 16px; }
+.app.two { grid-template-columns: 280px minmax(0, 1fr); }
+.app.two.open { grid-template-columns: 280px minmax(0, 1fr) 334px; }
+.app.slim { grid-template-columns: 280px minmax(0, 1fr) 56px; }
+.app.one { grid-template-columns: minmax(0, 1fr); }
+.htogs { display: inline-flex; gap: 2px; margin-left: 10px; }
+.htog { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 7px; border-radius: 6px; font-size: 12px; font-weight: 600; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.htog .i { width: 16px; height: 16px; }
+.htog.on { background: var(--accent-wash); color: var(--ink); }
+.welcome.wide { width: 540px; gap: 28px; }
+.welcome .cmp { justify-self: stretch; }
+.fld.wf { padding-left: 10px; min-height: 44px; }
+.wnote { font-size: 12px; }
+.tools { justify-self: stretch; display: grid; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); }
+.tool { display: flex; align-items: center; gap: 8px; min-height: 42px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
+.tool:last-child { border-bottom: 0; }
+.tool b { font-size: 13px; font-weight: 600; color: var(--ink); }
+.wline2 { display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--ink-2); }
+.wline2 u { color: var(--ink); font-weight: 600; text-underline-offset: 3px; }
+.scrim { position: absolute; inset: 0; z-index: 3; background: oklch(0% 0 0 / 0.32); }
+.slot.over { position: absolute; top: 0; right: 0; bottom: 0; width: 334px; z-index: 4; box-shadow: -6px 0 16px var(--shadow); }
+.mem .ibtn { grid-row: 1 / span 2; grid-column: 3; }
+.shead2 { padding: 10px 18px 0; font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.srail.two { padding-top: 12px; }
+.sdlg { position: absolute; left: 40px; top: 32px; z-index: 5; width: 880px; height: 600px; display: grid; grid-template-columns: 180px minmax(0, 1fr); border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 48px var(--shadow); overflow: hidden; }
+.snav { display: flex; flex-direction: column; gap: 2px; padding: 16px 8px; border-right: 1px solid var(--line); background: var(--panel); }
+.snav h3 { padding: 0 8px 10px; font-size: 15px; font-weight: 600; }
+.sfind { display: flex; align-items: center; gap: 6px; height: 30px; margin-bottom: 10px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); color: var(--ink-3); }
+.stbs { display: grid; gap: 2px; margin: 0 6px; }
+.stb { padding: 7px 10px; border-radius: 6px; font-size: 14px; line-height: 21px; color: var(--ink-2); }
+.stb.on { background: var(--accent-wash); color: var(--ink); font-weight: 600; }
+.snb { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 12px; font-weight: 500; color: var(--ink-2); }
+.sct { display: grid; grid-template-rows: auto minmax(0, 1fr); min-width: 0; }
+.scth { display: flex; align-items: center; gap: 8px; padding: 18px 22px 8px; }
+.scth h4 { font-size: 15px; font-weight: 600; }
+.scb { display: grid; gap: 18px; align-content: start; padding: 14px 22px 18px; overflow: hidden; }
+.sec { display: grid; gap: 8px; justify-items: start; }
+.sec h5 { font-size: 12px; font-weight: 600; color: var(--ink-3); }
+.sec > .full { justify-self: stretch; }
+.srow { display: flex; align-items: center; gap: 10px; }
+.shint { font-size: 12px; color: var(--ink-2); line-height: 1.5; }
+.sw { position: relative; flex: none; width: 30px; height: 18px; border-radius: 9px; background: var(--line-strong); }
+.sw::after { content: ""; position: absolute; left: 2px; top: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--surface); }
+.sw.on { background: var(--accent); }
+.sw.on::after { left: 14px; background: var(--accent-ink); }
+.pathf { display: flex; align-items: center; width: 380px; height: 30px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font: 12px var(--mono); color: var(--ink); }
+.disc { justify-self: start; display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 9px 0 7px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--panel); color: var(--ink-2); font-size: 12px; }
+.disc b { font-size: 13px; font-weight: 600; color: var(--ink); }
+.dbody { justify-self: stretch; display: grid; gap: 14px; padding: 2px 0 0 12px; border-left: 1px solid var(--line); }
+.agc { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 2px 10px; align-items: center; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; color: var(--ink-2); }
+.agc b { font-size: 13px; font-weight: 600; color: var(--ink); }
+.agc code { grid-column: 1; color: var(--ink-2); }
+.agc .lab { grid-row: 1 / span 2; grid-column: 2; }
+.agc .sw { grid-row: 1 / span 2; grid-column: 3; }
+.skl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 28px; font-size: 12px; color: var(--ink-2); }
+.skl b { font-size: 13px; font-weight: 600; color: var(--ink); margin-right: 8px; }
+.rtb { justify-self: stretch; display: grid; border: 1px solid var(--line); border-radius: 8px; font-size: 12px; }
+.rtr { display: grid; grid-template-columns: 90px 110px 150px minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 28px; padding: 0 10px; border-bottom: 1px solid var(--line); color: var(--ink-2); }
+.rtr:last-child { border-bottom: 0; }
+.rtr b { font-weight: 600; color: var(--ink); }
+.rtr.hd { background: var(--panel); font-weight: 600; color: var(--ink-3); border-radius: 7px 7px 0 0; }
+.numf { display: inline-flex; align-items: center; width: 64px; height: 28px; padding: 0 9px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--bg); font-variant-numeric: tabular-nums; color: var(--ink); }
+.crw { display: grid; grid-template-columns: 18px 120px minmax(0, 1fr) auto; gap: 10px; align-items: center; min-height: 36px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink-2); }
+.crw:last-child { border-bottom: 0; }
+.crw b { font-size: 13px; font-weight: 600; color: var(--ink); }
+.swt { width: 18px; height: 18px; border-radius: 5px; }
+.crws { justify-self: stretch; display: grid; }
+</style>
+</head>
+<body data-ui=".arow, .fchip, .abtn, .seg, .vchip, .chip, .hseg, .rrow, .rsort, .rsearch, .bubble, .stab, .sbtn, .xbtn, .pill, .unread, .av, .cap, .wbtn, .ibtn, .tgt, .fld, .snd, .dmode, .rgroup, .htog, .sfind, .sw, .pathf, .disc, .numf">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+<symbol id="chat" viewBox="0 0 24 24"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/></symbol>
+<symbol id="graph" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="6" rx="1"/><rect x="14" y="15" width="7" height="6" rx="1"/><path d="M6.5 9v5a2 2 0 0 0 2 2H14"/></symbol>
+<symbol id="people" viewBox="0 0 24 24"><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0M16 5.2a3.2 3.2 0 0 1 0 5.6M18 14.5a6 6 0 0 1 3 5.5"/></symbol>
+<symbol id="user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+<symbol id="globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></symbol>
+<symbol id="term" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/></symbol>
+<symbol id="doc" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></symbol>
+<symbol id="log" viewBox="0 0 24 24"><path d="M4 6h16M4 12h10M4 18h14"/></symbol>
+<symbol id="diff" viewBox="0 0 24 24"><path d="M12 3v8M8 7h8M8 18h8"/><rect x="3" y="2" width="18" height="20" rx="2"/></symbol>
+<symbol id="search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="chev" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+<symbol id="x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+<symbol id="min" viewBox="0 0 24 24"><path d="M5 12h14"/></symbol>
+<symbol id="max" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="m5 12 5 5 9-10"/></symbol>
+<symbol id="copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+<symbol id="folder" viewBox="0 0 24 24"><path d="M3 6a2 2 0 0 1 2-2h4l2 3h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="all" viewBox="0 0 24 24"><path d="M3 13h5l1.5 3h5L16 13h5"/><path d="M5.5 5h13L21 13v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5z"/></symbol>
+<symbol id="expand" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-7 7M10 20H4v-6M4 20l7-7"/></symbol>
+
+<symbol id="gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1 7 17M17 7l2.1-2.1"/></symbol>
+<symbol id="dots" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></symbol>
+<symbol id="clip" viewBox="0 0 24 24"><path d="m21 12-8.5 8.5a5 5 0 0 1-7-7L14 5a3.4 3.4 0 0 1 4.8 4.8L10.5 18a1.8 1.8 0 0 1-2.5-2.5L15.5 8"/></symbol>
+<symbol id="up" viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></symbol>
+<symbol id="branch" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M6 8.5v7M18 3v6M15 6h6M18 11c0 4-6 3-9 5"/></symbol>
+<symbol id="pencil" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16zM13 7l4 4"/></symbol>
+<symbol id="trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
+<symbol id="refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 0 1-14 5.3M4 12a8 8 0 0 1 14-5.3M18 3v4h-4M6 21v-4h4"/></symbol>
+<symbol id="mark" viewBox="0 0 24 24"><path d="M6 3h12v18l-6-4-6 4z"/></symbol>
+<symbol id="listx" viewBox="0 0 24 24"><path d="M4 6h10M4 12h8M4 18h10M16 10l5 5M21 10l-5 5"/></symbol>
+<symbol id="cq" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 0 1 5 .8c0 1.7-2.5 2.2-2.5 3.7M12 17.2v.1"/></symbol>
+<symbol id="cc" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m8 12 3 3 5-6"/></symbol>
+<symbol id="fold" viewBox="0 0 24 24"><path d="m7 20 5-5 5 5M7 4l5 5 5-5"/></symbol>
+<symbol id="stack" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5zM3 13l9 5 9-5"/></symbol>
+<symbol id="img" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="m4 18 5-5 4 4 3-3 4 4"/></symbol>
+<symbol id="fwd" viewBox="0 0 24 24"><path d="m14 5 6 6-6 6M20 11H9a5 5 0 0 0-5 5v3"/></symbol>
+<symbol id="quote" viewBox="0 0 24 24"><path d="M5 17V11a4 4 0 0 1 4-4M14 17v-6a4 4 0 0 1 4-4M5 13h4v4H5zM14 13h4v4h-4z"/></symbol>
+<symbol id="side" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></symbol>
+<symbol id="ext" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/></symbol>
+<symbol id="power" viewBox="0 0 24 24"><path d="M12 3v9M6.3 6.3a8 8 0 1 0 11.4 0"/></symbol>
+</svg>
+<main class="doc">
+
+<div class="who"><span class="doc-id">문서 ID: <b>R486</b></span><span>연 담당: <b>UI/UX 설계자 · UI/UX 첫사용자개선목업</b></span><span>v1 · 2026-11-20</span></div>
+<h1>loom 채팅 첫 사용자 개선: 첫 대화, 방 머리와 옆 칸, 설정 차례 목업</h1>
+<p class="lead">loom-chat(main <code>11a5a624</code>)을 처음 쓰는 사람의 눈으로 본 조사 넷에서, 화면 자리를 바꾸는 고침 셋이 나왔습니다. 첫째는 방이 하나도 없는 첫 화면입니다: 글 하나를 보내려면 단추, 창, 고르기를 거칩니다. 둘째는 방 머리와 오른쪽 세로 줄입니다: 옆 칸을 여는 곳이 둘이고 세로 줄이 늘 60px를 차지합니다. 셋째는 설정입니다: 열면 경로를 쓰는 칸이 먼저 보이고 언어는 다른 탭의 맨 아래에 있습니다. 이 문서는 「loom 채팅 첫 화면과 전달 방식 칩: GPUI 화면 목업」(R472)의 색과 부품을 그대로 쓰고, 물음 번호도 그 문서의 D13 다음인 D14, D15, D16으로 잇습니다. 물음마다 시안 A와 B를 차례로 그렸습니다.</p>
+
+<div class="flow"><span>첫 화면에서 글을 쓰고 Enter를 누른다 ①</span><i>→</i><span>대화하며 구성원과 터미널을 연다 ②</span><i>→</i><span>설정에서 언어와 테마를 바꾼다 ③</span></div>
+
+<div class="fig" id="fig1a"><h2>① D14-A: 첫 화면에서 글을 쓰고 Enter를 누르면 대화가 시작된다 <span class="tag">작업공간 0 · 에이전트 0 · AI 도구가 설치된 첫 화면</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app two" style="height:660px"><section class="rooms"><div class="wsel"><span class="wbtn"><svg class="i "><use href="#stack"/></svg><b>모든 작업공간</b><svg class="i "><use href="#chev"/></svg></span><span class="ibtn"><svg class="i "><use href="#gear"/></svg></span></div><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새로 만들기<svg class="i "><use href="#chev"/></svg></span></div><p class="rnone"><span class="mk" data-n="1">첫 글을 보내면 방이 여기에 보입니다.</span></p></section><section class="conv first" style="grid-template-rows:minmax(0,1fr)"><div class="welcome wide"><div class="wtop mk new" data-n="2"><h3>첫 에이전트와 대화를 시작합니다</h3><p>에이전트는 맡긴 일을 하는 AI입니다. 아래 칸에 맡길 일을 쓰고 Enter를 누릅니다.</p></div><div class="cmp focus mk new" data-n="3"><div class="cline"><span class="mk new" data-n="4"><span class="tgt plain">Claude Code에게<svg class="i "><use href="#chev"/></svg></span></span><div class="fld ph wf">예: 할 일 목록 앱을 만들어 주세요<span class="keys">Enter 보내기 · Shift+Enter 줄 바꿈</span></div><span class="snd off"><svg class="i "><use href="#up"/></svg></span></div></div><p class="wnote"><span class="mk new" data-n="6">모든 권한 허용으로 시작합니다. ‘설정 › 에이전트’에서 끌 수 있습니다.</span></p><div class="wline2"><span>폴더를 열지 않으면 빈 작업 폴더에서 시작합니다.</span><span class="spacer"></span><span class="mk new" data-n="5"><span class="fchip"><svg class="i "><use href="#folder"/></svg>프로젝트 폴더 열기</span></span></div></div></section></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 0 · 일하는 중 0</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>1</b><span>방이 없는 동안에는 찾기 칸, 숫자 칩 넷, 묶기, 종합 채팅방 줄을 숨깁니다. 오른쪽 세로 줄과 방 머리([외부 주소 복사], [옆 칸])도 없습니다. 에이전트가 하나 생기면 모두 나타납니다.</span></div><div><b>2</b><span>가운데 칸은 할 일 하나만 말합니다. 「저장소」라는 말은 쓰지 않습니다.</span></div><div><b>3</b><span>방에서 쓰는 입력기와 같은 부품입니다. Enter를 누르면 작업 폴더를 만들고, 에이전트를 띄우고, 이 글을 첫 말로 보낸 뒤 그 방을 엽니다.</span></div><div><b>4</b><span>설치된 AI 도구 가운데 하나를 미리 골라 둡니다. 누르면 설치된 도구 목록이 열려 바꿀 수 있습니다.</span></div><div><b>5</b><span>코드 폴더가 있는 사람의 길입니다. 폴더를 고르면 칩에 그 폴더 이름이 보이고, 에이전트가 그 폴더 안에서 일합니다.</span></div><div><b>6</b><span>지금 「새 노드」 창에는 이 알림이 없습니다. 창을 거치지 않으므로 이 자리에 보입니다.</span></div></div></div>
+<div class="fig" id="fig1b"><h2>① D14-A AI 도구가 없을 때: 설치할 도구 셋과 [다시 찾기] <span class="tag">작업공간 0 · 에이전트 0 · 설치된 AI 도구 0</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app two" style="height:520px"><section class="rooms"><div class="wsel"><span class="wbtn"><svg class="i "><use href="#stack"/></svg><b>모든 작업공간</b><svg class="i "><use href="#chev"/></svg></span><span class="ibtn"><svg class="i "><use href="#gear"/></svg></span></div><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새로 만들기<svg class="i "><use href="#chev"/></svg></span></div><p class="rnone">AI 도구를 설치하면 여기에서 방을 만듭니다.</p></section><section class="conv first" style="grid-template-rows:minmax(0,1fr)"><div class="welcome wide"><div class="wtop"><h3>먼저 AI 도구를 하나 설치합니다</h3><p>loom은 이 컴퓨터에 설치된 AI 도구로 에이전트를 띄웁니다. 지금은 찾은 도구가 없습니다.</p></div><div class="tools mk new" data-n="7"><div class="tool"><b>Claude Code</b><span>Anthropic</span><span class="spacer"></span><span class="abtn sm">설치 안내 열기<svg class="i "><use href="#ext"/></svg></span></div><div class="tool"><b>Codex</b><span>OpenAI</span><span class="spacer"></span><span class="abtn sm">설치 안내 열기<svg class="i "><use href="#ext"/></svg></span></div><div class="tool"><b>Cursor</b><span>Anysphere</span><span class="spacer"></span><span class="abtn sm">설치 안내 열기<svg class="i "><use href="#ext"/></svg></span></div></div><div class="wline2"><span class="mk new" data-n="8"><span class="abtn primary"><svg class="i "><use href="#refresh"/></svg>다시 찾기</span></span><span>설치를 마친 뒤 누릅니다.</span><span class="spacer"></span><u>다른 도구 14개 보기</u></div></div></section></div><div class="sbar"><span class="mk new" data-n="9">설치된 AI 도구 없음</span><span class="spacer"></span><span>에이전트 0 · 일하는 중 0</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>7</b><span>많이 쓰는 도구 셋만 보입니다. 단추는 그 도구의 설치 안내 쪽을 기본 브라우저로 엽니다. 쓸 수 없는 입력기는 그리지 않습니다.</span></div><div><b>8</b><span>누르면 이 컴퓨터에서 도구를 다시 찾습니다. 하나라도 찾으면 위 D14-A 화면이 됩니다. 「다른 도구 14개 보기」는 ‘설정 › 에이전트’를 엽니다.</span></div><div><b>9</b><span>지금은 도구가 없어도 「계정 연결」이라고 씁니다. 사실대로 고칩니다.</span></div></div></div>
+<div class="fig" id="fig1c"><h2>① D14-B: 단추 둘은 그대로 두고 둘레의 빈 조작부만 숨긴다 <span class="tag">작업공간 0 · 에이전트 0인 첫 화면</span></h2><div class="stage"><div class="page"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app two" style="height:520px"><section class="rooms"><div class="wsel"><span class="wbtn"><svg class="i "><use href="#stack"/></svg><b>모든 작업공간</b><svg class="i "><use href="#chev"/></svg></span><span class="ibtn"><svg class="i "><use href="#gear"/></svg></span></div><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새로 만들기<svg class="i "><use href="#chev"/></svg></span></div><p class="rnone"><span class="mk" data-n="11">에이전트를 띄우면 방이 여기에 보입니다.</span></p></section><section class="conv first" style="grid-template-rows:minmax(0,1fr)"><div class="welcome"><div class="wtop"><h3>첫 에이전트와 대화를 시작합니다</h3><p>에이전트는 맡긴 일을 하는 AI입니다. 저장소(코드 폴더)가 없어도 바로 말을 걸 수 있습니다.</p></div><div class="mk" data-n="10" style="display:grid;gap:20px;justify-items:start"><div class="wact"><span class="abtn primary"><svg class="i "><use href="#chat"/></svg>저장소 없이 바로 대화 시작</span><small>빈 작업 폴더를 만들고 에이전트 하나를 띄웁니다.</small></div><div class="wact"><span class="abtn"><svg class="i "><use href="#folder"/></svg>작업공간 폴더 열기</span><small>코드가 있는 폴더를 고릅니다. 에이전트가 그 폴더 안에서 일합니다.</small></div></div><p class="whint">다음부터는 왼쪽 위 [새로 만들기]에서 같은 일을 합니다.</p></div></section></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 0 · 일하는 중 0</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>10</b><span>지금 화면의 단추 둘입니다. 누르면 「새 노드」 창이 뜨고, 거기서 AI 도구를 고르고, 방이 열린 뒤에 글을 씁니다.</span></div><div><b>11</b><span>D14-A와 같이 찾기 칸, 숫자 칩, 묶기, 종합 채팅방 줄, 방 머리, 오른쪽 세로 줄을 숨깁니다.</span></div></div></div>
+<section class="decision" id="D14" data-for="3 4 5 7 10"><h3><span class="did">D14</span>방이 하나도 없는 첫 화면에서 첫 대화를 어떻게 시작할까요?</h3><div class="opts"><div class="opt" data-recommended><span class="key">A</span><span class="label">첫 화면에 입력기를 두고, 글을 쓰고 Enter를 한 번 누르면 대화를 시작한다<span class="mark">권장</span><span class="sub">지금: 단추 누르기 → 「새 노드」 창에서 고르기 → 방이 열린 뒤 글 쓰기, 둘레에 빈 조작부 약 20개 → 뒤: 글 쓰고 Enter 한 번, 둘레에 빈 조작부 없음 · 비용: 첫 화면 입력기, AI 도구 고르기 단추, 도구 없음 안내 · 위험: 중간. 폴더 만들기와 에이전트 띄우기가 Enter 한 번에 일어나므로 실패 안내를 이 화면에서 해야 합니다 · 되돌리기: 입력기를 빼고 단추 둘(B)로 돌아갑니다</span></span></div><div class="opt"><span class="key">B</span><span class="label">단추 둘은 그대로 두고, 둘레의 빈 조작부만 숨긴다<span class="sub">첫 글까지 가는 길은 지금과 같습니다 · 비용: 가장 작음 · 위험: 단추를 누른 뒤 뜨는 창에서 한 번 더 골라야 합니다 · 되돌리기: 숨긴 조작부를 다시 보입니다</span></span></div></div><ul class="why"><li>채팅 앱에 처음 온 사람은 글 칸부터 찾습니다. A는 그 칸이 첫 화면에 있습니다.</li><li>설치된 AI 도구가 하나면 고를 것이 없습니다. 미리 고른 도구로 시작하고, 바꿀 사람만 단추를 누릅니다.</li><li>A와 B 모두 방이 없을 때 쓸 수 없는 조작부를 숨깁니다.</li></ul></section>
+<div class="fig" id="fig2a"><h2>② D15-A 넓은 창(1280px), 옆 칸을 닫았을 때: 오른쪽 세로 줄이 없다 <span class="tag">방 머리 한 줄 · 제목 줄에 단추 둘</span></h2><div class="stage" style="padding:110px 0 0 110px"><div class="page" style="width:1280px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="ibtn mk new" data-n="12"><svg class="i "><use href="#side"/></svg></span><span class="spacer"></span><span class="ibtn mk new" data-n="13"><svg class="i "><use href="#gear"/></svg></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app two" style="height:500px"><section class="rooms"><div class="wsel"><span class="wbtn"><svg class="i "><use href="#stack"/></svg><b>모든 작업공간</b><svg class="i "><use href="#chev"/></svg></span></div><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새로 만들기<svg class="i "><use href="#chev"/></svg></span></div><div class="rsearch"><svg class="i "><use href="#search"/></svg>방 이름·구성원 찾기</div><div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 작업공간 · 에이전트 3</span></div></div><div class="views"><span class="vchip on">전체 <b>1</b></span><span class="vchip">내 차례 <b>0</b></span><span class="vchip">일하는 중 <b>1</b></span><span class="vchip">안 읽음 <b>0</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div><div class="rgh"><svg class="i "><use href="#chev"/></svg>워크트리 방</div><div class="rrow wt on"><div class="r1"><svg class="i "><use href="#chev"/></svg><i class="dot running"></i><svg class="i "><use href="#branch"/></svg><span class="rname">결제 리팩터링</span><span class="cnt">3</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">shop-api · 리드: 검토-1에게 검토를 맡겼습니다.</span></div></div><div class="kids"><div class="arow"><span class="tgs"><span class="tg el"></span></span><i class="dot done"></i><span class="rname">리드</span><span class="asub">조정자 · 쉬는 중</span><span class="rtime">14:46</span></div><div class="arow"><span class="tgs"><span class="tg sp"></span><span class="tg t"></span></span><i class="dot running"></i><span class="rname">결제-API</span><span class="asub">작업자 · 일하는 중</span><span class="rtime">14:45</span></div><div class="arow"><span class="tgs"><span class="tg sp"></span><span class="tg el"></span></span><i class="dot done"></i><span class="rname">검토-1</span><span class="asub">검토자 · 쉬는 중</span><span class="rtime">14:36</span></div></div></section><section class="conv "><div class="chead"><div class="ch1"><svg class="i "><use href="#branch"/></svg><b>결제 리팩터링</b><span class="state"><i class="dot running"></i>구성원 3 · 일하는 중 1</span><span class="crumbs">shop-api</span><span class="spacer"></span><span class="ibtn mk new" data-n="15"><svg class="i "><use href="#dots"/></svg></span><span class="htogs mk new" data-n="14"><span class="htog"><svg class="i "><use href="#people"/></svg>3</span><span class="htog"><svg class="i "><use href="#term"/></svg></span></span></div></div><div class="msgs"><div class="mrow right"><div class="bubble me">음수는 금액 타입에서 막아 주세요.</div><span class="mmeta">14:42 · 읽음</span></div><div class="mrow left"><div class="mhead"><i class="av l2">결</i><span><b>결제-API</b></span></div><div class="bubble ag">음수를 막았습니다. 시험 2개를 더했습니다.</div><span class="mmeta">14:45</span></div><div class="mrow left"><div class="mhead"><i class="av l1">리</i><span><b>리드</b></span></div><div class="bubble ag">검토-1에게 검토를 맡겼습니다.</div><span class="mmeta">14:46</span></div></div><div class="dock flat"><div class="cline"><span class="tgt plain">결제-API에게<svg class="i "><use href="#chev"/></svg></span><div class="fld ph m1"><span class="clip"><svg class="i "><use href="#clip"/></svg></span>메시지를 씁니다<span class="dmode">일반<svg class="i "><use href="#chev"/></svg></span></div><span class="snd off"><svg class="i "><use href="#up"/></svg></span></div></div></section></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>12</b><span>방 목록을 접고 펴는 단추입니다. 접으면 대화 칸이 창 폭을 모두 씁니다.</span></div><div><b>13</b><span>설정 단추를 방 목록 위에서 제목 줄로 옮깁니다. 방 목록을 접어도 보입니다.</span></div><div><b>14</b><span>옆 칸을 여는 단추 둘입니다. 사람 모양은 구성원(숫자는 구성원 수), 네모는 터미널입니다. 가리키면 이름이 뜹니다. 세로 줄과 [옆 칸] 단추는 없습니다.</span></div><div><b>15</b><span>방 메뉴입니다. [외부 주소 복사]를 이 안으로 옮겨 방 머리가 좁은 창에서도 한 줄입니다.</span></div></div></div>
+<div class="fig" id="fig2b"><h2>② D15-A 넓은 창(1280px), 구성원을 열었을 때: 탭 둘 <span class="tag">대화 칸 옆에 334px 칸이 열린다</span></h2><div class="stage" style="padding:110px 0 0 110px"><div class="page" style="width:1280px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="ibtn"><svg class="i "><use href="#side"/></svg></span><span class="spacer"></span><span class="ibtn"><svg class="i "><use href="#gear"/></svg></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app two open" style="height:500px"><section class="rooms"><div class="wsel"><span class="wbtn"><svg class="i "><use href="#stack"/></svg><b>모든 작업공간</b><svg class="i "><use href="#chev"/></svg></span></div><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새로 만들기<svg class="i "><use href="#chev"/></svg></span></div><div class="rsearch"><svg class="i "><use href="#search"/></svg>방 이름·구성원 찾기</div><div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 작업공간 · 에이전트 3</span></div></div><div class="views"><span class="vchip on">전체 <b>1</b></span><span class="vchip">내 차례 <b>0</b></span><span class="vchip">일하는 중 <b>1</b></span><span class="vchip">안 읽음 <b>0</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div><div class="rgh"><svg class="i "><use href="#chev"/></svg>워크트리 방</div><div class="rrow wt on"><div class="r1"><svg class="i "><use href="#chev"/></svg><i class="dot running"></i><svg class="i "><use href="#branch"/></svg><span class="rname">결제 리팩터링</span><span class="cnt">3</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">shop-api · 리드: 검토-1에게 검토를 맡겼습니다.</span></div></div><div class="kids"><div class="arow"><span class="tgs"><span class="tg el"></span></span><i class="dot done"></i><span class="rname">리드</span><span class="asub">조정자 · 쉬는 중</span><span class="rtime">14:46</span></div><div class="arow"><span class="tgs"><span class="tg sp"></span><span class="tg t"></span></span><i class="dot running"></i><span class="rname">결제-API</span><span class="asub">작업자 · 일하는 중</span><span class="rtime">14:45</span></div><div class="arow"><span class="tgs"><span class="tg sp"></span><span class="tg el"></span></span><i class="dot done"></i><span class="rname">검토-1</span><span class="asub">검토자 · 쉬는 중</span><span class="rtime">14:36</span></div></div></section><section class="conv "><div class="chead"><div class="ch1"><svg class="i "><use href="#branch"/></svg><b>결제 리팩터링</b><span class="state"><i class="dot running"></i>구성원 3 · 일하는 중 1</span><span class="crumbs">shop-api</span><span class="spacer"></span><span class="ibtn"><svg class="i "><use href="#dots"/></svg></span><span class="htogs mk new" data-n="17"><span class="htog on"><svg class="i "><use href="#people"/></svg>3</span><span class="htog"><svg class="i "><use href="#term"/></svg></span></span></div></div><div class="msgs"><div class="mrow right"><div class="bubble me">음수는 금액 타입에서 막아 주세요.</div><span class="mmeta">14:42 · 읽음</span></div><div class="mrow left"><div class="mhead"><i class="av l2">결</i><span><b>결제-API</b></span></div><div class="bubble ag">음수를 막았습니다. 시험 2개를 더했습니다.</div><span class="mmeta">14:45</span></div><div class="mrow left"><div class="mhead"><i class="av l1">리</i><span><b>리드</b></span></div><div class="bubble ag">검토-1에게 검토를 맡겼습니다.</div><span class="mmeta">14:46</span></div></div><div class="dock flat"><div class="cline"><span class="tgt plain">결제-API에게<svg class="i "><use href="#chev"/></svg></span><div class="fld ph m1"><span class="clip"><svg class="i "><use href="#clip"/></svg></span>메시지를 씁니다<span class="dmode">일반<svg class="i "><use href="#chev"/></svg></span></div><span class="snd off"><svg class="i "><use href="#up"/></svg></span></div></div></section><aside class="slot"><div class="stabs"><span class="stg mk new" data-n="16"><span class="stab on"><svg class="i "><use href="#people"/></svg>구성원</span><span class="stab"><svg class="i "><use href="#term"/></svg>터미널</span></span><span class="spacer"></span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="shead2">이 방의 구성원 3</div><div class="sbody"><div class="mems"><div class="mem"><i class="av l1">리</i><b>리드</b><span class="ms"><i class="dot done"></i>조정자 · Claude · 쉬는 중</span><span class="ibtn sm"><svg class="i "><use href="#term"/></svg></span></div><div class="mem"><i class="av l2">결</i><b>결제-API</b><span class="ms"><i class="dot running"></i>작업자 · Codex · 일하는 중</span><span class="ibtn sm"><svg class="i "><use href="#term"/></svg></span></div><div class="mem"><i class="av l3">검</i><b>검토-1</b><span class="ms"><i class="dot done"></i>검토자 · Claude · 쉬는 중</span><span class="ibtn sm"><svg class="i "><use href="#term"/></svg></span></div></div></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>16</b><span>탭은 구성원과 터미널 둘입니다. 문서 탭은 문서가 있는 방에서만 보입니다. 기록은 에이전트 방의 상태 창에 있는 「이벤트 기록에서 보기」로 엽니다.</span></div><div><b>17</b><span>열린 칸의 단추는 눌린 모양입니다. 같은 단추를 다시 누르거나 칸의 ×를 누르면 닫힙니다.</span></div></div></div>
+<div class="fig" id="fig2c"><h2>② D15-A 좁은 창(960px): 방 목록을 접고, 옆 칸은 대화 위에 겹친다 <span class="tag">바깥을 누르거나 Esc를 누르면 닫힌다</span></h2><div class="stage"><div class="page" style="width:960px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="ibtn mk new" data-n="18"><svg class="i "><use href="#side"/></svg></span><span class="spacer"></span><span class="ibtn"><svg class="i "><use href="#gear"/></svg></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app one" style="height:500px"><section class="conv "><div class="chead"><div class="ch1"><svg class="i "><use href="#branch"/></svg><b>결제 리팩터링</b><span class="state"><i class="dot running"></i>구성원 3 · 일하는 중 1</span><span class="crumbs">shop-api</span><span class="spacer"></span><span class="ibtn"><svg class="i "><use href="#dots"/></svg></span><span class="htogs"><span class="htog on"><svg class="i "><use href="#people"/></svg>3</span><span class="htog"><svg class="i "><use href="#term"/></svg></span></span></div></div><div class="msgs"><div class="mrow right"><div class="bubble me">음수는 금액 타입에서 막아 주세요.</div><span class="mmeta">14:42 · 읽음</span></div><div class="mrow left"><div class="mhead"><i class="av l2">결</i><span><b>결제-API</b></span></div><div class="bubble ag">음수를 막았습니다. 시험 2개를 더했습니다.</div><span class="mmeta">14:45</span></div><div class="mrow left"><div class="mhead"><i class="av l1">리</i><span><b>리드</b></span></div><div class="bubble ag">검토-1에게 검토를 맡겼습니다.</div><span class="mmeta">14:46</span></div></div><div class="dock flat"><div class="cline"><span class="tgt plain">결제-API에게<svg class="i "><use href="#chev"/></svg></span><div class="fld ph m1"><span class="clip"><svg class="i "><use href="#clip"/></svg></span>메시지를 씁니다<span class="dmode">일반<svg class="i "><use href="#chev"/></svg></span></div><span class="snd off"><svg class="i "><use href="#up"/></svg></span></div></div></section><div class="scrim"></div><aside class="slot over"><div class="stabs"><span class="stg mk new" data-n="19"><span class="stab on"><svg class="i "><use href="#people"/></svg>구성원</span><span class="stab"><svg class="i "><use href="#term"/></svg>터미널</span></span><span class="spacer"></span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="shead2">이 방의 구성원 3</div><div class="sbody"><div class="mems"><div class="mem"><i class="av l1">리</i><b>리드</b><span class="ms"><i class="dot done"></i>조정자 · Claude · 쉬는 중</span><span class="ibtn sm"><svg class="i "><use href="#term"/></svg></span></div><div class="mem"><i class="av l2">결</i><b>결제-API</b><span class="ms"><i class="dot running"></i>작업자 · Codex · 일하는 중</span><span class="ibtn sm"><svg class="i "><use href="#term"/></svg></span></div><div class="mem"><i class="av l3">검</i><b>검토-1</b><span class="ms"><i class="dot done"></i>검토자 · Claude · 쉬는 중</span><span class="ibtn sm"><svg class="i "><use href="#term"/></svg></span></div></div></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>18</b><span>창 폭이 1050px보다 좁으면 방 목록을 접은 채로 엽니다. 이 단추를 누르면 방 목록이 대화 위에 겹쳐 열리고, 방을 고르거나 바깥을 누르면 닫힙니다.</span></div><div><b>19</b><span>옆 칸은 대화 위에 겹쳐 열립니다. 어두운 바깥을 누르거나 Esc를 누르면 닫힙니다. 세로 줄이 없으므로 닫으면 대화 칸이 창 폭을 모두 씁니다.</span></div></div></div>
+<div class="fig" id="fig2d"><h2>② D15-B 넓은 창(1280px): 세로 줄을 남기고 단추를 둘로 줄인다 <span class="tag">[옆 칸] 단추만 없앤다</span></h2><div class="stage" style="padding:110px 0 0 110px"><div class="page" style="width:1280px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app slim" style="height:500px"><section class="rooms"><div class="wsel"><span class="wbtn"><svg class="i "><use href="#stack"/></svg><b>모든 작업공간</b><svg class="i "><use href="#chev"/></svg></span><span class="ibtn"><svg class="i "><use href="#gear"/></svg></span></div><div class="rhead"><span class="area">방 목록</span><span class="spacer"></span><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>새로 만들기<svg class="i "><use href="#chev"/></svg></span></div><div class="rsearch"><svg class="i "><use href="#search"/></svg>방 이름·구성원 찾기</div><div class="rrow pin"><div class="r1"><svg class="i "><use href="#all"/></svg><span class="rname">종합 채팅방</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">모든 작업공간 · 에이전트 3</span></div></div><div class="views"><span class="vchip on">전체 <b>1</b></span><span class="vchip">내 차례 <b>0</b></span><span class="vchip">일하는 중 <b>1</b></span><span class="vchip">안 읽음 <b>0</b></span></div><div class="rsort"><span>묶기</span><span class="sel">작업별 <svg class="i "><use href="#chev"/></svg></span></div><div class="rgh"><svg class="i "><use href="#chev"/></svg>워크트리 방</div><div class="rrow wt on"><div class="r1"><svg class="i "><use href="#chev"/></svg><i class="dot running"></i><svg class="i "><use href="#branch"/></svg><span class="rname">결제 리팩터링</span><span class="cnt">3</span><span class="rtime">14:46</span></div><div class="r2"><span class="rsub">shop-api · 리드: 검토-1에게 검토를 맡겼습니다.</span></div></div><div class="kids"><div class="arow"><span class="tgs"><span class="tg el"></span></span><i class="dot done"></i><span class="rname">리드</span><span class="asub">조정자 · 쉬는 중</span><span class="rtime">14:46</span></div><div class="arow"><span class="tgs"><span class="tg sp"></span><span class="tg t"></span></span><i class="dot running"></i><span class="rname">결제-API</span><span class="asub">작업자 · 일하는 중</span><span class="rtime">14:45</span></div><div class="arow"><span class="tgs"><span class="tg sp"></span><span class="tg el"></span></span><i class="dot done"></i><span class="rname">검토-1</span><span class="asub">검토자 · 쉬는 중</span><span class="rtime">14:36</span></div></div></section><section class="conv "><div class="chead"><div class="ch1"><svg class="i "><use href="#branch"/></svg><b>결제 리팩터링</b><span class="state"><i class="dot running"></i>구성원 3 · 일하는 중 1</span><span class="crumbs">shop-api</span><span class="spacer"></span><span class="abtn sm mk" data-n="21"><svg class="i "><use href="#copy"/></svg>외부 주소 복사</span></div></div><div class="msgs"><div class="mrow right"><div class="bubble me">음수는 금액 타입에서 막아 주세요.</div><span class="mmeta">14:42 · 읽음</span></div><div class="mrow left"><div class="mhead"><i class="av l2">결</i><span><b>결제-API</b></span></div><div class="bubble ag">음수를 막았습니다. 시험 2개를 더했습니다.</div><span class="mmeta">14:45</span></div><div class="mrow left"><div class="mhead"><i class="av l1">리</i><span><b>리드</b></span></div><div class="bubble ag">검토-1에게 검토를 맡겼습니다.</div><span class="mmeta">14:46</span></div></div><div class="dock flat"><div class="cline"><span class="tgt plain">결제-API에게<svg class="i "><use href="#chev"/></svg></span><div class="fld ph m1"><span class="clip"><svg class="i "><use href="#clip"/></svg></span>메시지를 씁니다<span class="dmode">일반<svg class="i "><use href="#chev"/></svg></span></div><span class="snd off"><svg class="i "><use href="#up"/></svg></span></div></div></section><aside class="srail two"><div class="sgroup mk" data-n="20"><span class="sbtn"><svg class="i "><use href="#people"/></svg><span>구성원</span></span><span class="sbtn"><svg class="i "><use href="#term"/></svg><span>터미널</span></span></div></aside></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>20</b><span>세로 줄은 남고 단추는 구성원과 터미널 둘입니다. 문서와 기록의 자리는 D15-A와 같습니다.</span></div><div><b>21</b><span>방 머리에서 [옆 칸] 단추만 없앱니다. [외부 주소 복사]와 방 목록 위의 설정 단추는 지금 자리에 있습니다. 좁은 창에서도 세로 줄은 남습니다.</span></div></div></div>
+<section class="decision" id="D15" data-for="12 13 14 16 19 20"><h3><span class="did">D15</span>오른쪽 세로 줄(60px)을 없애고 방 머리의 아이콘 단추로 바꿀까요?</h3><div class="opts"><div class="opt" data-recommended><span class="key">A</span><span class="label">세로 줄과 [옆 칸] 단추를 없애고, 방 머리에 구성원·터미널 아이콘 단추를 둔다. 제목 줄에 방 목록 접기와 설정을 둔다<span class="mark">권장</span><span class="sub">지금: 옆 칸을 여는 곳 둘(세로 줄, [옆 칸]), 탭 넷, 세로 줄이 늘 60px 차지 → 뒤: 여는 곳 하나, 탭 둘, 대화 칸이 60px 넓어짐. 좁은 창에서는 방 목록을 접을 수 있고 옆 칸은 바깥을 눌러 닫음 · 비용: 방 머리, 제목 줄, 좁은 창의 겹침 · 위험: 중간. 쓰던 사람은 단추 자리를 다시 찾고, 기록은 한 단계 더 들어갑니다. 아이콘 단추는 이름을 가리켜야 보입니다 · 되돌리기: 세로 줄을 다시 둡니다</span></span></div><div class="opt"><span class="key">B</span><span class="label">세로 줄은 남기고 단추를 둘로 줄인다. [옆 칸] 단추만 없앤다<span class="sub">여는 곳 하나, 탭 둘, 단추에 이름이 늘 보임 · 비용: 작음 · 위험: 세로 줄 폭은 계속 비고, 좁은 창(960px)에서 방 목록을 접을 수 없습니다 · 되돌리기: 단추 둘을 다시 더합니다</span></span></div></div><ul class="why"><li>같은 일을 하는 단추가 두 곳에 있으면 처음 온 사람은 둘의 차이를 찾습니다.</li><li>창 폭 900px에서 방 목록(261px)과 세로 줄(60px)을 빼면 대화 칸은 579px입니다. 옆 칸을 열면 333px가 남습니다.</li><li>기록은 내부 이벤트 목록입니다. 문서는 문서가 없으면 빈 칸입니다. 둘 다 늘 보일 까닭이 없습니다.</li></ul></section>
+<div class="fig" id="fig3a"><h2>③ D16-A 일반 탭: 언어·테마·글자 크기·시스템 알림이 맨 위 <span class="tag">설정을 열면 처음 보이는 화면</span></h2><div class="stage"><div class="page" style="width:960px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app" style="height:664px"><section class="rooms"></section><section class="conv"><div class="chead" style="height:47px"></div><div></div><div class="dock flat" style="height:51px"></div></section><aside class="srail"></aside><div class="scrim"></div><div class="sdlg"><nav class="snav"><h3>설정</h3><div class="sfind"><svg class="i "><use href="#search"/></svg>설정 찾기</div><div class="stbs mk new" data-n="22"><span class="stb on">일반</span><span class="stb">에이전트</span><span class="stb">계정</span><span class="stb">화면</span><span class="stb">터미널</span><span class="stb">모바일 연동</span><span class="stb">정보</span></div><span class="spacer"></span><span class="snb"><svg class="i "><use href="#refresh"/></svg>모든 설정 초기화</span><span class="snb"><svg class="i "><use href="#power"/></svg>loom 끄기</span></nav><div class="sct"><div class="scth"><h4>일반</h4><span class="spacer"></span><span class="abtn sm ghost"><svg class="i "><use href="#refresh"/></svg>이 탭 초기화</span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="scb"><div class="mk new" data-n="23" style="display:grid;gap:18px;justify-self:start"><div class="sec" style="justify-self:start"><h5>언어</h5><span class="hseg"><span class="hi">시스템</span><span class="hi">English</span><span class="hi on">한국어</span></span></div><div class="sec"><h5>테마</h5><span class="hseg"><span class="hi on">시스템</span><span class="hi">라이트</span><span class="hi">다크</span></span><span class="shint">‘시스템’은 OS의 라이트·다크 설정을 따릅니다.</span></div><div class="sec"><h5>글자 크기</h5><span class="hseg"><span class="hi">작게</span><span class="hi on">기본</span><span class="hi">크게</span><span class="hi">아주 크게</span></span><span class="shint">제목 줄, 방 목록, 알림, 상태 줄, 설정과 메뉴의 글자와 단추 크기입니다.</span></div><div class="sec"><h5>시스템 알림</h5><span class="srow"><span class="sw on"></span><span>loom 창이 보이지 않을 때 알림을 시스템 알림으로 알림</span></span></div></div><div class="sec mk new" data-n="24" style="justify-self:start"><h5>작업 폴더</h5><span class="srow"><span class="pathf">/home/me/loom-work</span><span class="abtn"><svg class="i "><use href="#folder"/></svg>폴더 고르기…</span></span><span class="shint">에이전트의 작업 사본(워크트리)을 &lt;이 폴더&gt;/&lt;작업공간 이름&gt;/ 안에 만듭니다.</span></div></div></div></div></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>22</b><span>탭 차례를 바꿉니다. 에이전트와 계정이 둘째, 셋째입니다. 「에이전트 계정」은 「계정」, 「휴대폰」은 「모바일 연동」으로 이름을 바꾸고 다섯째 뒤로 보냅니다.</span></div><div><b>23</b><span>처음 온 사람이 바꾸는 설정 넷입니다. 언어·테마·글자 크기는 화면 탭에서 옮깁니다. 값은 지금과 같고, 고르면 바로 바뀝니다.</span></div><div><b>24</b><span>지금의 「워크트리 폴더」입니다. 경로를 손으로 쓰는 칸 옆에 OS의 폴더 고르기 창을 여는 단추를 둡니다. 맨 위에서 맨 아래로 옮깁니다.</span></div></div></div>
+<div class="fig" id="fig3b"><h2>③ D16-A 에이전트 탭: 고급 설정 셋을 한 줄로 접는다 <span class="tag">처음 열었을 때 · 접힌 모습</span></h2><div class="stage"><div class="page" style="width:960px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app" style="height:664px"><section class="rooms"></section><section class="conv"><div class="chead" style="height:47px"></div><div></div><div class="dock flat" style="height:51px"></div></section><aside class="srail"></aside><div class="scrim"></div><div class="sdlg"><nav class="snav"><h3>설정</h3><div class="sfind"><svg class="i "><use href="#search"/></svg>설정 찾기</div><div class="stbs"><span class="stb">일반</span><span class="stb on">에이전트</span><span class="stb">계정</span><span class="stb">화면</span><span class="stb">터미널</span><span class="stb">모바일 연동</span><span class="stb">정보</span></div><span class="spacer"></span><span class="snb"><svg class="i "><use href="#refresh"/></svg>모든 설정 초기화</span><span class="snb"><svg class="i "><use href="#power"/></svg>loom 끄기</span></nav><div class="sct"><div class="scth"><h4>에이전트</h4><span class="spacer"></span><span class="abtn sm ghost"><svg class="i "><use href="#refresh"/></svg>이 탭 초기화</span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="scb"><div class="sec"><span class="srow"><h5>설치됨 2개</h5><span class="abtn sm ghost"><svg class="i "><use href="#refresh"/></svg>다시 찾기</span></span><div class="agc full"><span><b>Claude Code</b> 2.1.228</span><code>/home/me/.local/bin/claude</code><span class="lab">모든 권한 허용</span><span class="sw on"></span></div><div class="agc full"><span><b>Codex</b> 0.142.0</span><code>/home/me/.npm/bin/codex</code><span class="lab">모든 권한 허용</span><span class="sw on"></span></div><span class="shint">켜면 승인 요청 없이 모든 명령을 실행합니다. 끄면 CLI 기본 권한 모드로 시작합니다.</span></div><div class="sec"><div class="disc"><svg class="i closed"><use href="#chev"/></svg><b>설치 안 됨 15개</b></div><div class="disc mk new" data-n="25"><svg class="i closed"><use href="#chev"/></svg><b>고급 (다중 에이전트 협업)</b><span>내장 스킬 · o-mode 역할 · 하위 노드 상한</span></div></div></div></div></div></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>25</b><span>지금은 내장 스킬 넷, o-mode 역할 표, 하위 노드 상한이 늘 펼쳐져 있습니다. 한 줄로 접고, 누르면 펼칩니다. 처음에는 접혀 있습니다.</span></div></div></div>
+<div class="fig" id="fig3c"><h2>③ D16-A 에이전트 탭: 고급을 펼쳤을 때 <span class="tag">펼치고 아래로 내린 모습</span></h2><div class="stage"><div class="page" style="width:960px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app" style="height:664px"><section class="rooms"></section><section class="conv"><div class="chead" style="height:47px"></div><div></div><div class="dock flat" style="height:51px"></div></section><aside class="srail"></aside><div class="scrim"></div><div class="sdlg"><nav class="snav"><h3>설정</h3><div class="sfind"><svg class="i "><use href="#search"/></svg>설정 찾기</div><div class="stbs"><span class="stb">일반</span><span class="stb on">에이전트</span><span class="stb">계정</span><span class="stb">화면</span><span class="stb">터미널</span><span class="stb">모바일 연동</span><span class="stb">정보</span></div><span class="spacer"></span><span class="snb"><svg class="i "><use href="#refresh"/></svg>모든 설정 초기화</span><span class="snb"><svg class="i "><use href="#power"/></svg>loom 끄기</span></nav><div class="sct"><div class="scth"><h4>에이전트</h4><span class="spacer"></span><span class="abtn sm ghost"><svg class="i "><use href="#refresh"/></svg>이 탭 초기화</span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="scb"><div class="sec"><div class="disc"><svg class="i closed"><use href="#chev"/></svg><b>설치 안 됨 15개</b></div><div class="disc mk new" data-n="26"><svg class="i "><use href="#chev"/></svg><b>고급 (다중 에이전트 협업)</b><span>내장 스킬 · o-mode 역할 · 하위 노드 상한</span></div><div class="dbody"><div class="sec"><h5>내장 스킬</h5><div class="skl full"><span><b>loom 절차(o-mode)</b>노드의 배정, 통신, 검수, 병합과 회수 절차입니다.</span><span class="sw on"></span></div><div class="skl full"><span><b>사용자 문서(user-doc)</b>목업과 보고서를 HTML 한 파일로 만듭니다.</span><span class="sw on"></span></div><div class="skl full"><span><b>글쓰기 규칙(STE·오웰)</b>사람의 언어로 짧고 쉽게 씁니다.</span><span class="sw on"></span></div><div class="skl full"><span><b>부품 최소화(랩터-3)</b>요구가 없는 부품을 지웁니다.</span><span class="sw on"></span></div></div><div class="sec mk new" data-n="27" style="justify-self:stretch"><h5>o-mode 역할</h5><div class="rtb"><div class="rtr hd"><span>이름</span><span>실행자</span><span>모델</span><span>추론 강도</span><span></span></div><div class="rtr"><b>코디</b><span>Claude Code</span><span>opus</span><span>high</span><span class="abtn sm ghost">편집</span></div><div class="rtr"><b>워커</b><span>Codex</span><span>CLI 기본</span><span>medium</span><span class="abtn sm ghost">편집</span></div><div class="rtr"><b>검토자</b><span>Claude Code</span><span>sonnet</span><span>CLI 기본</span><span class="abtn sm ghost">편집</span></div></div><span class="abtn sm"><svg class="i "><use href="#plus"/></svg>역할 더하기</span></div><div class="sec"><h5>하위 노드 상한</h5><span class="srow"><span>중첩 깊이</span><span class="numf">3</span><span>부모 하나의 자식 수</span><span class="numf">8</span></span></div></div></div></div></div></div></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>26</b><span>펼치면 지금의 세 부분이 지금 차례로 보입니다. 안의 글과 값은 바꾸지 않습니다.</span></div><div><b>27</b><span>「loom 절차(o-mode)」를 끄면 이 역할 표를 숨깁니다. 지금은 끈 뒤에도 흐린 표가 남습니다.</span></div></div></div>
+<div class="fig" id="fig3d"><h2>③ D16-A 화면 탭: 색은 「고급 색 설정」 안에, 쓰지 않는 색 세 줄은 지운다 <span class="tag">펼친 모습 · 처음에는 접혀 있다</span></h2><div class="stage"><div class="page" style="width:960px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app" style="height:664px"><section class="rooms"></section><section class="conv"><div class="chead" style="height:47px"></div><div></div><div class="dock flat" style="height:51px"></div></section><aside class="srail"></aside><div class="scrim"></div><div class="sdlg"><nav class="snav"><h3>설정</h3><div class="sfind"><svg class="i "><use href="#search"/></svg>설정 찾기</div><div class="stbs"><span class="stb">일반</span><span class="stb">에이전트</span><span class="stb">계정</span><span class="stb on">화면</span><span class="stb">터미널</span><span class="stb">모바일 연동</span><span class="stb">정보</span></div><span class="spacer"></span><span class="snb"><svg class="i "><use href="#refresh"/></svg>모든 설정 초기화</span><span class="snb"><svg class="i "><use href="#power"/></svg>loom 끄기</span></nav><div class="sct"><div class="scth"><h4>화면</h4><span class="spacer"></span><span class="abtn sm ghost"><svg class="i "><use href="#refresh"/></svg>이 탭 초기화</span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="scb"><div class="sec"><div class="disc mk new" data-n="28"><svg class="i "><use href="#chev"/></svg><b>고급 색 설정</b><span>상태 색 여섯을 바꿉니다</span></div><div class="dbody"><div class="crws mk" data-n="29"><div class="crw"><i class="swt" style="background:var(--warn)"></i><b>질문·응답 대기</b><span>질문 배지, 입력 창의 답 단추·칸, 대기 점</span><span class="abtn sm ghost">기본값</span></div><div class="crw"><i class="swt" style="background:var(--run)"></i><b>실행 중</b><span>실행 중 점·상태 글자</span><span class="abtn sm ghost">기본값</span></div><div class="crw"><i class="swt" style="background:var(--ok)"></i><b>완료·성공</b><span>완료 알림, 완료 점, 성공 알림</span><span class="abtn sm ghost">기본값</span></div><div class="crw"><i class="swt" style="background:var(--err)"></i><b>오류</b><span>꺼진 에이전트 점, 오류 글자</span><span class="abtn sm ghost">기본값</span></div><div class="crw"><i class="swt" style="background:var(--lane-2)"></i><b>알림</b><span>알림 수 배지</span><span class="abtn sm ghost">기본값</span></div><div class="crw"><i class="swt" style="background:var(--accent)"></i><b>강조</b><span>고른 방·탭, 켠 스위치, 포커스 테두리</span><span class="abtn sm ghost">기본값</span></div></div><span class="shint">고른 색에 라이트·다크마다 맞는 밝기를 자동으로 씁니다. 모든 창에 바로 보입니다.</span></div></div></div></div></div></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>28</b><span>테마와 글자 크기, 언어가 일반 탭으로 가서 이 탭에는 색만 남습니다. 색 표는 한 줄로 접습니다. 처음에는 접혀 있습니다.</span></div><div><b>29</b><span>색 줄은 아홉에서 여섯이 됩니다. 관계선, 작업공간, 워크트리 줄은 이 앱에 없는 그래프 화면의 색이라 지웁니다.</span></div></div></div>
+<div class="fig" id="fig3e"><h2>③ D16-B 일반 탭: 탭 차례는 그대로, 언어만 일반으로 옮긴다 <span class="tag">설정을 열면 처음 보이는 화면</span></h2><div class="stage"><div class="page" style="width:960px"><div class="tbar"><svg class="mark" viewBox="0 0 16 16"><path d="M2 2h3v9h9v3H2z"/></svg><span class="crumb">loom</span><span class="spacer"></span><span class="cap"><svg class="i "><use href="#min"/></svg></span><span class="cap"><svg class="i "><use href="#max"/></svg></span><span class="cap"><svg class="i "><use href="#x"/></svg></span></div><div class="app" style="height:664px"><section class="rooms"></section><section class="conv"><div class="chead" style="height:47px"></div><div></div><div class="dock flat" style="height:51px"></div></section><aside class="srail"></aside><div class="scrim"></div><div class="sdlg"><nav class="snav"><h3>설정</h3><div class="sfind"><svg class="i "><use href="#search"/></svg>설정 찾기</div><div class="stbs mk" data-n="30"><span class="stb on">일반</span><span class="stb">휴대폰</span><span class="stb">에이전트</span><span class="stb">에이전트 계정</span><span class="stb">화면</span><span class="stb">터미널</span><span class="stb">정보</span></div><span class="spacer"></span><span class="snb"><svg class="i "><use href="#refresh"/></svg>모든 설정 초기화</span><span class="snb"><svg class="i "><use href="#power"/></svg>loom 끄기</span></nav><div class="sct"><div class="scth"><h4>일반</h4><span class="spacer"></span><span class="abtn sm ghost"><svg class="i "><use href="#refresh"/></svg>이 탭 초기화</span><span class="xbtn"><svg class="i "><use href="#x"/></svg></span></div><div class="scb"><div class="sec mk new" data-n="31" style="justify-self:start"><h5>언어</h5><span class="hseg"><span class="hi">시스템</span><span class="hi">English</span><span class="hi on">한국어</span></span></div><div class="sec"><h5>워크트리 폴더</h5><span class="pathf">/home/me/loom-work</span><span class="shint">새 워크트리를 &lt;이 폴더&gt;/&lt;작업공간 이름&gt;/ 안에 만듭니다.</span></div><div class="sec"><h5>시스템 알림</h5><span class="srow"><span class="sw on"></span><span>loom 창이 보이지 않을 때 알림을 시스템 알림으로 알림</span></span></div></div></div></div></div><div class="sbar"><span>Claude 5시간 34%</span><span>Codex 5시간 12%</span><span>Cursor 21%</span><span class="spacer"></span><span>에이전트 3 · 일하는 중 1</span><span>0.1.2301</span></div></div></div><div class="calls"><div><b>30</b><span>탭 차례와 이름은 지금과 같습니다. 휴대폰이 둘째입니다.</span></div><div><b>31</b><span>언어만 화면 탭의 맨 아래에서 일반 탭의 맨 위로 옮깁니다. 테마와 글자 크기는 화면 탭에 남습니다. 에이전트 탭의 고급과 화면 탭의 색은 D16-A처럼 접습니다.</span></div></div></div>
+<section class="decision" id="D16" data-for="22 23 24 25 28 30 31"><h3><span class="did">D16</span>설정의 탭 차례와 탭 안의 차례를 처음 온 사람에게 맞춰 바꿀까요?</h3><div class="opts"><div class="opt" data-recommended><span class="key">A</span><span class="label">탭 차례를 바꾸고, 일반 탭 맨 위에 언어·테마·글자 크기·시스템 알림을 두고, 고급 설정은 접는다<span class="mark">권장</span><span class="sub">지금: 일반을 열면 경로를 쓰는 칸이 먼저 보이고, 언어는 화면 탭의 색 표 아홉 줄 아래 → 뒤: 일반 맨 위에 언어, 탭은 일반·에이전트·계정·화면·터미널·모바일 연동·정보 · 비용: 탭 차례와 이름 둘, 접는 줄 둘, 폴더 고르기 창, 색 세 줄 지우기 · 위험: 중간. 쓰던 사람은 테마와 글자 크기를 일반에서 찾아야 하고, 화면 탭에는 색만 남습니다 · 되돌리기: 탭 차례와 설정 자리를 되돌립니다</span></span></div><div class="opt"><span class="key">B</span><span class="label">탭 차례는 그대로 두고, 언어만 일반으로 옮기고 고급 설정을 접는다<span class="sub">쓰던 사람이 아는 자리가 그대로 · 비용: 작음 · 위험: 휴대폰 탭이 둘째에 남고, 일반 탭은 경로를 쓰는 칸을 그대로 보입니다 · 되돌리기: 언어를 화면 탭으로 되돌립니다</span></span></div></div><ul class="why"><li>언어를 읽지 못하면 다른 설정을 찾을 수 없습니다. 지금은 화면 탭을 끝까지 내려야 언어가 보입니다.</li><li>내장 스킬, 역할, 하위 노드 상한은 에이전트 여럿이 함께 일할 때만 씁니다.</li><li>경로를 손으로 쓰는 칸은 처음 온 사람이 설정에서 처음 보는 것으로 맞지 않습니다.</li></ul></section>
+
+</main>
+<button type="button" class="theme-toggle" onclick="const h=document.documentElement;const dark=h.style.colorScheme==='dark';h.style.colorScheme=dark?'light':'dark';this.textContent=dark?'다크로 보기':'라이트로 보기';">다크로 보기</button>
+<script>
+(() => {
+  const GUT = 290;
+  const fit = fig => {
+    const room = fig.clientWidth - GUT;
+    for (const e of fig.querySelectorAll('.page, .shotwrap')) e.style.zoom = Math.min(0.8, room / (e.matches('.shotwrap') ? 1394 : 1360));
+    for (const e of fig.querySelectorAll('.xlwin')) { e.style.zoom = 1; e.style.zoom = Math.min(1, room / e.offsetWidth); }
+  };
+  const hit = (a, b) => a.l < b.r && b.l < a.r && a.t < b.b && b.t < a.b;
+  const inside = (a, b) => a.l >= b.l && a.r <= b.r && a.t >= b.t && a.b <= b.b;
+  const grow = (r, d) => ({ l: r.l - d, t: r.t - d, r: r.r + d, b: r.b + d });
+  const cross = (x1, y1, x2, y2, r) => {
+    let t0 = 0, t1 = 1; const dx = x2 - x1, dy = y2 - y1;
+    for (const [p, q] of [[-dx, x1 - r.l], [dx, r.r - x1], [-dy, y1 - r.t], [dy, r.b - y1]]) {
+      if (p === 0) { if (q < 0) return false; continue; }
+      const t = q / p; if (p < 0) { if (t > t1) return false; if (t > t0) t0 = t; } else { if (t < t0) return false; if (t < t1) t1 = t; }
+    }
+    return true;
+  };
+  const UI = ['img, svg, button, input, select, textarea', document.body.dataset.ui].filter(Boolean).join(', ');
+  const uiRects = (fig, rel) => {
+    const out = [];
+    for (const r of [...fig.children].filter(e => !e.matches('.co, .lead-svg, .calls'))) {
+      const w = document.createTreeWalker(r, NodeFilter.SHOW_TEXT);
+      for (let n; (n = w.nextNode());) {
+        if (!n.textContent.trim()) continue;
+        const g = document.createRange(); g.selectNodeContents(n);
+        for (const q of g.getClientRects()) if (q.width && q.height) out.push(Object.assign(rel(q), { txt: 1 }));
+      }
+      for (const e of r.querySelectorAll(UI)) out.push(rel(e.getBoundingClientRect()));
+    }
+    return out;
+  };
+  const refs = new Map();
+  const name = fig => [...fig.querySelector('h2')?.childNodes ?? []].filter(c => !c.classList?.contains('tag')).map(c => c.textContent).join('').trim();
+  for (const d of document.querySelectorAll('.decision[data-for]')) {
+    const groups = new Map();
+    for (const n of d.dataset.for.match(/\d+/g) ?? []) {
+      refs.set(n, [...(refs.get(n) ?? []), d.id]);
+      const fig = document.querySelector(`.mk[data-n="${n}"]`)?.closest('.fig'); if (!fig) continue;
+      groups.set(fig, [...(groups.get(fig) ?? []), n]);
+    }
+    const line = document.createElement('p'); line.className = 'for';
+    line.textContent = '대상: ' + [...groups].map(([fig, ns]) => `${name(fig)} · ${ns.join(', ')}번`).join(' / ');
+    d.querySelector(':scope > .for')?.remove(); d.querySelector(':scope > h3')?.after(line);
+  }
+  const layout = () => { for (const fig of document.querySelectorAll('.fig')) {
+    if (!fig.getClientRects().length) continue;
+    const src = fig.querySelector(':scope > .calls'); if (!src) { fit(fig); continue; }
+    fig.style.paddingBottom = ''; const base = parseFloat(getComputedStyle(fig).paddingBottom);
+    if (!place(fig, src)) continue;
+    const pad = x => { fig.style.paddingBottom = base + x + 'px'; return place(fig, src); };
+    let lo = 0, hi = 1200;
+    if (pad(hi)) continue;
+    while (hi - lo > 20) { const mid = Math.round((lo + hi) / 40) * 20; if (pad(mid)) lo = mid; else hi = mid; }
+    pad(hi);
+  } };
+  const place = (fig, src) => {
+    fig.querySelectorAll(':scope > .co, :scope > .lead-svg, :scope > .ov-box, :scope > .ov-badge').forEach(e => e.remove());
+    fit(fig);
+    const texts = new Map([...src.querySelectorAll(':scope > div')].map(d => [d.querySelector(':scope > b')?.textContent.trim(), d.querySelector(':scope > span')?.innerHTML]));
+    src.style.display = 'none';
+    const F = fig.getBoundingClientRect();
+    const rel = r => ({ l: r.left - F.left, t: r.top - F.top, r: r.right - F.left, b: r.bottom - F.top });
+    const marks = [...fig.querySelectorAll('.mk[data-n]')];
+    const clip = (g, e) => { if (!e || !fig.contains(e)) return g; const z = grow(rel(e.getBoundingClientRect()), -1); return { l: Math.max(g.l, z.l), t: Math.max(g.t, z.t), r: Math.min(g.r, z.r), b: Math.min(g.b, z.b) }; };
+    const outl = marks.map(m => { const r = rel(m.getBoundingClientRect()), frame = m.closest('.page, .xlwin, .shotwrap');
+      if (m.matches('td, th')) return clip(grow(r, -1), frame);
+      if (m.matches('.shotwrap .mk')) return r;
+      return clip(clip(grow(r, 5), m.parentElement.closest('td, th')), frame); });
+    const ui = uiRects(fig, rel);
+    const badges = [];
+    marks.forEach((m, i) => {
+      const o = outl[i], bx = document.createElement('div'); bx.className = 'ov-box' + (m.classList.contains('new') ? ' new' : ''); bx.dataset.n = m.dataset.n;
+      Object.assign(bx.style, { left: o.l + 'px', top: o.t + 'px', width: o.r - o.l + 'px', height: o.b - o.t + 'px' }); fig.appendChild(bx);
+      const spots = [[o.l, o.t], [o.r, o.t], [o.l, o.b], [o.r, o.b], [(o.l + o.r) / 2, o.t - 14], [(o.l + o.r) / 2, o.b + 14], [o.l - 14, o.t + 14], [o.r + 14, o.t + 14]].map(([x, y]) => ({ l: x - 14, t: y - 14, r: x + 14, b: y + 14 }));
+      const ocx = (o.l + o.r) / 2, ocy = (o.t + o.b) / 2, cont = u => !u.txt && u.l <= ocx && ocx <= u.r && u.t <= ocy && ocy <= u.b;
+      const area = (a, b) => Math.max(0, Math.min(a.r, b.r) - Math.max(a.l, b.l)) * Math.max(0, Math.min(a.b, b.b) - Math.max(a.t, b.t));
+      const cost = r => (r.l < 0 || r.t < 0 || r.r > F.width ? 1e9 : 0) + ui.reduce((s, u) => s + (cont(u) ? 0 : area(r, u)), 0) + badges.reduce((s, u) => s + 10 * area(grow(r, 2), u), 0)
+        + outl.reduce((s, u, j) => s + (j !== i && hit(r, u) && !(u.l <= r.l && r.r <= u.r && u.t <= r.t && r.b <= u.b) ? 50 : 0), 0);
+      const sp = spots.reduce((a, r) => (cost(r) < cost(a) ? r : a)); badges.push(sp);
+      const bd = document.createElement('div'); bd.className = 'ov-badge'; bd.dataset.n = bd.textContent = m.dataset.n;
+      Object.assign(bd.style, { left: sp.l + 'px', top: sp.t + 'px' }); fig.appendChild(bd);
+    });
+    const boxes = outl;
+    const frames = [...fig.querySelectorAll('.page, .xlwin, .shotwrap')];
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg'); svg.setAttribute('class', 'lead-svg');
+    svg.setAttribute('width', F.width); svg.setAttribute('height', F.height); fig.appendChild(svg);
+    const attempt = order => {
+    fig.querySelectorAll(':scope > .co').forEach(e => e.remove()); svg.replaceChildren();
+    const placed = [], segs = [], seen = new Set(), pad = 4; let fails = 0, longest = 0;
+    order.forEach(i => { const m = marks[i];
+      const n = +m.dataset.n; if (seen.has(n) || !texts.get(String(n))) return; seen.add(n);
+      const co = document.createElement('div'); co.className = 'co'; co.dataset.n = n; co.innerHTML = `<b>${n}</b>${(refs.get(String(n)) ?? []).map(k => `<i class="dref">${k}</i>`).join('')}<span>${texts.get(String(n))}</span>`;
+      Object.assign(co.style, { left: '0px', top: '0px', boxSizing: 'border-box' }); fig.appendChild(co);
+      const own = m.closest('.page, .xlwin, .shotwrap');
+      const other = frames.filter(e => e !== own).map(e => rel(e.getBoundingClientRect()));
+      const k = outl[i];
+      const cx = (k.l + k.r) / 2, cy = (k.t + k.b) / 2, holds = o => o.l <= cx && cx <= o.r && o.t <= cy && cy <= o.b;
+      const lineObs = ui.filter(o => !inside(o, k) && !holds(o)).concat(outl.filter((o, j) => j !== i && !holds(o)), badges.filter(b => !hit(b, grow(k, 1))), other);
+      const bubObs = ui.concat(boxes, badges);
+      const segFree = (x1, y1, x2, y2) => { const d = Math.hypot(x2 - x1, y2 - y1); if (d < 3) return true;
+        const ux = (x2 - x1) / d, uy = (y2 - y1) / d; return ![...lineObs, ...placed].some(o => cross(x1 + ux * 2, y1 + uy * 2, x2 - ux * 2, y2 - uy * 2, o)); };
+      const plen = p => p.reduce((s, q, z) => z ? s + Math.hypot(q[0] - p[z - 1][0], q[1] - p[z - 1][1]) : 0, 0);
+      const route = c => {
+        const x1 = Math.min(Math.max((c.l + c.r) / 2, k.l), k.r), y1 = Math.min(Math.max((c.t + c.b) / 2, k.t), k.b);
+        const st = [[x1, y1], [Math.min(Math.max(x1, c.l), c.r), Math.min(Math.max(y1, c.t), c.b)]];
+        if (segFree(...st[0], ...st[1])) return st;
+        let line = null;
+        for (const [a, b] of [[k.l, k.t, k.r, k.t], [k.l, k.b, k.r, k.b], [k.l, k.t, k.l, k.b], [k.r, k.t, k.r, k.b]].flatMap(([xa, ya, xb, yb]) => { const L = Math.hypot(xb - xa, yb - ya), m = Math.max(1, Math.round(L / 8)); return Array.from({ length: m + 1 }, (_, z) => [xa + (xb - xa) * z / m, ya + (yb - ya) * z / m]); })) {
+          const p = [[a, b], [Math.min(Math.max(a, c.l), c.r), Math.min(Math.max(b, c.t), c.b)]];
+          if ((!line || plen(p) < plen(line)) && segFree(...p[0], ...p[1])) line = p;
+        }
+        if (line) return line;
+        const yc = c.t + 16, side = c.l >= k.r ? c.l : c.r <= k.l ? c.r : null; if (side === null) return null;
+        if (yc >= k.t && yc <= k.b) return null;
+        const ye = yc < k.t ? k.t : k.b; let best = null;
+        for (let xv = k.l + 6; xv <= k.r - 6; xv += 10) {
+          const p = [[xv, ye], [xv, yc], [side, yc]];
+          if (segFree(...p[0], ...p[1]) && segFree(...p[1], ...p[2]) && (!best || plen(p) < plen(best))) best = p;
+        }
+        return best;
+      };
+      const free = c => c.l >= 0 && c.r <= F.width && c.t >= 40 && c.b <= F.height - 4 && ![...bubObs, ...placed].some(o => hit(grow(c, pad), o)) && !segs.some(q => cross(...q, grow(c, 2)));
+      const w0 = co.offsetWidth, sizes = [...new Set([w0, Math.round(w0 * 0.75), Math.round(w0 * 0.55)])].map(w => { co.style.width = w + 'px'; return [w, co.offsetHeight]; });
+      const cands = [];
+      for (const [w, h] of sizes) {
+        for (let d = 6; d <= 120; d += 6)
+          for (const [x, y] of [[k.r + d, k.t], [k.l, k.b + d], [k.l - w - d, k.t], [k.l, k.t - h - d], [k.r + d, k.b - h], [k.r - w, k.b + d], [k.r - w, k.t - h - d], [k.l - w - d, k.b - h]])
+            cands.push({ l: x, t: y, r: x + w, b: y + h });
+        for (let y = 40; y + h < F.height; y += 16) for (let x = 0; x + w < F.width; x += 16) cands.push({ l: x, t: y, r: x + w, b: y + h });
+      }
+      const gap = c => Math.hypot(Math.max(0, c.l - k.r, k.l - c.r), Math.max(0, c.t - k.b, k.t - c.b));
+      const pick = list => { let bp = null, bc = null; for (const c of list.map(c => [gap(c), c]).sort((a, b) => a[0] - b[0]).map(([, c]) => c)) { if (bp && gap(c) >= plen(bp)) break; if (!free(c)) continue; const p = route(c); if (p && (!bp || plen(p) < plen(bp))) { bp = p; bc = c; } } return bc && { c: bc, p: bp }; };
+      const best = pick(cands);
+      if (!best) { fails++; co.remove(); console.error(`callouts: no place for bubble ${n}`); return; }
+      const { c: bc, p: path } = best; longest = Math.max(longest, plen(path));
+      Object.assign(co.style, { left: bc.l + 'px', top: bc.t + 'px', width: bc.r - bc.l + 'px' }); placed.push(bc);
+      const ln = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      ln.setAttribute('points', path.map(q => q.join(',')).join(' ')); ln.dataset.n = n; svg.appendChild(ln);
+      const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      dot.setAttribute('cx', path[0][0]); dot.setAttribute('cy', path[0][1]); dot.setAttribute('r', 2.5); svg.appendChild(dot);
+      for (let z = 1; z < path.length; z++) segs.push([...path[z - 1], ...path[z]]);
+    });
+    return { fails, longest }; };
+    const idx = marks.map((_, i) => i);
+    const orders = [idx, [...idx].sort((a, b) => outl[b].r - outl[a].r), [...idx].sort((a, b) => outl[a].t - outl[b].t), [...idx].reverse()];
+    const cmp = (a, b) => a.fails - b.fails || a.longest - b.longest;
+    let bestO = null, bestR = null;
+    for (const o of orders) { const r = attempt(o); if (!bestR || cmp(r, bestR) < 0) { bestR = r; bestO = o; } }
+    if (bestO !== orders[orders.length - 1]) attempt(bestO);
+    return bestR.fails;
+  };
+  document.fonts?.addEventListener('loadingdone', () => dispatchEvent(new Event('resize')));
+  let tm; addEventListener('resize', () => { clearTimeout(tm); tm = setTimeout(layout, 120); });
+  if (document.readyState === 'complete') layout(); else addEventListener('load', layout);
+})();
+
+</script>
+</body>
+</html>

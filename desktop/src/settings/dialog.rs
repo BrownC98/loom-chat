@@ -1,3 +1,6 @@
+use std::cell::Cell;
+use std::rc::Rc;
+
 use api::settings::SettingsView;
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -361,6 +364,91 @@ fn heading(
         .children(beside)
 }
 
+fn section_element(
+    section: Section,
+    tag: Option<&'static str>,
+    query: &str,
+    c: &Colors,
+) -> impl IntoElement {
+    div()
+        .flex()
+        .flex_col()
+        .gap(px(8.0))
+        .when(section.card, |card| {
+            card.p(px(12.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(c.line)
+                .bg(c.surface)
+        })
+        .children(match section.head {
+            Some(head) => Some(heading(head, tag, section.beside, query, c).into_any_element()),
+            None if !section.beside.is_empty() => Some(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .children(section.beside)
+                    .into_any_element(),
+            ),
+            None => None,
+        })
+        .children(section.body)
+}
+
+#[derive(Default)]
+pub(super) struct Disclosure(Rc<Cell<bool>>);
+
+impl Disclosure {
+    pub fn sections(
+        &self,
+        id: &'static str,
+        label: &str,
+        ctx: &Ctx,
+        cx: &mut App,
+        body: impl FnOnce(&mut App) -> Vec<Section>,
+    ) -> Vec<Section> {
+        if !ctx.query.is_empty() {
+            let mut sections = body(cx);
+            if search::found(label, ctx.query) {
+                for section in &mut sections {
+                    section.text(label, cx);
+                }
+            }
+            return sections;
+        }
+
+        let c = colors(cx);
+        let open = self.0.get();
+        let state = self.0.clone();
+        let dialog = ctx.dialog.clone();
+        let glyph = if open {
+            Lucide::ChevronDown
+        } else {
+            Lucide::ChevronRight
+        };
+        let toggle = ghost(id, cx)
+            .font_weight(FontWeight::SEMIBOLD)
+            .child(icon(glyph, px(14.0), c.ink_2))
+            .child(label.to_owned())
+            .on_click(move |_, _, cx| {
+                state.set(!state.get());
+                let _ = dialog.update(cx, |_, cx| cx.notify());
+            });
+        let mut group = Section::new(None, ctx).child(toggle);
+        if open {
+            group = group.child(
+                div().pl(px(12.0)).flex().flex_col().gap(px(16.0)).children(
+                    body(cx)
+                        .into_iter()
+                        .map(|section| section_element(section, None, "", &c)),
+                ),
+            );
+        }
+        vec![group]
+    }
+}
+
 impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let c = colors(cx);
@@ -397,44 +485,10 @@ impl Render for Dialog {
                 .collect()
         };
         let empty = searching && shown.is_empty();
-        let lang_tag = |tab: Tab| say(cx, tab.label());
         let sections: Vec<_> = shown
             .into_iter()
             .map(|(tab, section)| {
-                let carded = section.card;
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.0))
-                    .when(carded, |card| {
-                        card.p(px(12.0))
-                            .rounded(px(8.0))
-                            .border_1()
-                            .border_color(c.line)
-                            .bg(c.surface)
-                    })
-                    .children(match section.head {
-                        Some(head) => Some(
-                            heading(
-                                head,
-                                searching.then(|| lang_tag(tab)),
-                                section.beside,
-                                &query,
-                                &c,
-                            )
-                            .into_any_element(),
-                        ),
-                        None if !section.beside.is_empty() => Some(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .children(section.beside)
-                                .into_any_element(),
-                        ),
-                        None => None,
-                    })
-                    .children(section.body)
+                section_element(section, searching.then(|| say(cx, tab.label())), &query, &c)
             })
             .collect();
 

@@ -9,11 +9,12 @@ use gpui::{
 
 use crate::fonts::TERMINAL_FAMILY;
 use crate::scale::px;
+use crate::settings::dialog::Disclosure;
 use crate::settings::widgets::{
     Number, NumberEvent, PITCH, Text, TextEvent, field_reset, list_box_on, switch,
 };
 use crate::settings::{Ctx, Section};
-use crate::strings::Str;
+use crate::strings::{Lang, Str};
 use crate::theme::{Scheme, Terminal, Theme, chosen_terminal_name, terminal_themes};
 use crate::views::dock::ui::{GAP, SMALL, TEXT, colors, say, say_with};
 use crate::views::scrollbar::Bar;
@@ -47,6 +48,7 @@ impl Default for Picker {
 pub struct State {
     size: Option<Entity<Number>>,
     family: Option<Entity<Text>>,
+    advanced: Disclosure,
     dark: Picker,
     light: Picker,
     _subs: Vec<Subscription>,
@@ -331,10 +333,6 @@ pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App)
     let font = &ctx.view.terminal_font;
     let current = font.size.map(i64::from).unwrap_or(DEFAULT_SIZE);
     size.update(cx, |number, cx| number.show(Some(current), window, cx));
-    family.update(cx, |text, cx| {
-        text.show(font.family.as_deref().unwrap_or_default(), window, cx);
-    });
-    let cx: &App = cx;
     let c = colors(cx);
     let saved = &ctx.view.terminal_theme;
 
@@ -342,16 +340,6 @@ pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App)
         Section::new(Some(say(cx, Str::TerminalFontSize)), ctx).child(size),
         "terminal-size-reset",
         &["terminalFont", "size"],
-        ctx,
-        cx,
-    );
-
-    let mut family_section = Section::new(Some(say(cx, Str::TerminalFontFamily)), ctx);
-    let family_hint = hint(&mut family_section, Str::TerminalFontFamilyHint, cx);
-    let family_section = with_reset(
-        family_section.child(family).child(family_hint),
-        "terminal-family-reset",
-        &["terminalFont", "family"],
         ctx,
         cx,
     );
@@ -419,5 +407,28 @@ pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App)
         cx,
     );
 
-    vec![size_section, family_section, dark, light]
+    let mut sections = vec![size_section, dark, light];
+    let label = match cx.global::<Lang>() {
+        Lang::Ko => "고급",
+        Lang::En => "Advanced",
+    };
+    sections.extend(
+        state
+            .advanced
+            .sections("terminal-advanced", label, ctx, cx, |cx| {
+                family.update(cx, |text, cx| {
+                    text.show(font.family.as_deref().unwrap_or_default(), window, cx);
+                });
+                let mut section = Section::new(Some(say(cx, Str::TerminalFontFamily)), ctx);
+                let family_hint = hint(&mut section, Str::TerminalFontFamilyHint, cx);
+                vec![with_reset(
+                    section.child(family).child(family_hint),
+                    "terminal-family-reset",
+                    &["terminalFont", "family"],
+                    ctx,
+                    cx,
+                )]
+            }),
+    );
+    sections
 }

@@ -12,7 +12,7 @@ use gpui::{
 
 use crate::scale::px;
 use crate::store::Store;
-use crate::strings::Lang;
+use crate::strings::{Lang, Str};
 use crate::views::chat::rooms::Rooms;
 use crate::views::chat::words;
 use crate::views::field::{self, Field, FieldEvent};
@@ -20,7 +20,7 @@ use crate::views::icons::{Lucide, icon};
 use crate::views::new_node::{agent_place, usable};
 use crate::views::prose::prose;
 use crate::views::shell::OpenSettings;
-use crate::views::ui::{SMALL, TEXT, colors, open_url};
+use crate::views::ui::{SMALL, TEXT, colors, open_url, say};
 use crate::views::widgets::btn;
 use crate::views::workspace::pop;
 
@@ -32,7 +32,7 @@ const POPULAR: [(&str, &str); 3] = [
     ("codex", "OpenAI"),
     ("cursor", "Anysphere"),
 ];
-const WIDTH: f32 = 560.0;
+const WIDTH: f32 = 540.0;
 const MENU_WIDTH: f32 = 244.0;
 
 #[derive(IntoElement)]
@@ -50,8 +50,8 @@ impl Slot {
 impl RenderOnce for Slot {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Self { store, rooms } = self;
-        window.use_keyed_state("chat-welcome-composer", cx, |window, cx| {
-            Welcome::new(store, rooms, window, cx)
+        window.use_keyed_state("chat-welcome-composer", cx, |_, cx| {
+            Welcome::new(store, rooms, cx)
         })
     }
 }
@@ -64,16 +64,12 @@ pub(super) struct Welcome {
     folder: Option<RepoView>,
     menu: Option<Point<Pixels>>,
     busy: bool,
+    focus_on_tools: bool,
     error: Option<String>,
 }
 
 impl Welcome {
-    fn new(
-        store: Entity<Store>,
-        rooms: WeakEntity<Rooms>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(store: Entity<Store>, rooms: WeakEntity<Rooms>, cx: &mut Context<Self>) -> Self {
         let field = field::boxed("", false, true, cx);
         cx.subscribe(&field, |this, _, event: &FieldEvent, cx| match event {
             FieldEvent::Enter => this.send(cx),
@@ -88,7 +84,6 @@ impl Welcome {
             FieldEvent::Step(_) => {}
         })
         .detach();
-        window.focus(&field.read(cx).handle(), cx);
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
         store.update(cx, |store, cx| store.detect_agents(cx));
         Self {
@@ -99,13 +94,20 @@ impl Welcome {
             folder: None,
             menu: None,
             busy: false,
+            focus_on_tools: true,
             error: None,
         }
     }
 
-    pub(super) fn set_folder(&mut self, repo: RepoView, cx: &mut Context<Self>) {
+    pub(super) fn set_folder(
+        &mut self,
+        repo: RepoView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.folder = Some(repo);
         self.error = None;
+        window.focus(&self.field.read(cx).handle(), cx);
         cx.notify();
     }
 
@@ -151,8 +153,8 @@ impl Welcome {
     }
 
     fn send(&mut self, cx: &mut Context<Self>) {
-        let brief = self.field.read(cx).text().trim().to_owned();
-        if self.busy || brief.is_empty() {
+        let brief = self.field.read(cx).text().to_owned();
+        if self.busy || brief.trim().is_empty() {
             return;
         }
         let installed = self.installed(cx);
@@ -165,6 +167,7 @@ impl Welcome {
         self.field
             .update(cx, |field, cx| field.set_locked(true, cx));
         let place = self.place(cx);
+        let store = self.store.clone();
         cx.notify();
         cx.spawn(async move |this, cx| {
             let created = match place.await {
@@ -177,16 +180,20 @@ impl Welcome {
                         },
                         place,
                     };
-                    let Ok(task) = this.update(cx, |this, cx| {
-                        this.store
-                            .update(cx, |store, cx| store.create_node(body, cx))
-                    }) else {
-                        return;
-                    };
+                    let task =
+                        cx.update(|cx| store.update(cx, |store, cx| store.create_node(body, cx)));
                     task.await
                 }
                 Err(error) => Err(error),
             };
+            if let Ok(node) = created.as_ref() {
+                cx.update(|cx| {
+                    store.update(cx, |store, cx| {
+                        store.reload(cx);
+                        store.open_agent(*node, cx);
+                    });
+                });
+            }
             let _ = this.update(cx, |this, cx| this.finish(created, cx));
         })
         .detach();
@@ -197,12 +204,8 @@ impl Welcome {
         self.field
             .update(cx, |field, cx| field.set_locked(false, cx));
         match created {
-            Ok(node) => {
+            Ok(_) => {
                 self.field.update(cx, |field, cx| field.clear(cx));
-                self.store.update(cx, |store, cx| {
-                    store.reload(cx);
-                    store.open_agent(node, cx);
-                });
             }
             Err(error) => self.error = Some(error),
         }
@@ -219,11 +222,22 @@ impl Welcome {
         let target = match (active, lang) {
             (Some(agent), Lang::Ko) => format!("{}에게", agent.label),
             (Some(agent), Lang::En) => format!("To {}", agent.label),
-            (None, _) => words(cx, "AI 도구를 찾습니다…", "Finding AI tools…").to_owned(),
+            (None, _) if self.store.read(cx).detecting() => {
+                words(cx, "AI 도구를 찾습니다…", "Finding AI tools…").to_owned()
+            }
+            (None, _) => words(
+                cx,
+                "이 위치에서 쓸 도구 없음",
+                "No AI tools for this location",
+            )
+            .to_owned(),
         };
-        let pill = btn::ghost("chat-welcome-agent", cx)
+        let pill = btn::button("chat-welcome-agent", cx)
             .flex_none()
             .h(px(30.0))
+            .px(px(8.0))
+            .rounded(px(8.0))
+            .font_weight(FontWeight::SEMIBOLD)
             .aria_label(words(cx, "AI 도구 고르기", "Choose an AI tool"))
             .child(target)
             .child(icon(Lucide::ChevronDown, px(12.0), c.ink_2));
@@ -278,11 +292,15 @@ impl Welcome {
             .aria_keyshortcuts("Enter")
             .flex_none()
             .h(px(30.0))
+            .w(px(30.0))
+            .p_0()
+            .rounded(px(8.0))
+            .justify_center()
             .child(icon(Lucide::ArrowUp, px(15.0), c.accent_ink))
             .when(ready, |button| {
                 button.on_click(cx.listener(|this, _, _, cx| this.send(cx)))
             })
-            .when(!ready, |button| btn::inert(button).opacity(0.55));
+            .when(!ready, |button| btn::inert(button).opacity(0.4));
         let bypass = active.filter(|agent| {
             agent.can_bypass
                 && !self
@@ -332,7 +350,7 @@ impl Welcome {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(px(28.0))
             .child(heading(
                 words(
                     cx,
@@ -350,22 +368,18 @@ impl Welcome {
                 div()
                     .flex()
                     .items_end()
-                    .gap(px(8.0))
+                    .gap(px(6.0))
                     .p(px(8.0))
-                    .rounded(px(10.0))
+                    .rounded(px(14.0))
                     .border_1()
                     .border_color(c.accent)
-                    .bg(c.surface)
+                    .bg(c.panel)
                     .child(pill)
                     .child(input)
                     .child(send),
             )
             .children(bypass.map(|_| {
-                div().text_size(px(SMALL)).child(prose(words(
-                    cx,
-                    "모든 권한 허용으로 시작합니다. ‘설정 › 에이전트’에서 끌 수 있습니다.",
-                    "The agent starts with all permissions allowed. Turn this off in Settings › Agents.",
-                )))
+                div().text_size(px(SMALL)).child(prose(say(cx, Str::NewNodeBypass)))
             }))
             .when(self.busy, |column| {
                 column.child(
@@ -446,40 +460,41 @@ impl Welcome {
             })
             .collect();
         let others = agents.len() - popular.len();
-        let rows = popular.into_iter().map(|(agent, vendor)| {
-            let url = agent.homepage.clone();
-            div()
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .px(px(12.0))
-                .py(px(8.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(c.line)
-                .bg(c.surface)
-                .child(
-                    div()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(c.ink)
-                        .child(agent.label.clone()),
-                )
-                .child(div().text_size(px(SMALL)).child(vendor))
-                .child(div().flex_1())
-                .child(
-                    btn::button(
-                        ElementId::Name(format!("chat-install-{}", agent.id.0).into()),
-                        cx,
+        let rows = popular
+            .into_iter()
+            .enumerate()
+            .map(|(index, (agent, vendor))| {
+                let url = agent.homepage.clone();
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .px(px(12.0))
+                    .min_h(px(42.0))
+                    .when(index > 0, |row| row.border_t_1())
+                    .border_color(c.line)
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(c.ink)
+                            .child(agent.label.clone()),
                     )
-                    .text_size(px(SMALL))
-                    .child(words(cx, "설치 안내 열기", "Open install guide"))
-                    .child(icon(Lucide::ExternalLink, px(12.0), c.ink_2))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.error = open_url(&url).err();
-                        cx.notify();
-                    })),
-                )
-        });
+                    .child(div().text_size(px(SMALL)).child(vendor))
+                    .child(div().flex_1())
+                    .child(
+                        btn::button(
+                            ElementId::Name(format!("chat-install-{}", agent.id.0).into()),
+                            cx,
+                        )
+                        .text_size(px(SMALL))
+                        .child(words(cx, "설치 안내 열기", "Open install guide"))
+                        .child(icon(Lucide::ExternalLink, px(12.0), c.ink_2))
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.error = open_url(&url).err();
+                            cx.notify();
+                        })),
+                    )
+            });
         let lang = *cx.global::<Lang>();
         let more = match lang {
             Lang::Ko => format!("다른 도구 {others}개 보기"),
@@ -488,7 +503,7 @@ impl Welcome {
         div()
             .flex()
             .flex_col()
-            .gap(px(12.0))
+            .gap(px(28.0))
             .child(heading(
                 words(
                     cx,
@@ -502,7 +517,16 @@ impl Welcome {
                 ),
                 cx,
             ))
-            .child(div().flex().flex_col().gap(px(6.0)).children(rows))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(c.line_strong)
+                    .bg(c.surface)
+                    .children(rows),
+            )
             .children(self.error_line(cx))
             .child(
                 div()
@@ -567,6 +591,7 @@ impl Welcome {
             btn::inert(button).opacity(0.6)
         } else {
             button.on_click(cx.listener(|this, _, _, cx| {
+                this.focus_on_tools = true;
                 this.store.update(cx, |store, cx| store.detect_agents(cx));
             }))
         }
@@ -585,11 +610,15 @@ impl Welcome {
 
 impl Render for Welcome {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.focus_on_tools && !self.installed(cx).is_empty() {
+            self.focus_on_tools = false;
+            window.focus(&self.field.read(cx).handle(), cx);
+        }
         let c = colors(cx);
         let store = self.store.read(cx);
         let body = match store.detected() {
             Some(Err(error)) => self.failed(error, cx),
-            Some(Ok(agents)) if self.installed(cx).is_empty() => self.missing(agents, cx),
+            Some(Ok(agents)) if store.no_tools() => self.missing(agents, cx),
             _ => self.composer(cx),
         };
         let menu = self.menu.map(|at| self.menu(at, window, cx));
@@ -600,6 +629,7 @@ impl Render for Welcome {
             .items_center()
             .justify_center()
             .p(px(24.0))
+            .pb(px(64.0))
             .text_size(px(TEXT))
             .text_color(c.ink_2)
             .child(

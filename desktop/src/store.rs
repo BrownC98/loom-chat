@@ -415,6 +415,13 @@ impl Store {
         self.detected.as_ref()
     }
 
+    pub fn no_tools(&self) -> bool {
+        matches!(
+            self.detected(),
+            Some(Ok(agents)) if !agents.iter().any(|agent| agent.places.iter().any(|at| at.path.is_some()))
+        )
+    }
+
     pub fn detecting(&self) -> bool {
         self.detecting
     }

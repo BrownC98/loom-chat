@@ -129,7 +129,7 @@ impl Rooms {
                 this.close_overlay(window, cx);
                 if let AddRepoEvent::Added(repo) = event {
                     let repo = repo.clone();
-                    let _ = welcome.update(cx, |welcome, cx| welcome.set_folder(repo, cx));
+                    let _ = welcome.update(cx, |welcome, cx| welcome.set_folder(repo, window, cx));
                 }
             },
         );

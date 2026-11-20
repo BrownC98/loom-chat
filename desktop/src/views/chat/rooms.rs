@@ -753,6 +753,19 @@ impl Rooms {
                         )
                     })
                     .when(first, |body| {
+                        let hint = if data.graph().read(cx).no_tools() {
+                            words(
+                                cx,
+                                "AI 도구를 설치하면 여기에서 방을 만듭니다.",
+                                "Install an AI tool to create rooms here.",
+                            )
+                        } else {
+                            words(
+                                cx,
+                                "첫 글을 보내면 방이 여기에 보입니다.",
+                                "Send your first message to see its room here.",
+                            )
+                        };
                         body.child(
                             div()
                                 .mx(px(16.0))
@@ -760,11 +773,7 @@ impl Rooms {
                                 .flex_none()
                                 .text_size(px(SMALL))
                                 .text_color(c.ink_2)
-                                .child(prose(words(
-                                    cx,
-                                    "첫 글을 보내면 방이 여기에 보입니다.",
-                                    "Send your first message to see its room here.",
-                                ))),
+                                .child(prose(hint)),
                         )
                     })
                     .when(!first && !loading && pinned.is_some() && empty, |body| {

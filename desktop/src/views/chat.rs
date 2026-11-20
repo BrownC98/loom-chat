@@ -34,11 +34,9 @@ use rooms::{Rooms, RoomsEvent};
 use side::{SideEvent, SideSlot, SideTab};
 use stream::{Quote, Stream, StreamEvent};
 
-const ROOMS_WIDTH: f32 = 270.0;
+const ROOMS_WIDTH: f32 = 280.0;
 const SIDE_WIDTH: f32 = 334.0;
-const RAIL_WIDTH: f32 = 60.0;
-const MIN_ROOM_WIDTH: f32 = 350.0;
-const SIDE_OVERLAY_WIDTH: f32 = 1050.0;
+const OVERLAY_WIDTH: f32 = 1050.0;
 
 fn words<'a>(cx: &App, ko: &'a str, en: &'a str) -> &'a str {
     match cx.global::<Lang>() {
@@ -120,11 +118,16 @@ fn first_run(data: &ChatData, cx: &App) -> bool {
         .is_some_and(|snapshot| snapshot.nodes.is_empty())
 }
 
-fn show_welcome(data: &ChatData, cx: &App) -> bool {
-    first_run(data, cx)
-        && data.room().is_none_or(|room| {
-            matches!(room.kind, ChatRoomKind::Pinned) && room.last_activity.is_none()
-        })
+fn narrow(window: &Window) -> bool {
+    window.viewport_size().width < px(OVERLAY_WIDTH)
+}
+
+#[derive(Default)]
+enum Sidebar {
+    #[default]
+    Default,
+    Hidden,
+    Overlay,
 }
 
 struct StatusOverlay {
@@ -143,7 +146,10 @@ pub(super) struct Chat {
     side: Entity<SideSlot>,
     status: Option<StatusOverlay>,
     focus_room: Option<String>,
-    side_toggle_focus: FocusHandle,
+    sidebar: Sidebar,
+    sidebar_focus: FocusHandle,
+    members_focus: FocusHandle,
+    terminal_focus: FocusHandle,
 }
 
 impl Chat {
@@ -155,8 +161,12 @@ impl Chat {
         let side = cx.new(|cx| SideSlot::new(data.clone(), cx));
         cx.observe(&data, |_, _, cx| cx.notify()).detach();
         cx.observe(&graph, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&rooms, |this, _, event, cx| match event {
-            RoomsEvent::Select(room) => this.open_room(room, cx),
+        cx.observe(&rooms, |_, _, cx| cx.notify()).detach();
+        cx.subscribe_in(&rooms, window, |this, _, event, window, cx| match event {
+            RoomsEvent::Select(room) => {
+                this.close_sidebar_overlay(window, cx);
+                this.open_room(room, cx);
+            }
             RoomsEvent::ScratchChanged => cx.notify(),
         })
         .detach();
@@ -188,7 +198,7 @@ impl Chat {
         .detach();
         cx.subscribe_in(&side, window, |this, _, event, window, cx| match event {
             SideEvent::OpenRoom(room) => {
-                if window.viewport_size().width < px(SIDE_OVERLAY_WIDTH) {
+                if narrow(window) {
                     this.dismiss_side(window, cx);
                 }
                 this.open_room(room, cx);
@@ -206,7 +216,10 @@ impl Chat {
             side,
             status: None,
             focus_room: None,
-            side_toggle_focus: cx.focus_handle().tab_stop(true),
+            sidebar: Sidebar::Default,
+            sidebar_focus: cx.focus_handle().tab_stop(true),
+            members_focus: cx.focus_handle().tab_stop(true),
+            terminal_focus: cx.focus_handle().tab_stop(true),
         }
     }
 
@@ -264,7 +277,7 @@ impl Chat {
     }
 
     pub(super) fn open_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.status.is_none() && !show_welcome(self.data.read(cx), cx) {
+        if self.status.is_none() && !first_run(self.data.read(cx), cx) {
             self.composer
                 .update(cx, |composer, cx| composer.open_picker(window, cx));
         }
@@ -276,7 +289,7 @@ impl Chat {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.status.is_none() && !show_welcome(self.data.read(cx), cx) {
+        if self.status.is_none() && !first_run(self.data.read(cx), cx) {
             self.composer
                 .update(cx, |composer, cx| composer.alert_key(event, window, cx));
         }
@@ -289,18 +302,54 @@ impl Chat {
         cx.notify();
     }
 
-    fn toggle_side(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.side.read(cx).tab().is_some() {
+    pub(super) fn sidebar_visible(&self, window: &Window) -> bool {
+        match self.sidebar {
+            Sidebar::Default => !narrow(window),
+            Sidebar::Hidden => false,
+            Sidebar::Overlay => true,
+        }
+    }
+
+    pub(super) fn sidebar_focus(&self) -> &FocusHandle {
+        &self.sidebar_focus
+    }
+
+    pub(super) fn toggle_sidebar(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar = match (narrow(window), self.sidebar_visible(window)) {
+            (true, false) => {
+                self.side.update(cx, |side, cx| side.hide(cx));
+                Sidebar::Overlay
+            }
+            (false, true) => Sidebar::Hidden,
+            _ => Sidebar::Default,
+        };
+        window.focus(&self.sidebar_focus, cx);
+        cx.notify();
+    }
+
+    fn close_sidebar_overlay(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !matches!(self.sidebar, Sidebar::Overlay) {
+            return false;
+        }
+        self.sidebar = Sidebar::Default;
+        window.focus(&self.sidebar_focus, cx);
+        cx.notify();
+        true
+    }
+
+    fn toggle_side(&mut self, tab: SideTab, window: &mut Window, cx: &mut Context<Self>) {
+        if self.side.read(cx).tab() == Some(tab) {
             self.dismiss_side(window, cx);
         } else {
-            self.set_side(SideTab::Members, window, cx);
+            self.set_side(tab, window, cx);
         }
     }
 
     fn set_side(&mut self, tab: SideTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_sidebar_overlay(window, cx);
         self.side.update(cx, |side, cx| {
             side.show(tab, cx);
-            if window.viewport_size().width < px(SIDE_OVERLAY_WIDTH) {
+            if narrow(window) {
                 side.focus_tab(window, cx);
             }
         });
@@ -321,7 +370,12 @@ impl Chat {
         }
         match key {
             "k" => {
-                self.close_narrow_side(window, cx);
+                if first_run(self.data.read(cx), cx) {
+                    return true;
+                }
+                if !self.sidebar_visible(window) {
+                    self.toggle_sidebar(window, cx);
+                }
                 self.rooms
                     .update(cx, |rooms, cx| rooms.focus_search(window, cx));
             }
@@ -330,33 +384,47 @@ impl Chat {
                 self.rooms
                     .update(cx, |rooms, cx| rooms.new_agent(at, window, cx));
             }
-            "b" if self.data.read(cx).room().is_some() => self.toggle_side(window, cx),
+            "b" if self.data.read(cx).room().is_some() && !first_run(self.data.read(cx), cx) => {
+                if self.side.read(cx).tab().is_some() {
+                    self.dismiss_side(window, cx);
+                } else {
+                    self.set_side(SideTab::Members, window, cx);
+                }
+            }
             "b" => {}
             _ => return false,
         }
         true
     }
 
-    pub(super) fn close_narrow_side(
+    pub(super) fn close_narrow_panel(
         &mut self,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if window.viewport_size().width >= px(SIDE_OVERLAY_WIDTH)
-            || self.side.read(cx).tab().is_none()
+        if !narrow(window)
             || self.status.is_some()
             || self.rooms.read(cx).blocks_shortcuts(cx)
             || compose::busy(window, cx)
         {
             return false;
         }
-        self.dismiss_side(window, cx);
-        true
+        if self.side.read(cx).tab().is_some() {
+            self.dismiss_side(window, cx);
+            true
+        } else {
+            self.close_sidebar_overlay(window, cx)
+        }
     }
 
     fn dismiss_side(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = if self.side.read(cx).tab() == Some(SideTab::Terminal) {
+            &self.terminal_focus
+        } else {
+            &self.members_focus
+        };
         self.side.update(cx, |side, cx| side.hide(cx));
-        window.focus(&self.side_toggle_focus, cx);
+        window.focus(focus, cx);
     }
 
     fn header(&self, room: &ChatRoom, cx: &mut Context<Self>) -> Div {
@@ -410,6 +478,17 @@ impl Chat {
                     }),
                 )
         });
+        let working = data.recipients().map_or(0, |catalog| {
+            catalog
+                .agents
+                .iter()
+                .filter(|agent| {
+                    matches!(agent.status, Status::Working { .. })
+                        && room.members.contains(&agent.node)
+                })
+                .count()
+        });
+        let members = room.members.len();
         let facts = match room.kind {
             ChatRoomKind::Pinned => {
                 let workspaces = self
@@ -417,20 +496,12 @@ impl Chat {
                     .read(cx)
                     .snapshot()
                     .map_or(0, |snapshot| snapshot.repos.len());
-                let working = data.recipients().map_or(0, |catalog| {
-                    catalog
-                        .agents
-                        .iter()
-                        .filter(|agent| matches!(agent.status, Status::Working { .. }))
-                        .count()
-                });
-                let agents = room.members.len();
                 match lang {
                     Lang::Ko => {
-                        format!("작업공간 {workspaces} · 에이전트 {agents} · 일하는 중 {working}")
+                        format!("작업공간 {workspaces} · 에이전트 {members} · 일하는 중 {working}")
                     }
                     Lang::En => {
-                        format!("Workspaces: {workspaces} · Agents: {agents} · Working: {working}")
+                        format!("Workspaces: {workspaces} · Agents: {members} · Working: {working}")
                     }
                 }
             }
@@ -443,35 +514,58 @@ impl Chat {
                         .map_or_else(String::new, |agent| agent.0.clone())
                 }
             }
-            _ => {
-                let working = data.recipients().map_or(0, |r| {
-                    r.agents
-                        .iter()
-                        .filter(|a| {
-                            matches!(a.status, Status::Working { .. })
-                                && room.members.contains(&a.node)
-                        })
-                        .count()
-                });
-                let members = room.members.len();
-                match lang {
-                    Lang::Ko => format!("구성원 {members} · 일하는 중 {working}"),
-                    Lang::En => format!("Members: {members} · Working: {working}"),
-                }
-            }
+            _ => match lang {
+                Lang::Ko => format!("구성원 {members} · 일하는 중 {working}"),
+                Lang::En => format!("Members: {members} · Working: {working}"),
+            },
         };
         let actions = self
             .rooms
-            .update(cx, |rooms, cx| rooms.room_actions(room, cx));
-        let side_open = self.side.read(cx).tab().is_some();
+            .update(cx, |rooms, cx| rooms.room_actions(room, cx))
+            .map(|button| button.size(px(28.0)));
+        let room_icon = match room.kind {
+            ChatRoomKind::Pinned => Lucide::Mail,
+            ChatRoomKind::Work { .. } if repo.is_none_or(|repo| repo.git) => Lucide::GitBranch,
+            ChatRoomKind::Work { .. } => Lucide::Folder,
+            _ => Lucide::MessageCircle,
+        };
+        let selected = self.side.read(cx).tab();
+        let side_buttons = [SideTab::Members, SideTab::Terminal].map(|tab| {
+            let active = selected == Some(tab);
+            let label = tab.label(cx);
+            let focus = if tab == SideTab::Members {
+                &self.members_focus
+            } else {
+                &self.terminal_focus
+            };
+            btn::ghost(("chat-side-toggle", tab as usize), cx)
+                .track_focus(focus)
+                .aria_label(label)
+                .aria_expanded(active)
+                .tooltip(tip(label.to_owned()))
+                .h(px(28.0))
+                .min_w(px(30.0))
+                .px(px(7.0))
+                .gap(px(4.0))
+                .justify_center()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_size(px(SMALL))
+                .when(active, |button| button.bg(colors.accent_wash))
+                .child(icon(tab.icon(), px(16.0), colors.ink_2))
+                .when(tab == SideTab::Members, |button| {
+                    button.child(members.to_string())
+                })
+                .on_click(cx.listener(move |this, _, window, cx| this.toggle_side(tab, window, cx)))
+        });
         div()
             .flex_none()
             .flex()
-            .flex_wrap()
+            .flex_nowrap()
             .items_center()
             .gap(px(8.0))
             .px(px(16.0))
-            .py(px(10.0))
+            .py(px(9.0))
+            .bg(colors.panel)
             .border_b_1()
             .border_color(colors.line)
             .child(
@@ -479,42 +573,52 @@ impl Chat {
                     .flex_1()
                     .min_w_0()
                     .flex()
-                    .flex_col()
-                    .gap(px(2.0))
+                    .items_center()
+                    .gap(px(8.0))
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(icon(room_icon, px(16.0), colors.ink_2))
                     .child(
                         div()
-                            .text_size(px(17.0))
+                            .min_w_0()
+                            .text_size(px(TEXT))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
                             .child(title),
                     )
+                    .children(state)
+                    .when(!facts.is_empty(), |row| {
+                        row.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(4.0))
+                                .min_w_0()
+                                .text_size(px(SMALL))
+                                .text_color(colors.ink_2)
+                                .when(agent.is_none() && working > 0, |facts| {
+                                    facts.child(
+                                        div()
+                                            .size(px(7.0))
+                                            .rounded_full()
+                                            .flex_none()
+                                            .bg(colors.run),
+                                    )
+                                })
+                                .child(div().truncate().child(facts)),
+                        )
+                    })
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .gap(px(6.0))
+                            .min_w_0()
+                            .truncate()
                             .text_size(px(SMALL))
                             .text_color(colors.ink_2)
-                            .children(state)
-                            .when(!facts.is_empty(), |row| {
-                                row.child(div().truncate().child(facts))
-                            })
-                            .children(workspace.map(|label| div().truncate().child(label))),
+                            .children(workspace),
                     ),
             )
             .children(actions)
-            .child(
-                btn::button("chat-side-toggle", cx)
-                    .track_focus(&self.side_toggle_focus)
-                    .aria_expanded(side_open)
-                    .child(icon(Lucide::PanelRightOpen, px(14.0), colors.ink_2))
-                    .child(if side_open {
-                        words(cx, "정보 패널 닫기", "Close side panel")
-                    } else {
-                        words(cx, "정보 패널", "Side panel")
-                    })
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_side(window, cx))),
-            )
+            .child(div().flex().flex_none().gap(px(2.0)).children(side_buttons))
     }
 
     fn stopped(&self, room: &ChatRoom, cx: &Context<Self>) -> Option<Div> {
@@ -597,7 +701,7 @@ impl Chat {
         let data = self.data.read(cx);
         let screen = div().flex().flex_col().flex_1().min_w_0().min_h_0();
         let room = data.room().cloned();
-        let first = show_welcome(data, cx);
+        let first = first_run(data, cx);
         let connection = match self.graph.read(cx).connection() {
             LinkState::Connected => None,
             LinkState::Reconnecting => Some(words(
@@ -639,9 +743,8 @@ impl Chat {
                 )
         });
         if first {
-            let header = room.as_ref().map(|room| self.header(room, cx));
             let welcome = self.rooms.update(cx, |rooms, cx| rooms.welcome(cx));
-            return screen.children(header).children(fault).child(welcome);
+            return screen.children(fault).child(welcome);
         }
         let Some(room) = room else {
             return screen.children(fault).child(
@@ -721,47 +824,24 @@ impl Chat {
             .child(self.stream.clone())
             .child(self.composer.clone())
     }
-
-    fn closed_rail(&self, cx: &Context<Self>) -> Div {
-        let colors = ui::colors(cx);
-        div()
-            .flex_none()
-            .w(px(RAIL_WIDTH))
-            .h_full()
-            .flex()
-            .flex_col()
-            .gap(px(4.0))
-            .p(px(4.0))
-            .bg(colors.panel)
-            .border_l_1()
-            .border_color(colors.line)
-            .children(SideTab::ALL.into_iter().enumerate().map(|(i, tab)| {
-                let label = tab.label(cx);
-                btn::ghost(("chat-side-rail", i), cx)
-                    .aria_label(label)
-                    .flex_col()
-                    .justify_center()
-                    .gap(px(2.0))
-                    .px(px(0.0))
-                    .py(px(6.0))
-                    .text_size(px(11.0))
-                    .child(icon(tab.icon(), px(15.0), colors.ink_2))
-                    .child(label)
-                    .on_click(
-                        cx.listener(move |this, _, window, cx| this.set_side(tab, window, cx)),
-                    )
-            }))
-    }
 }
 
 impl Render for Chat {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let narrow = narrow(window);
+        if !narrow && matches!(self.sidebar, Sidebar::Overlay) {
+            self.sidebar = Sidebar::Default;
+        }
+        let first = first_run(self.data.read(cx), cx);
+        if first && self.side.read(cx).tab().is_some() {
+            self.side.update(cx, |side, cx| side.hide(cx));
+        }
         if let Some(wanted) = &self.focus_room {
             let data = self.data.read(cx);
             if data.selected() != Some(wanted.as_str()) {
                 self.focus_room = None;
-            } else if let Some(room) = data.room() {
-                let focus = !room.archived && !show_welcome(data, cx);
+            } else if !first && let Some(room) = data.room() {
+                let focus = !room.archived;
                 if focus && compose::busy(window, cx) {
                     compose::retry(window, cx);
                 } else {
@@ -774,35 +854,32 @@ impl Render for Chat {
             }
         }
         let colors = ui::colors(cx);
-        let width = window.viewport_size().width;
-        let side_width = px(SIDE_WIDTH).min(width * 0.34);
-        let has_room = self.data.read(cx).room().is_some();
         let side_open = self.side.read(cx).tab().is_some();
-        let narrow = width < px(SIDE_OVERLAY_WIDTH);
-        let reserve = if side_open && !narrow {
-            side_width
+        let sidebar_open = self.sidebar_visible(window);
+        let sidebar = sidebar_open.then(|| {
+            div()
+                .flex_none()
+                .w(px(ROOMS_WIDTH))
+                .h_full()
+                .border_r_1()
+                .border_color(colors.line)
+                .when(narrow, |sidebar| {
+                    sidebar.absolute().left_0().top_0().shadow_lg().occlude()
+                })
+                .child(self.rooms.update(cx, |rooms, cx| rooms.sidebar(cx)))
+        });
+        let (docked, overlay) = if narrow {
+            (None, sidebar)
         } else {
-            px(RAIL_WIDTH)
+            (sidebar, None)
         };
-        let room_width = px(ROOMS_WIDTH)
-            .min(width * 0.29)
-            .min((width - reserve - px(MIN_ROOM_WIDTH)).max(width * 0.21));
         div()
             .relative()
             .size_full()
             .flex()
-            .child(
-                div()
-                    .flex_none()
-                    .w(room_width)
-                    .h_full()
-                    .border_r_1()
-                    .border_color(colors.line)
-                    .bg(colors.panel)
-                    .child(self.rooms.clone()),
-            )
+            .children(docked)
             .child(self.conversation(cx))
-            .when(narrow && side_open, |view| {
+            .when(narrow && (side_open || sidebar_open), |view| {
                 view.child(
                     div()
                         .absolute()
@@ -812,31 +889,34 @@ impl Render for Chat {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|this, _, window, cx| {
-                                this.dismiss_side(window, cx);
+                                if !this.close_sidebar_overlay(window, cx) {
+                                    this.dismiss_side(window, cx);
+                                }
                                 cx.stop_propagation();
                             }),
                         ),
                 )
             })
+            .children(overlay)
             .when(side_open, |view| {
                 view.child(
-                    div().flex_none().w(reserve).h_full().child(
-                        div()
-                            .w(side_width)
-                            .h_full()
-                            .border_l_1()
-                            .border_color(colors.line)
-                            .bg(colors.panel)
-                            .when(narrow, |slot| {
-                                slot.absolute().top_0().right_0().shadow_lg().occlude()
-                            })
-                            .child(self.side.clone()),
-                    ),
+                    div()
+                        .flex_none()
+                        .w(px(SIDE_WIDTH))
+                        .h_full()
+                        .border_l_1()
+                        .border_color(colors.line)
+                        .bg(colors.panel)
+                        .when(narrow, |slot| {
+                            slot.absolute().top_0().right_0().shadow_lg().occlude()
+                        })
+                        .child(self.side.clone()),
                 )
             })
-            .when(!side_open && has_room, |view| {
-                view.child(self.closed_rail(cx))
-            })
+            .child(
+                self.rooms
+                    .update(cx, |rooms, cx| rooms.overlays(window, cx)),
+            )
             .children(self.status.as_ref().map(|overlay| {
                 pop::overlay(
                     overlay.at,

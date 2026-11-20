@@ -10,7 +10,7 @@ use api::ids::RepoId;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     App, AppContext, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, FontWeight,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Rgba, Role, Stateful,
+    InteractiveElement, KeyDownEvent, ParentElement, Rgba, Role, Stateful,
     StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, div, uniform_list,
 };
 
@@ -29,7 +29,7 @@ use controls::Overlay;
 use create::CreateRoom;
 use list::{Filter, Index, Row};
 
-const ROW_HEIGHT: f32 = 48.0;
+const ROW_HEIGHT: f32 = 42.0;
 const SMALL: f32 = 12.0;
 const ROW_ACTIONS: &str = "chat-room-actions";
 
@@ -78,8 +78,7 @@ impl Rooms {
         cx.subscribe(&create, |this, _, created: &create::Created, cx| {
             this.restore(cx);
             this.workspace = None;
-            this.data
-                .update(cx, |data, cx| data.select(created.0.clone(), cx));
+            cx.emit(RoomsEvent::Select(created.0.clone()));
         })
         .detach();
         Self {
@@ -248,16 +247,16 @@ impl Rooms {
             .child(icon(glyph, px(14.0), ink))
             .child(name(room_title(room, |_| None, cx)))
             .children(room.last_activity.map(|time| stamp(time, cx)));
-        let details = room.last_preview.clone().or_else(|| {
-            pinned.then(|| {
-                let workspaces = say(cx, Str::GraphScopeAll);
-                let agents = room.members.len();
-                match cx.global::<Lang>() {
-                    Lang::Ko => format!("{workspaces} · 에이전트 {agents}"),
-                    Lang::En => format!("{workspaces} · Agents: {agents}"),
-                }
+        let details = if pinned {
+            let workspaces = say(cx, Str::GraphScopeAll);
+            let agents = room.members.len();
+            Some(match cx.global::<Lang>() {
+                Lang::Ko => format!("{workspaces} · 에이전트 {agents}"),
+                Lang::En => format!("{workspaces} · Agents: {agents}"),
             })
-        });
+        } else {
+            room.last_preview.clone()
+        };
         let mut sub = subtitle(cx)
             .pl(px(18.0))
             .children(details.map(|text| div().flex_1().min_w_0().truncate().child(text)));
@@ -375,9 +374,14 @@ impl Rooms {
         };
         let label = index.work_title(room, cx);
         let members = room.members.len();
-        let detail = match cx.global::<Lang>() {
-            Lang::Ko => format!("구성원 {members}명"),
-            Lang::En => format!("Members: {members}"),
+        let detail = match (repo, &room.last_preview) {
+            (Some(repo), Some(preview)) if repo.git => format!("{} · {preview}", repo.name),
+            (_, Some(preview)) => preview.clone(),
+            (Some(repo), None) if repo.git => repo.name.clone(),
+            _ => match cx.global::<Lang>() {
+                Lang::Ko => format!("구성원 {members}명"),
+                Lang::En => format!("Members: {members}"),
+            },
         };
         let head = div()
             .flex()
@@ -386,14 +390,10 @@ impl Rooms {
             .child(dot(state))
             .child(icon(glyph, px(13.0), c.ink_2))
             .child(name(&label))
+            .child(badge(members.to_string(), c.surface, c.ink_2))
             .children(room.last_activity.map(|time| stamp(time, cx)));
         let info = subtitle(cx)
-            .child(
-                div()
-                    .min_w_0()
-                    .truncate()
-                    .child(room.last_preview.clone().unwrap_or(detail)),
-            )
+            .child(div().min_w_0().truncate().child(detail))
             .when(!urgent && problem, |row| {
                 row.child(badge(
                     words(cx, "문제", "Problem").to_owned(),
@@ -605,10 +605,7 @@ impl Rooms {
         .track_scroll(self.bar.handle());
         self.bar.on_overflow(list).flex_1().min_h_0()
     }
-}
-
-impl Render for Rooms {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    pub(super) fn sidebar(&mut self, cx: &mut Context<Self>) -> Div {
         let c = colors(cx);
         let data = self.data.clone();
         let data = data.read(cx);
@@ -617,6 +614,7 @@ impl Render for Rooms {
         if connected && self.workspace.is_some_and(|id| index.repo(id).is_none()) {
             self.workspace = None;
         }
+        let first = first_run(data, cx);
         let pinned = index
             .rooms
             .iter()
@@ -630,7 +628,7 @@ impl Render for Rooms {
         }
         let loading = data.loading();
         let selection = data.room().map(|room| room.id.clone());
-        let pin_row = pinned.map(|room| {
+        let pin_row = pinned.filter(|_| !first).map(|room| {
             self.room_row(
                 room,
                 selection.as_deref() == Some(room.id.as_str()),
@@ -639,10 +637,6 @@ impl Render for Rooms {
                 cx,
             )
         });
-        let controls = self.controls(&index, cx);
-        let list = self.room_list(rows, selection, cx);
-        let overlay = self.overlay(&index, window, cx);
-        let first = first_run(data, cx);
         div()
             .relative()
             .flex()
@@ -663,7 +657,7 @@ impl Render for Rooms {
                     .justify_between()
                     .pl(px(16.0))
                     .pr(px(12.0))
-                    .pt(px(8.0))
+                    .pt(px(10.0))
                     .pb(px(6.0))
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(words(cx, "방 목록", "Rooms"))
@@ -705,7 +699,9 @@ impl Render for Rooms {
                 )
             })
             .children(pin_row.map(|row| div().mx(px(8.0)).mt(px(8.0)).flex_none().child(row)))
-            .when(!first && pinned.is_some(), |root| root.child(controls))
+            .when(!first && pinned.is_some(), |root| {
+                root.child(self.controls(&index, cx))
+            })
             .child(
                 div()
                     .flex()
@@ -716,7 +712,7 @@ impl Render for Rooms {
                     .children(
                         self.action_error
                             .as_ref()
-                            .filter(|_| overlay.is_none())
+                            .filter(|_| self.overlay.is_none())
                             .map(|error| {
                                 div()
                                     .mx(px(8.0))
@@ -732,18 +728,18 @@ impl Render for Rooms {
                                 .flex_none(),
                         )
                     })
-                    .when(first && empty, |body| {
+                    .when(first, |body| {
                         body.child(
                             div()
-                                .mx(px(12.0))
-                                .my(px(8.0))
+                                .mx(px(16.0))
+                                .my(px(14.0))
                                 .flex_none()
                                 .text_size(px(SMALL))
                                 .text_color(c.ink_2)
                                 .child(prose(words(
                                     cx,
-                                    "에이전트를 띄우면 방이 여기에 보입니다.",
-                                    "Start an agent to see its room here.",
+                                    "첫 글을 보내면 방이 여기에 보입니다.",
+                                    "Send your first message to see its room here.",
                                 ))),
                         )
                     })
@@ -763,11 +759,18 @@ impl Render for Rooms {
                         };
                         body.child(note(label, cx).mx(px(8.0)).flex_none())
                     })
-                    .child(list),
+                    .when(!first, |body| {
+                        body.child(self.room_list(rows, selection, cx))
+                    }),
             )
-            .children(
-                overlay.map(|panel| div().absolute().top_0().left_0().size_full().child(panel)),
-            )
+    }
+
+    pub(super) fn overlays(&self, window: &Window, cx: &Context<Self>) -> Div {
+        let index = Index::new(self.data.read(cx), cx);
+        div()
+            .absolute()
+            .inset_0()
+            .children(self.overlay(&index, window, cx))
             .child(self.create.clone())
     }
 }

@@ -18,7 +18,7 @@ use api::settings::places::DistroView;
 use serde::Serialize;
 use ureq::http::{Method, Request};
 
-use crate::problem::Failure;
+use crate::problem::{Failure, Transport};
 
 const HTTP: &str = "http://";
 const RECONNECT: Duration = Duration::from_secs(1);
@@ -38,7 +38,7 @@ pub enum Event {
     Output(Vec<u8>),
     Gone,
     Removed,
-    Closed(String),
+    Closed,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -59,7 +59,7 @@ enum Cmd {
     Out(usize, Out),
     Close(usize),
     Pace(Pace),
-    Opened(usize, u64, Box<Result<WebSocket<TcpStream>, String>>),
+    Opened(usize, u64, Box<Option<WebSocket<TcpStream>>>),
 }
 
 struct Hub {
@@ -127,10 +127,10 @@ impl Drop for Pty {
     }
 }
 
-fn host(base: &str) -> Result<&str, String> {
+fn host(base: &str) -> Result<&str, Transport> {
     base.strip_prefix(HTTP)
         .map(|rest| rest.trim_end_matches('/'))
-        .ok_or_else(|| format!("not a loopback http url: {base}"))
+        .ok_or(Transport::Request)
 }
 
 fn origin(host: &str) -> String {
@@ -198,7 +198,13 @@ pub fn query(pairs: &[(&str, Option<&str>)]) -> String {
 fn answer(
     sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<ureq::http::Response<ureq::Body>, Failure> {
-    let mut response = sent.map_err(|e| Failure::Other(e.to_string()))?;
+    let mut response = sent.map_err(|error| {
+        Failure::Transport(match error {
+            ureq::Error::Timeout(_) => Transport::Timeout,
+            ureq::Error::Http(_) | ureq::Error::BadUri(_) => Transport::Request,
+            _ => Transport::Connection,
+        })
+    })?;
     let status = response.status();
     if status.is_success() {
         return Ok(response);
@@ -215,7 +221,7 @@ pub fn put_settings(base: &str, patch: &serde_json::Value) -> Result<(), Failure
 }
 
 pub fn put<T: Serialize>(base: &str, path: &str, body: &T) -> Result<(), Failure> {
-    let text = serde_json::to_string(body).map_err(|e| Failure::Other(e.to_string()))?;
+    let text = serde_json::to_string(body).map_err(|_| Failure::Transport(Transport::Request))?;
     answer(
         agent()
             .put(format!("{base}{path}"))
@@ -259,19 +265,19 @@ fn send_json_within<T: serde::de::DeserializeOwned>(
     limit: Duration,
 ) -> Result<T, Failure> {
     let mut request = Request::builder()
-        .method(method.clone())
+        .method(method)
         .uri(format!("{base}{path}"));
     if body.is_some() {
         request = request.header("content-type", "application/json");
     }
     let request = request
         .body(body.as_deref().unwrap_or_default().as_bytes())
-        .map_err(|e| Failure::Other(e.to_string()))?;
+        .map_err(|_| Failure::Transport(Transport::Request))?;
     let response = answer(agent_within(limit).run(request))?
         .body_mut()
         .read_to_string()
-        .map_err(|e| Failure::Other(e.to_string()))?;
-    serde_json::from_str(&response).map_err(|e| Failure::Other(format!("{method} {path}: {e}")))
+        .map_err(|_| Failure::Transport(Transport::Response))?;
+    serde_json::from_str(&response).map_err(|_| Failure::Transport(Transport::Response))
 }
 
 pub fn distro(base: &str, name: &str) -> Result<DistroView, Failure> {
@@ -299,8 +305,8 @@ pub fn save_paste(
     )?
     .body_mut()
     .read_to_string()
-    .map_err(|e| Failure::Other(e.to_string()))?;
-    serde_json::from_str(&response).map_err(|e| Failure::Other(format!("paste: {e}")))
+    .map_err(|_| Failure::Transport(Transport::Response))?;
+    serde_json::from_str(&response).map_err(|_| Failure::Transport(Transport::Response))
 }
 
 pub fn shutdown(base: &str) -> Result<(), Failure> {
@@ -338,7 +344,7 @@ fn get_with(agent: ureq::Agent, base: &str, path: &str) -> Result<String, Failur
     answer(agent.get(format!("{base}{path}")).call())?
         .body_mut()
         .read_to_string()
-        .map_err(|e| Failure::Other(e.to_string()))
+        .map_err(|_| Failure::Transport(Transport::Response))
 }
 
 pub fn image(base: &str, path: &str) -> Result<(String, Vec<u8>), Failure> {
@@ -356,7 +362,7 @@ pub fn image(base: &str, path: &str) -> Result<(String, Vec<u8>), Failure> {
         .with_config()
         .limit(IMAGE_LIMIT)
         .read_to_vec()
-        .map_err(|e| Failure::Other(e.to_string()))?;
+        .map_err(|_| Failure::Transport(Transport::Response))?;
     Ok((mime, bytes))
 }
 
@@ -376,7 +382,7 @@ pub fn issued() -> u64 {
 }
 
 pub fn read<T: serde::de::DeserializeOwned>(base: &str, path: &str) -> Result<T, Failure> {
-    serde_json::from_str(&get(base, path)?).map_err(|e| Failure::Other(format!("GET {path}: {e}")))
+    serde_json::from_str(&get(base, path)?).map_err(|_| Failure::Transport(Transport::Response))
 }
 
 pub fn read_within<T: serde::de::DeserializeOwned>(
@@ -385,7 +391,7 @@ pub fn read_within<T: serde::de::DeserializeOwned>(
     limit: Duration,
 ) -> Result<T, Failure> {
     serde_json::from_str(&get_with(agent_within(limit), base, path)?)
-        .map_err(|e| Failure::Other(format!("GET {path}: {e}")))
+        .map_err(|_| Failure::Transport(Transport::Response))
 }
 
 fn frame(request: &impl Serialize) -> Message {
@@ -488,7 +494,7 @@ impl Drop for Watch {
     }
 }
 
-pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, String> {
+pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, Transport> {
     let host = host(base)?.to_owned();
     let (reload, wanted) = mpsc::channel::<Read>();
     let base = base.to_owned();
@@ -549,7 +555,7 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
                 }
             }
         })
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| Transport::Connection)?;
     let key = add(Conn::new(
         host,
         Target::Events {
@@ -560,7 +566,7 @@ pub fn watch(base: &str, graph: async_channel::Sender<Graph>) -> Result<Watch, S
     Ok(Watch { key, reload })
 }
 
-pub fn attach(base: &str, id: u32, events: async_channel::Sender<Event>) -> Result<Pty, String> {
+pub fn attach(base: &str, id: u32, events: async_channel::Sender<Event>) -> Result<Pty, Transport> {
     attach_route(base, format!("/api/nodes/{id}/pty"), events)
 }
 
@@ -568,7 +574,7 @@ pub fn attach_login(
     base: &str,
     id: u32,
     events: async_channel::Sender<Event>,
-) -> Result<Pty, String> {
+) -> Result<Pty, Transport> {
     attach_route(base, format!("/api/logins/{id}/pty"), events)
 }
 
@@ -576,7 +582,7 @@ fn attach_route(
     base: &str,
     route: String,
     events: async_channel::Sender<Event>,
-) -> Result<Pty, String> {
+) -> Result<Pty, Transport> {
     let host = host(base)?.to_owned();
     let key = add(Conn::new(
         host,
@@ -596,32 +602,22 @@ fn add(conn: Conn) -> usize {
     key
 }
 
-fn socket(host: &str, path: &str) -> Result<WebSocket<TcpStream>, String> {
-    let address = host
-        .to_socket_addrs()
-        .map_err(|e| e.to_string())?
-        .next()
-        .ok_or_else(|| format!("no address for {host}"))?;
-    let stream = TcpStream::connect_timeout(&address, CONNECT_LIMIT).map_err(|e| e.to_string())?;
-    stream
-        .set_read_timeout(Some(CONNECT_LIMIT))
-        .map_err(|e| e.to_string())?;
-    stream
-        .set_write_timeout(Some(CONNECT_LIMIT))
-        .map_err(|e| e.to_string())?;
-    let mut request = format!("ws://{host}{path}")
-        .into_client_request()
-        .map_err(|e| e.to_string())?;
+fn socket(host: &str, path: &str) -> Option<WebSocket<TcpStream>> {
+    let address = host.to_socket_addrs().ok()?.next()?;
+    let stream = TcpStream::connect_timeout(&address, CONNECT_LIMIT).ok()?;
+    stream.set_read_timeout(Some(CONNECT_LIMIT)).ok()?;
+    stream.set_write_timeout(Some(CONNECT_LIMIT)).ok()?;
+    let mut request = format!("ws://{host}{path}").into_client_request().ok()?;
     request.headers_mut().insert(
         tungstenite::http::header::ORIGIN,
-        tungstenite::http::HeaderValue::try_from(origin(host)).map_err(|e| e.to_string())?,
+        tungstenite::http::HeaderValue::try_from(origin(host)).ok()?,
     );
-    let (socket, _) = tungstenite::client(request, stream).map_err(|e| e.to_string())?;
+    let (socket, _) = tungstenite::client(request, stream).ok()?;
     let stream = socket.get_ref();
-    stream.set_read_timeout(None).map_err(|e| e.to_string())?;
-    stream.set_write_timeout(None).map_err(|e| e.to_string())?;
-    stream.set_nonblocking(true).map_err(|e| e.to_string())?;
-    Ok(socket)
+    stream.set_read_timeout(None).ok()?;
+    stream.set_write_timeout(None).ok()?;
+    stream.set_nonblocking(true).ok()?;
+    Some(socket)
 }
 
 enum Target {
@@ -927,12 +923,7 @@ impl Worker {
         });
     }
 
-    fn opened(
-        &mut self,
-        key: usize,
-        generation: u64,
-        result: Result<WebSocket<TcpStream>, String>,
-    ) {
+    fn opened(&mut self, key: usize, generation: u64, result: Option<WebSocket<TcpStream>>) {
         let Some(conn) = self.conns.get_mut(&key) else {
             return;
         };
@@ -942,8 +933,8 @@ impl Worker {
         conn.connecting = false;
         let now = Instant::now();
         let mut socket = match result {
-            Ok(socket) => socket,
-            Err(error) => {
+            Some(socket) => socket,
+            None => {
                 conn.retry = now + RECONNECT;
                 let since = *conn.down_since.get_or_insert(now);
                 let state = if now - since >= LOST_AFTER {
@@ -954,7 +945,7 @@ impl Worker {
                 let first = conn.state != state && state == LinkState::Lost && !conn.opened_once;
                 let mut alive = conn.report(state);
                 if first {
-                    alive &= conn.emit(Event::Closed(error)).is_none();
+                    alive &= conn.emit(Event::Closed).is_none();
                 }
                 if !alive {
                     self.forget(key);

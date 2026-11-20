@@ -168,12 +168,6 @@ impl Site {
             .or_else(|| Some(self.home()?.join(cli.home)))
     }
 
-    pub fn apply(&self, cmd: &mut CommandBuilder, cli: &Cli, id: Option<&AccountId>) {
-        if let Some((key, value)) = self.env(cli, id) {
-            cmd.env(key, value);
-        }
-    }
-
     pub fn env(&self, cli: &Cli, id: Option<&AccountId>) -> Option<(&'static str, OsString)> {
         if let Some(dir) = self.accounts.config_dir(cli, id) {
             (cli.ready)(&dir, self);
@@ -220,15 +214,39 @@ impl Site {
 
     pub fn login(&self, cli: &Cli, id: Option<&AccountId>) -> Result<CommandBuilder, LaunchError> {
         let program = self.program(cli)?;
+        self.login_command(program, cli.command, cli.login, self.env(cli, id))
+    }
+
+    pub fn login_installed(
+        &self,
+        label: &str,
+        command: &str,
+    ) -> Result<CommandBuilder, LaunchError> {
+        let program = self.named_program(label, command)?;
+        self.login_command(program, command, &["login"], None)
+    }
+
+    fn login_command(
+        &self,
+        program: OsString,
+        command: &str,
+        args: &[&str],
+        env: Option<(&str, OsString)>,
+    ) -> Result<CommandBuilder, LaunchError> {
         let mut cmd = match &self.wsl {
             Some(_) => CommandBuilder::new(&program),
             None => CommandBuilder::from_argv(process_tree::argv(Path::new(&program))),
         };
-        cmd.args(cli.login);
+        cmd.args(args);
         process_tree::color_terminal(&mut cmd);
-        self.apply(&mut cmd, cli, id);
+        if let Some((key, value)) = env {
+            cmd.env(key, value);
+        }
         match &self.wsl {
-            Some(inside) => inside.wrap(&cmd).map_err(|cause| helper(cli, cause)),
+            Some(inside) => inside.wrap(&cmd).map_err(|cause| LaunchError::Helper {
+                program: command.into(),
+                cause,
+            }),
             None => Ok(cmd),
         }
     }
@@ -238,12 +256,15 @@ impl Site {
     }
 
     fn program(&self, cli: &Cli) -> Result<OsString, LaunchError> {
-        self.find(cli.command)
-            .ok_or_else(|| LaunchError::NotInstalled {
-                agent: cli.label.into(),
-                command: cli.command.into(),
-                distro: self.distro().map(str::to_owned),
-            })
+        self.named_program(cli.label, cli.command)
+    }
+
+    fn named_program(&self, label: &str, command: &str) -> Result<OsString, LaunchError> {
+        self.find(command).ok_or_else(|| LaunchError::NotInstalled {
+            agent: label.into(),
+            command: command.into(),
+            distro: self.distro().map(str::to_owned),
+        })
     }
 
     fn find(&self, command: &str) -> Option<OsString> {

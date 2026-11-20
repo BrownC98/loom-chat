@@ -5,32 +5,31 @@ use std::sync::Arc;
 use api::graph::GraphEvent;
 use api::graph::events::{Entry, SwitchCause};
 use api::ids::{AccountId, RepoId};
-use api::profile::Provider;
+use api::profile::{AgentView, Profile, Provider};
 use api::repos::PlaceView;
 use api::settings::accounts::{AccountView, PlaceUsage};
 use api::settings::usage::Limits;
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, AppContext, Bounds, Context, Div, Entity, FocusHandle, FontFeatures,
-    InteractiveElement, IntoElement, ParentElement, Pixels, Render, SharedString,
+    InteractiveElement, IntoElement, ParentElement, Pixels, Render, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, canvas, div,
 };
 
 use crate::fonts;
-use crate::link::{self, VERSION};
+use crate::link::{self, LinkState, VERSION};
 use crate::scale::px;
-use crate::settings::{keep_focus, modal, settings_patch};
+use crate::settings::{keep_focus, login, modal, settings_patch, want_about};
 use crate::store::Store;
 use crate::strings::{Lang, Str};
 use crate::theme::{Colors, Theme};
-use crate::views::dock::ui::say;
+use crate::views::dock::ui::{say, say_with};
 use crate::views::icons::{Lucide, agent_mark, icon};
 use crate::views::tooltip::tip;
 use crate::views::usage::{
     self, ACCOUNTS, AccountsChanged, PROVIDERS, REFRESH, Switching, account_name, active_index,
 };
 
-const CURSOR: &str = "/api/usage/cursor";
 const NAME_W: f32 = 220.0;
 const METER_W: f32 = 36.0;
 const MARK: f32 = 14.0;
@@ -42,11 +41,14 @@ pub struct Usage {
     pub(super) repo: Option<RepoId>,
     accounts: Option<Vec<AccountView>>,
     cursor: Option<Vec<PlaceUsage>>,
+    agents: Option<Vec<AgentView>>,
+    error: Option<String>,
     loading: bool,
     ticket: u64,
     open: bool,
     expanded: Option<Provider>,
     switching: Option<Switching>,
+    login: Option<Entity<login::Dialog>>,
     focus: FocusHandle,
     dialog_focus: FocusHandle,
     restore: Option<FocusHandle>,
@@ -62,16 +64,25 @@ impl Usage {
             this.feed(event, cx)
         })
         .detach();
+        cx.subscribe(&store, |this, _, state: &LinkState, cx| {
+            if *state == LinkState::Connected && (this.accounts.is_none() || this.error.is_some()) {
+                this.refresh(cx);
+            }
+        })
+        .detach();
         let usage = Self {
             store,
             repo: None,
             accounts: None,
             cursor: None,
+            agents: None,
+            error: None,
             loading: false,
             ticket: 0,
             open: false,
             expanded: None,
             switching: None,
+            login: None,
             focus: cx.focus_handle(),
             dialog_focus: cx.focus_handle(),
             restore: None,
@@ -100,28 +111,64 @@ impl Usage {
         self.ticket += 1;
         let ticket = self.ticket;
         self.loading = true;
+        self.error = None;
+        let accounts_base = base.clone();
+        let cursor_base = base.clone();
+        let accounts = cx.background_spawn(async move { link::read(&accounts_base, ACCOUNTS) });
+        let cursor =
+            cx.background_spawn(async move { link::read(&cursor_base, login::CURSOR_USAGE) });
+        let agents = cx.background_spawn(async move { link::read(&base, "/api/agents") });
         cx.notify();
         cx.spawn(async move |this, cx| {
-            let read = cx
-                .background_spawn(async move {
-                    let accounts = link::read::<Vec<AccountView>>(&base, ACCOUNTS)?;
-                    let cursor = link::read::<Vec<PlaceUsage>>(&base, CURSOR).unwrap_or_default();
-                    Ok::<_, crate::problem::Failure>((accounts, cursor))
-                })
-                .await;
+            let (accounts, cursor, agents) = (accounts.await, cursor.await, agents.await);
             let _ = this.update(cx, |this, cx| {
                 if this.ticket != ticket {
                     return;
                 }
-                this.loading = false;
-                if let Ok((accounts, cursor)) = read {
-                    this.accounts = Some(accounts);
-                    this.cursor = Some(cursor);
+                let mut errors = Vec::new();
+                let lang = *cx.global::<Lang>();
+                match accounts {
+                    Ok(accounts) => this.accounts = Some(accounts),
+                    Err(error) => errors.push(error.text(lang)),
                 }
+                match cursor {
+                    Ok(cursor) => this.cursor = Some(cursor),
+                    Err(error) => errors.push(error.text(lang)),
+                }
+                match agents {
+                    Ok(agents) => this.agents = Some(agents),
+                    Err(error) => errors.push(error.text(lang)),
+                }
+                this.loading = false;
+                errors.sort_unstable();
+                errors.dedup();
+                this.error = (!errors.is_empty()).then(|| errors.join("\n"));
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    fn no_agents(&self) -> bool {
+        self.agents.as_ref().is_some_and(|agents| {
+            agents
+                .iter()
+                .all(|agent| agent.places.iter().all(|at| at.path.is_none()))
+        })
+    }
+
+    fn installed(&self, profile: Profile, distro: Option<&str>) -> bool {
+        self.agents.iter().flatten().any(|agent| {
+            agent.profile == profile
+                && agent.places.iter().any(|at| {
+                    at.path.is_some()
+                        && match &at.place {
+                            PlaceView::Pc => distro.is_none(),
+                            PlaceView::Wsl { distro: name } => distro == Some(name.as_str()),
+                            PlaceView::Ssh { .. } => false,
+                        }
+                })
+        })
     }
 
     fn feed(&mut self, event: &GraphEvent, cx: &mut Context<Self>) {
@@ -139,10 +186,35 @@ impl Usage {
             self.close(window, cx);
             return;
         }
-        self.refresh(cx);
+        if !self.loading {
+            self.refresh(cx);
+        }
         self.restore = window.focused(cx);
         window.focus(&self.focus, cx);
         self.open = true;
+        cx.notify();
+    }
+
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        if self.base(cx).is_none() {
+            self.store.update(cx, |store, cx| store.reload(cx));
+        } else if !self.loading {
+            self.refresh(cx);
+        }
+    }
+
+    fn open_login(&mut self, request: login::Request, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(base) = self.base(cx) else {
+            return;
+        };
+        self.close(window, cx);
+        let dialog = login::Dialog::open(base, request, window, cx);
+        cx.subscribe(&dialog, |this, _, _: &login::Finished, cx| {
+            this.login = None;
+            cx.notify();
+        })
+        .detach();
+        self.login = Some(dialog);
         cx.notify();
     }
 
@@ -310,6 +382,13 @@ fn text(label: impl Into<SharedString>) -> Div {
     div().flex_none().whitespace_nowrap().child(label.into())
 }
 
+fn install_label(cx: &App) -> &'static str {
+    match cx.global::<Lang>() {
+        Lang::Ko => "에이전트 설치",
+        Lang::En => "Install an agent",
+    }
+}
+
 fn name_cell(name: String) -> Div {
     div().flex_none().max_w(px(NAME_W)).truncate().child(name)
 }
@@ -382,6 +461,10 @@ impl Render for Usage {
         let signed = PROVIDERS.into_iter().filter_map(|provider| {
             let account = self.active(provider, place, cx)?;
             Some((
+                match provider {
+                    Provider::Claude => Profile::Claude,
+                    Provider::Codex => Profile::Codex,
+                },
                 provider_mark(provider, &c),
                 account_name(account, cx),
                 &account.usage.limits,
@@ -394,6 +477,7 @@ impl Render for Usage {
             .find(|entry| entry.distro.as_deref() == place)
             .map(|entry| {
                 (
+                    Profile::Cursor,
                     cursor_mark(&c),
                     entry
                         .usage
@@ -405,9 +489,9 @@ impl Render for Usage {
             });
         let mut summary: Vec<AnyElement> = Vec::new();
         let mut needs_login = false;
-        for (mark, name, limits) in signed.chain(cursor) {
-            if matches!(limits, Limits::NeedsLogin) || usage::cli_missing(limits) {
-                needs_login = true;
+        for (profile, mark, name, limits) in signed.chain(cursor) {
+            if login::needed(limits) || usage::cli_missing(limits) {
+                needs_login |= login::needed(limits) && self.installed(profile, place);
                 continue;
             }
             if !summary.is_empty() {
@@ -420,16 +504,30 @@ impl Render for Usage {
                     .map(IntoElement::into_any_element),
             );
         }
-        if needs_login || summary.is_empty() {
+        let label = if self.no_agents() {
+            Some(install_label(cx))
+        } else if needs_login {
+            Some(say(cx, Str::StatusBarConnectAccount))
+        } else if summary.is_empty() {
+            Some(say(
+                cx,
+                if self.loading {
+                    Str::StatusBarLoading
+                } else {
+                    Str::StatusBarUnavailable
+                },
+            ))
+        } else {
+            None
+        };
+        if self.no_agents() {
+            summary.clear();
+        }
+        if let Some(label) = label {
             if !summary.is_empty() {
-                summary.push(separator(&c).into_any_element());
+                summary.insert(0, separator(&c).into_any_element());
             }
-            let label = if self.accounts.is_none() {
-                Str::StatusBarLoading
-            } else {
-                Str::StatusBarConnectAccount
-            };
-            summary.push(text(say(cx, label)).into_any_element());
+            summary.insert(0, text(label).into_any_element());
         }
 
         let open = self.open;
@@ -444,6 +542,14 @@ impl Render for Usage {
             .overflow_hidden()
             .cursor_pointer()
             .hover(move |style| style.bg(c.surface_hover).text_color(c.ink))
+            .tooltip(tip(say_with(
+                cx,
+                Str::StatusBarButtonLabel,
+                &[(
+                    "summary",
+                    label.unwrap_or_else(|| say(cx, Str::StatusBarUsage)),
+                )],
+            )))
             .on_click(cx.listener(|this, _, window, cx| this.toggle(window, cx)))
             .children(summary);
         if open {
@@ -465,11 +571,7 @@ impl Render for Usage {
             .when(self.loading, |style| style.opacity(0.5))
             .hover(move |style| style.bg(c.surface_hover))
             .tooltip(tip(say(cx, Str::StatusBarRefresh).to_owned()))
-            .on_click(cx.listener(|this, _, _, cx| {
-                if !this.loading {
-                    this.refresh(cx);
-                }
-            }))
+            .on_click(cx.listener(|this, _, _, cx| this.retry(cx)))
             .child(icon(Lucide::RotateCw, px(MARK), c.ink_2));
 
         let mut host = div()
@@ -500,7 +602,7 @@ impl Render for Usage {
                     ),
             )
             .child(refresh);
-        if open && self.accounts.is_some() {
+        if open {
             host = host.child(self.backdrop(window, cx)).child(self.popover(
                 distro.as_deref(),
                 &c,
@@ -538,12 +640,24 @@ impl Render for Usage {
                 cx,
             ));
         }
-        host
+        host.children(self.login.clone())
     }
 }
 
-pub fn version() -> Div {
+pub fn version(cx: &App) -> Stateful<Div> {
+    let c = cx.global::<Theme>().colors;
     text(format!("v{VERSION}"))
+        .id("status-about")
+        .h_full()
+        .flex()
+        .items_center()
         .px(px(10.0))
         .font_family(fonts::TERMINAL_FAMILY)
+        .cursor_pointer()
+        .hover(move |style| style.bg(c.surface_hover).text_color(c.ink))
+        .tooltip(tip(say(cx, Str::SettingsTabAbout).to_owned()))
+        .on_click(|_, window, cx| {
+            want_about(cx);
+            window.dispatch_action(Box::new(crate::views::shell::OpenSettings), cx);
+        })
 }

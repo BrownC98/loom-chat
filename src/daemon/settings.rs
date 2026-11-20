@@ -8,6 +8,7 @@ use axum::response::{Html, Response};
 use axum::routing::{delete, get, post};
 use axum::{Extension, Json, Router};
 use futures_util::future::join_all;
+use portable_pty::CommandBuilder;
 use serde::Deserialize;
 
 use api::settings::accounts::{AccountView, LoginId, LoginState, LoginTarget, PlaceUsage};
@@ -29,6 +30,8 @@ use api::ids::AccountId;
 use api::profile::{AgentView, Profile, Provider, VersionMismatch};
 use api::repos::RepoProblem;
 use api::settings::SettingsView;
+
+const CURSOR_COMMAND: &str = "cursor-agent";
 
 pub struct Logins {
     host: NodeHost<LoginId>,
@@ -54,6 +57,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/settings/default", get(default_settings))
         .route("/api/accounts", get(accounts))
         .route("/api/usage/{profile}", get(place_usage))
+        .route("/api/usage/{profile}/login", post(login_single))
         .route("/api/accounts/{provider}", post(login))
         .route("/api/accounts/{provider}/logout", post(logout))
         .route("/api/accounts/{provider}/{id}", delete(remove_account))
@@ -249,7 +253,7 @@ async fn login(
     {
         return Err(internal("the account folder is gone"));
     }
-    let cmd = site.login(cli, id.as_ref())?;
+    let cmd = site.login(cli, id.as_ref());
     let discard = {
         let site = site.clone();
         move || {
@@ -258,6 +262,28 @@ async fn login(
             }
         }
     };
+    let cmd = cmd.inspect_err(|_| discard())?;
+    start_login(app, &cmd, discard).map(Json)
+}
+
+async fn login_single(
+    State(app): State<Arc<App>>,
+    Path(profile): Path<Profile>,
+    Query(at): Query<At>,
+) -> Result<Json<LoginId>, Problem> {
+    if profile != Profile::Cursor {
+        return Err(Problem::NoLogin);
+    }
+    let site = app.site_of(at.distro.as_deref()).await?;
+    let cmd = site.login_installed("Cursor", CURSOR_COMMAND)?;
+    start_login(app, &cmd, || {}).map(Json)
+}
+
+fn start_login(
+    app: Arc<App>,
+    cmd: &CommandBuilder,
+    discard: impl Fn() + Clone + Send + 'static,
+) -> Result<LoginId, Problem> {
     let login = LoginId(app.logins.next.fetch_add(1, Ordering::Relaxed));
     app.logins
         .states
@@ -282,13 +308,13 @@ async fn login(
     };
     app.logins
         .host
-        .spawn_while_linked(login, &cmd, on_exit)
+        .spawn_while_linked(login, cmd, on_exit)
         .map_err(|e| {
             app.logins.states.lock().unwrap().remove(&login);
             discard();
             internal(e)
         })?;
-    Ok(Json(login))
+    Ok(login)
 }
 
 async fn logout(
@@ -385,7 +411,10 @@ impl App {
                 let distro = self
                     .host(Host::Distro(at.distro.clone()))
                     .map_err(LaunchError::Wsl)?;
-                let commands: Vec<_> = profile::with_accounts().map(|a| a.cli.command).collect();
+                let commands: Vec<_> = profile::with_accounts()
+                    .map(|a| a.cli.command)
+                    .chain([CURSOR_COMMAND])
+                    .collect();
                 let inside = wsl::inside(&at, distro, &commands, &self.shim, &[]);
                 Site::wsl(inside.await.map_err(LaunchError::Wsl)?)
             }

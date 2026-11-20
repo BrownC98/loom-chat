@@ -4,8 +4,8 @@ use std::time::Duration;
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, BoxShadow, ClickEvent, Context, Entity, EventEmitter, FocusHandle, FontWeight,
-    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Pixels, Point, Render,
-    StatefulInteractiveElement, Styled, Window, div, point, relative,
+    InteractiveElement, IntoElement, KeyDownEvent, ParentElement, PathPromptOptions, Pixels, Point,
+    Render, StatefulInteractiveElement, Styled, Window, div, point, relative,
 };
 
 use api::ids::RepoId;
@@ -92,12 +92,28 @@ pub struct AddRepo {
     visited: HashSet<String>,
     inflight: calls::Inflight,
     latest: u64,
+    browsing: bool,
+    init_options: bool,
     init_git: bool,
     busy: bool,
     error: Option<String>,
 }
 
 impl EventEmitter<Closed> for AddRepo {}
+
+fn browse_label(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ko => "폴더 찾아보기…",
+        Lang::En => "Browse folders…",
+    }
+}
+
+fn browse_error(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Ko => "폴더를 선택하지 못했습니다. 경로를 직접 입력해 주세요.",
+        Lang::En => "Could not select the folder. Enter its path.",
+    }
+}
 
 fn act(
     cx: &Context<AddRepo>,
@@ -265,6 +281,8 @@ impl AddRepo {
             list: None,
             failed: String::new(),
             selected: None,
+            browsing: false,
+            init_options: false,
             init_git: false,
             open: true,
             locations: None,
@@ -377,6 +395,7 @@ impl AddRepo {
         self.reach = None;
         self.set_dir(path, cx);
         self.selected = None;
+        self.init_git = false;
         self.picked = path.to_owned();
         self.list = None;
         self.failed.clear();
@@ -392,6 +411,44 @@ impl AddRepo {
         if !path.trim().is_empty() {
             self.load(Some(path.trim().to_owned()), cx);
         }
+    }
+
+    fn browse(&mut self, cx: &mut Context<Self>) {
+        if self.busy || self.browsing {
+            return;
+        }
+        self.browsing = true;
+        self.error = None;
+        let lang = *cx.global::<Lang>();
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: None,
+        });
+        let version = self.latest;
+        cx.spawn(async move |this, cx| {
+            let chosen = chosen.await;
+            let _ = this.update(cx, |this, cx| {
+                this.browsing = false;
+                if version == this.latest {
+                    match chosen {
+                        Ok(Ok(Some(paths))) => {
+                            if let Some(path) = paths.first().and_then(|path| path.to_str()) {
+                                this.go(path.to_owned(), None, cx);
+                            } else {
+                                this.error = Some(browse_error(lang).to_owned());
+                            }
+                        }
+                        Ok(Ok(None)) => {}
+                        _ => this.error = Some(browse_error(lang).to_owned()),
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn go_typed(&mut self, path: String, cx: &mut Context<Self>) {
@@ -564,6 +621,8 @@ impl AddRepo {
                 div()
                     .flex()
                     .flex_col()
+                    .min_w_0()
+                    .whitespace_normal()
                     .gap(px(2.0))
                     .text_size(px(13.0))
                     .text_color(c.ink)
@@ -589,7 +648,7 @@ impl AddRepo {
     }
 
     fn submit(&mut self, cx: &mut Context<Self>) {
-        if self.busy || !self.ready(cx) {
+        if self.busy || self.browsing || !self.ready(cx) {
             return;
         }
         self.busy = true;
@@ -598,7 +657,7 @@ impl AddRepo {
         let url = self.url_field.read(cx).text().to_owned();
         let name = self.name_field.read(cx).text().to_owned();
         let tab = self.tab;
-        let init = self.plain() && self.init_git;
+        let init = self.init_options && self.plain() && self.init_git;
         let store = self.store.clone();
         calls::run(
             &store,
@@ -715,6 +774,25 @@ impl AddRepo {
             .as_ref()
             .is_some_and(|l| !l.distros.is_empty());
         let in_list = self.list.as_ref().map(|l| &l.place);
+        if !self.asking
+            && self.waiting.is_none()
+            && self.connecting.is_none()
+            && (matches!(in_list, Some(PlaceView::Pc)) || self.dir.is_empty())
+        {
+            out.push(
+                div()
+                    .flex()
+                    .child(button(
+                        "repo-native-picker",
+                        browse_label(lang).to_owned(),
+                        Kind::Ghost,
+                        self.busy || self.browsing,
+                        c,
+                        act(cx, AddRepo::browse),
+                    ))
+                    .into_any_element(),
+            );
+        }
         let list_host = match in_list {
             Some(PlaceView::Ssh { host }) => Some(host.clone()),
             _ => None,
@@ -929,7 +1007,8 @@ impl AddRepo {
             for (i, folder) in list.folders.iter().enumerate() {
                 let path = child_path(&list.path, &folder.name);
                 let chosen = self.selected.as_deref() == Some(path.as_str());
-                let (pick, open_path, near) = (path.clone(), path, distro.clone());
+                let (pick, near) = (path.clone(), distro.clone());
+                let pick_distro = distro.clone();
                 let wash = c.accent_wash;
                 let row = div()
                     .id(("dir", i))
@@ -950,10 +1029,17 @@ impl AddRepo {
                             .px(px(8.0))
                             .py(px(4.0))
                             .cursor_pointer()
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.selected = Some(pick.clone());
-                                this.picked = pick.clone();
-                                cx.notify();
+                            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                                if event.click_count() == 2 {
+                                    this.go(pick.clone(), pick_distro.clone(), cx);
+                                } else {
+                                    if this.picked != pick {
+                                        this.init_git = false;
+                                    }
+                                    this.selected = Some(pick.clone());
+                                    this.picked = pick.clone();
+                                    cx.notify();
+                                }
                             }))
                             .child(icon(Lucide::Folder, px(14.0), c.ink_3))
                             .child(
@@ -990,7 +1076,7 @@ impl AddRepo {
                                 move |s| s.bg(hover)
                             })
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                this.go(open_path.clone(), near.clone(), cx);
+                                this.go(path.clone(), near.clone(), cx);
                             }))
                             .child(icon(Lucide::ChevronRight, px(14.0), c.ink_2)),
                     )
@@ -1103,7 +1189,36 @@ impl Render for AddRepo {
         }
         panel = panel.children(self.picker(lang, &c, cx));
         if self.tab == Tab::Folder && self.plain() && !self.picked.trim().is_empty() {
-            panel = panel.child(self.init_row(lang, &c, cx));
+            panel = panel
+                .child(
+                    tabbable(div().id("repo-init-options"), cx)
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .cursor_pointer()
+                        .text_color(c.ink_2)
+                        .child(icon(
+                            if self.init_options {
+                                Lucide::ChevronDown
+                            } else {
+                                Lucide::ChevronRight
+                            },
+                            px(14.0),
+                            c.ink_2,
+                        ))
+                        .child(match lang {
+                            Lang::Ko => "폴더 옵션",
+                            Lang::En => "Folder options",
+                        })
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            if !this.busy {
+                                this.init_options = !this.init_options;
+                                this.init_git = false;
+                                cx.notify();
+                            }
+                        })),
+                )
+                .children(self.init_options.then(|| self.init_row(lang, &c, cx)));
         }
         let target = self.target(cx);
         let footer = if let Some(text) = &self.error {
@@ -1159,7 +1274,7 @@ impl Render for AddRepo {
                     }
                     .to_owned(),
                     Kind::Primary,
-                    self.busy || !ready,
+                    self.busy || self.browsing || !ready,
                     &c,
                     act(cx, AddRepo::submit),
                 ),

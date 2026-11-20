@@ -15,8 +15,9 @@ use unicode_width::UnicodeWidthChar;
 
 use crate::fonts::Face;
 use crate::link::{self, Event, Pty};
+use crate::problem::Transport;
 use crate::scale::fixed as px;
-use crate::strings::Lang;
+use crate::strings::{Lang, Str};
 use crate::theme::{Terminal, Theme};
 use crate::views::compose;
 use crate::vt::view::Picked;
@@ -171,7 +172,7 @@ pub fn open_login(
     open_with(link::attach_login, base, login, saver, window, cx)
 }
 
-type Attach = fn(&str, u32, async_channel::Sender<Event>) -> Result<Pty, String>;
+type Attach = fn(&str, u32, async_channel::Sender<Event>) -> Result<Pty, Transport>;
 
 fn open_with(
     attach: Attach,
@@ -181,7 +182,7 @@ fn open_with(
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<TerminalView> {
-    let opened = (|| -> Result<_, String> {
+    let opened = (|| -> Result<_, Transport> {
         let (events, inbox) = async_channel::unbounded();
         Ok((attach(base, id, events)?, inbox))
     })();
@@ -190,7 +191,7 @@ fn open_with(
 
 impl TerminalView {
     fn new(
-        opened: Result<(Pty, async_channel::Receiver<Event>), String>,
+        opened: Result<(Pty, async_channel::Receiver<Event>), Transport>,
         saver: Saver,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -207,7 +208,7 @@ impl TerminalView {
                 .detach();
                 (Some(pty), None)
             }
-            Err(error) => (None, Some(error)),
+            Err(error) => (None, Some(error.text(*cx.global::<Lang>()).to_owned())),
         };
         let style = Style::current(cx);
         let focus = cx.focus_handle();
@@ -350,15 +351,11 @@ impl TerminalView {
             }
             Event::Gone => {
                 self.gone = true;
-                self.ended = Some("the terminal is gone".to_owned());
+                self.ended = Some(Str::TerminalGone.text(*cx.global::<Lang>()).to_owned());
             }
             Event::Removed => self.gone = true,
-            Event::Closed(reason) => {
-                self.ended = Some(if reason.is_empty() {
-                    "connection closed".to_owned()
-                } else {
-                    reason
-                });
+            Event::Closed => {
+                self.ended = Some(Str::ComposerOffline.text(*cx.global::<Lang>()).to_owned());
             }
         }
         self.changed(cx);

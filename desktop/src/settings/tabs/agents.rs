@@ -26,7 +26,7 @@ const MARK: f32 = 14.0;
 #[derive(Default)]
 pub struct State {
     agents: Remote<Vec<AgentView>>,
-    more: Shared<bool>,
+    more: Shared<Option<bool>>,
     limits: limits::State,
     roles: roles::State,
 }
@@ -310,7 +310,8 @@ fn missing(state: &State, agents: &[AgentView], ctx: &Ctx, cx: &mut App) -> Sect
         .iter()
         .map(|agent| section.text(&agent.label, cx))
         .collect();
-    let open = state.more.read(|open| *open) || !ctx.query.is_empty();
+    let all_missing = !agents.is_empty() && absent.len() == agents.len();
+    let open = state.more.read(|open| open.unwrap_or(all_missing)) || !ctx.query.is_empty();
     let more = state.more.bind(ctx);
     let toggle = tabbable(div().id("agents-not-installed"), cx)
         .flex()
@@ -321,7 +322,7 @@ fn missing(state: &State, agents: &[AgentView], ctx: &Ctx, cx: &mut App) -> Sect
         .cursor_pointer()
         .child(if open { "\u{25BE}" } else { "\u{25B8}" })
         .child(summary)
-        .on_click(move |_, _, cx| more.change(cx, |open| *open = !*open));
+        .on_click(move |_, _, cx| more.change(cx, |value| *value = Some(!open)));
     let grid =
         open.then(|| {
             div()

@@ -3,230 +3,362 @@ use std::time::Duration;
 
 use api::profile::Provider;
 use api::settings::accounts::{LoginId, LoginState, LoginTarget};
+use api::settings::usage::{Limits, UsageProblem};
 use gpui::{
-    AnyElement, App, AppContext as _, FontWeight, ParentElement, StatefulInteractiveElement,
-    Styled, Window, div,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, FontWeight, IntoElement,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Window, div,
 };
 
 use super::parts::{modal, small};
-use super::{Actor, Login, State};
 use crate::link;
 use crate::problem::Failure;
 use crate::scale::px;
 use crate::strings::{Lang, Str};
-use crate::views::dock::ui::{SMALL, TEXT, colors, say};
-use crate::views::terminal;
-use crate::views::usage::slug;
+use crate::views::dock::ui::{SMALL, TEXT, colors, say, say_with};
+use crate::views::terminal::{self, TerminalView};
+use crate::views::usage::{accounts_changed, provider_label, slug};
 
 const POLL: Duration = Duration::from_secs(1);
-const LOST: u16 = 404;
 const TRIES: u32 = 5;
 const WIDTH: f32 = 640.0;
 const TERMINAL_H: f32 = 320.0;
+pub const CURSOR_USAGE: &str = "/api/usage/cursor";
 
-pub fn sync(state: &mut State, actor: &Option<Actor>, window: &mut Window, cx: &mut App) {
-    let wanted = state
-        .local
-        .read(|local| local.login.as_ref().map(|login| login.id));
-    match (wanted, &state.terminal, actor) {
-        (None, _, _) => state.terminal = None,
-        (Some(id), Some((open, _)), _) if *open == id => {}
-        (Some(id), _, Some(actor)) => {
-            let view = terminal::open_login(&actor.base, id, window, cx);
-            view.update(cx, |view, cx| view.focus(window, cx));
-            state.terminal = Some((id, view));
-        }
-        _ => {}
-    }
-}
-
-pub fn open(
-    actor: &Actor,
-    provider: Provider,
-    distro: Option<String>,
-    target: LoginTarget,
+#[derive(Clone)]
+pub struct Request {
+    path: String,
+    body: Option<String>,
     title: String,
     fresh: bool,
-    cx: &mut App,
-) {
-    actor.local.change(cx, |local| local.error = None);
-    let lang = *cx.global::<Lang>();
-    let path = format!(
-        "/api/accounts/{}{}",
-        slug(provider),
-        link::query(&[("distro", distro.as_deref())])
-    );
-    let body = serde_json::to_string(&target).unwrap_or_default();
-    let (base, actor) = (actor.base.clone(), actor.clone());
-    cx.spawn(async move |cx| {
-        let started = cx
-            .background_spawn(async move { link::post::<LoginId>(&base, &path, Some(body)) })
-            .await;
-        cx.update(|cx| match started {
-            Ok(LoginId(id)) => {
-                actor.local.change(cx, |local| {
-                    local.login = Some(Login {
-                        id,
-                        title,
-                        fresh,
-                        failed: false,
-                    })
-                });
-                watch(&actor, id, cx);
-            }
-            Err(error) => actor
-                .local
-                .change(cx, |local| local.error = Some(error.text(lang))),
-        });
-    })
-    .detach();
 }
 
-fn watch(actor: &Actor, id: u32, cx: &mut App) {
-    let actor = actor.clone();
-    cx.spawn(async move |cx| {
-        let mut errors = 0;
-        loop {
-            cx.background_executor().timer(POLL).await;
-            let open = actor.local.alive()
-                && actor
-                    .local
-                    .read(|local| local.login.as_ref().is_some_and(|login| login.id == id));
-            if !open {
-                break;
+impl Request {
+    pub fn account(
+        provider: Provider,
+        distro: Option<&str>,
+        target: LoginTarget,
+        name: &str,
+        cx: &App,
+    ) -> Self {
+        let label = provider_label(provider, cx);
+        let title = match &target {
+            LoginTarget::New => say_with(cx, Str::AccountsAddTitle, &[("provider", label)]),
+            LoginTarget::Account(_) => say_with(cx, Str::AccountsReloginTitle, &[("name", name)]),
+            LoginTarget::System => {
+                say_with(cx, Str::AccountsSystemLoginTitle, &[("provider", label)])
             }
-            let base = actor.base.clone();
-            let state = cx
+        };
+        Self {
+            path: format!(
+                "/api/accounts/{}{}",
+                slug(provider),
+                link::query(&[("distro", distro)])
+            ),
+            body: serde_json::to_string(&target).ok(),
+            title,
+            fresh: matches!(target, LoginTarget::New),
+        }
+    }
+
+    pub fn cursor(distro: Option<&str>, cx: &App) -> Self {
+        Self {
+            path: format!("{CURSOR_USAGE}/login{}", link::query(&[("distro", distro)])),
+            body: None,
+            title: say_with(cx, Str::AccountsSystemLoginTitle, &[("provider", "Cursor")]),
+            fresh: false,
+        }
+    }
+}
+
+pub fn needed(limits: &Limits) -> bool {
+    matches!(
+        limits,
+        Limits::NeedsLogin
+            | Limits::Failed {
+                problem: UsageProblem::TokenExpired(_)
+            }
+    )
+}
+
+#[derive(Clone, Copy)]
+pub enum Finished {
+    Succeeded,
+    Cancelled,
+}
+
+enum Stage {
+    Starting,
+    Open {
+        id: LoginId,
+        terminal: Entity<TerminalView>,
+        error: Option<String>,
+    },
+    Failed(String),
+    Closed,
+}
+
+impl Stage {
+    fn id(&self) -> Option<LoginId> {
+        match self {
+            Self::Open { id, .. } => Some(*id),
+            _ => None,
+        }
+    }
+}
+
+pub struct Dialog {
+    base: String,
+    request: Request,
+    stage: Stage,
+    focus: FocusHandle,
+    restore: Option<FocusHandle>,
+}
+
+impl EventEmitter<Finished> for Dialog {}
+
+fn remove(base: &str, id: LoginId) {
+    let _ = link::delete(base, &format!("/api/logins/{id}"));
+}
+
+impl Dialog {
+    pub fn open(base: String, request: Request, window: &mut Window, cx: &mut App) -> Entity<Self> {
+        cx.new(|cx: &mut Context<Self>| {
+            let mut dialog = Self {
+                base,
+                request,
+                stage: Stage::Starting,
+                focus: cx.focus_handle(),
+                restore: window.focused(cx),
+            };
+            cx.on_release(|dialog, cx| dialog.remove_open(cx)).detach();
+            dialog.start(window, cx);
+            dialog
+        })
+    }
+
+    pub fn is_closed(&self) -> bool {
+        matches!(self.stage, Stage::Closed)
+    }
+
+    fn remove_open(&self, cx: &App) {
+        if let Some(id) = self.stage.id() {
+            let base = self.base.clone();
+            cx.background_spawn(async move { remove(&base, id) })
+                .detach();
+        }
+    }
+
+    fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let prev = self.stage.id();
+        self.stage = Stage::Starting;
+        window.focus(&self.focus, cx);
+        let (base, path, body) = (
+            self.base.clone(),
+            self.request.path.clone(),
+            self.request.body.clone(),
+        );
+        cx.spawn_in(window, async move |this, cx| {
+            let read_base = base.clone();
+            let started = cx
                 .background_spawn(async move {
-                    link::read::<LoginState>(&base, &format!("/api/logins/{id}"))
+                    if let Some(id) = prev {
+                        remove(&read_base, id);
+                    }
+                    link::post::<LoginId>(&read_base, &path, body)
                 })
                 .await;
-            let failed = match state {
-                Ok(LoginState::Succeeded) => {
-                    cx.update(|cx| close(&actor, id, cx));
+            let started_id = started.as_ref().ok().copied();
+            let accepted = this
+                .update_in(cx, |dialog, window, cx| {
+                    if !matches!(dialog.stage, Stage::Starting) {
+                        return false;
+                    }
+                    match started {
+                        Ok(id) => {
+                            let terminal = terminal::open_login(&dialog.base, id.0, window, cx);
+                            terminal.update(cx, |terminal, cx| terminal.focus(window, cx));
+                            dialog.stage = Stage::Open {
+                                id,
+                                terminal,
+                                error: None,
+                            };
+                            dialog.watch(id, window, cx);
+                        }
+                        Err(error) => {
+                            dialog.stage = Stage::Failed(error.text(*cx.global::<Lang>()))
+                        }
+                    }
+                    cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            if !accepted && let Some(id) = started_id {
+                cx.background_spawn(async move { remove(&base, id) }).await;
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn watch(&self, id: LoginId, window: &mut Window, cx: &mut Context<Self>) {
+        let base = self.base.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let mut errors = 0;
+            loop {
+                cx.background_executor().timer(POLL).await;
+                let open = this.update(cx, |dialog, _| dialog.stage.id() == Some(id)).unwrap_or(false);
+                if !open {
                     break;
                 }
-                Ok(LoginState::Failed) => true,
-                Err(Failure::Refused { status: LOST, .. }) => true,
-                Err(_) => {
-                    errors += 1;
-                    errors >= TRIES
-                }
-                Ok(LoginState::Running) => {
-                    errors = 0;
-                    false
-                }
-            };
-            if failed {
-                cx.update(|cx| {
-                    actor.local.change(cx, |local| {
-                        if let Some(login) = local.login.as_mut().filter(|l| l.id == id) {
-                            login.failed = true;
-                        }
+                let base = base.clone();
+                let state = cx
+                    .background_spawn(async move {
+                        link::read::<LoginState>(&base, &format!("/api/logins/{id}"))
                     })
+                    .await;
+                if matches!(state, Ok(LoginState::Running)) {
+                    errors = 0;
+                    continue;
+                }
+                if matches!(state, Err(ref error) if !matches!(error, Failure::Refused { status: 404, .. })) {
+                    errors += 1;
+                    if errors < TRIES {
+                        continue;
+                    }
+                }
+                let _ = this.update_in(cx, |dialog, window, cx| {
+                    let Stage::Open { error, id: active, .. } = &mut dialog.stage else {
+                        return;
+                    };
+                    if *active != id {
+                        return;
+                    }
+                    if matches!(state, Ok(LoginState::Succeeded)) {
+                        dialog.finish(Finished::Succeeded, window, cx);
+                        return;
+                    }
+                    *error = Some(match state {
+                        Err(error) => error.text(*cx.global::<Lang>()),
+                        _ => match cx.global::<Lang>() {
+                            Lang::Ko => "로그인을 완료하지 못했습니다.",
+                            Lang::En => "Could not complete sign-in.",
+                        }.to_owned(),
+                    });
+                    window.focus(&dialog.focus, cx);
+                    cx.notify();
                 });
                 break;
             }
-        }
-    })
-    .detach();
-}
-
-pub fn close(actor: &Actor, id: u32, cx: &mut App) {
-    actor.local.change(cx, |local| {
-        if local.login.as_ref().is_some_and(|login| login.id == id) {
-            local.login = None;
-        }
-    });
-    actor.run(cx, move |base| {
-        link::delete(base, &format!("/api/logins/{id}"))
-    });
-}
-
-pub fn dialog(state: &State, actor: &Actor, window: &Window, cx: &App) -> Option<AnyElement> {
-    let (id, title, fresh, failed) = state.local.read(|local| {
-        local
-            .login
-            .as_ref()
-            .map(|login| (login.id, login.title.clone(), login.fresh, login.failed))
-    })?;
-    let (open, view) = state.terminal.as_ref()?;
-    if *open != id {
-        return None;
+        }).detach();
     }
-    let focus = state.focus.as_ref()?;
-    let c = colors(cx);
-    let closer = actor.clone();
-    let button_label = say(
-        cx,
-        if failed {
-            Str::CommonClose
-        } else {
-            Str::CommonCancel
-        },
-    );
-    let button = small("login-close", cx)
-        .border_color(gpui::transparent_black())
-        .bg(c.panel)
-        .child(button_label)
-        .on_click({
-            let actor = actor.clone();
-            move |_, _, cx| close(&actor, id, cx)
-        });
-    let foot = if failed {
-        div()
-            .text_size(px(SMALL))
-            .text_color(c.err)
-            .child(say(cx, Str::AccountsLoginFailed))
-    } else {
-        div().text_size(px(SMALL)).text_color(c.ink_3).child(say(
-            cx,
-            if fresh {
-                Str::AccountsLoginHint
-            } else {
-                Str::AccountsReloginHint
-            },
-        ))
-    };
-    let content = div()
-        .w(px(WIDTH))
-        .p(px(16.0))
-        .flex()
-        .flex_col()
-        .gap(px(10.0))
-        .rounded(px(10.0))
-        .border_1()
-        .border_color(c.line_strong)
-        .bg(c.panel)
-        .text_size(px(TEXT))
-        .text_color(c.ink)
-        .child(
-            div()
+
+    fn finish(&mut self, outcome: Finished, window: &mut Window, cx: &mut Context<Self>) {
+        self.remove_open(cx);
+        self.stage = Stage::Closed;
+        if let Some(restore) = self.restore.take() {
+            window.focus(&restore, cx);
+        }
+        if matches!(outcome, Finished::Succeeded) {
+            accounts_changed(cx);
+        }
+        cx.emit(outcome);
+        cx.notify();
+    }
+}
+
+impl Render for Dialog {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (view, error) = match &self.stage {
+            Stage::Closed => return div().into_any_element(),
+            Stage::Starting => (None, None),
+            Stage::Open {
+                terminal, error, ..
+            } => (Some(terminal.clone()), error.clone()),
+            Stage::Failed(error) => (None, Some(error.clone())),
+        };
+        let c = colors(cx);
+        let close = small("login-close", cx)
+            .border_color(gpui::transparent_black())
+            .bg(c.panel)
+            .child(say(
+                cx,
+                if error.is_some() {
+                    Str::CommonClose
+                } else {
+                    Str::CommonCancel
+                },
+            ))
+            .on_click(
+                cx.listener(|dialog, _, window, cx| dialog.finish(Finished::Cancelled, window, cx)),
+            );
+        let foot = match error {
+            Some(error) => div()
                 .flex()
                 .items_center()
+                .gap(px(8.0))
+                .child(div().flex_1().text_color(c.err).child(error))
                 .child(
-                    div()
-                        .flex_1()
-                        .text_size(px(15.0))
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(title),
-                )
-                .child(button),
+                    small("login-retry", cx)
+                        .child(say(cx, Str::UpdateRetry))
+                        .on_click(cx.listener(|dialog, _, window, cx| dialog.start(window, cx))),
+                ),
+            None => div().text_color(c.ink_3).child(say(
+                cx,
+                if view.is_none() {
+                    Str::StatusBarLoading
+                } else if self.request.fresh {
+                    Str::AccountsLoginHint
+                } else {
+                    Str::AccountsReloginHint
+                },
+            )),
+        };
+        let content = div()
+            .w(px(WIDTH))
+            .max_w_full()
+            .p(px(16.0))
+            .flex()
+            .flex_col()
+            .gap(px(10.0))
+            .rounded(px(10.0))
+            .border_1()
+            .border_color(c.line_strong)
+            .bg(c.panel)
+            .text_size(px(TEXT))
+            .text_color(c.ink)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex_1()
+                            .text_size(px(15.0))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(self.request.title.clone()),
+                    )
+                    .child(close),
+            )
+            .children(view.map(|view| {
+                div()
+                    .w_full()
+                    .h(px(TERMINAL_H))
+                    .rounded(px(6.0))
+                    .overflow_hidden()
+                    .child(view)
+            }))
+            .child(foot.text_size(px(SMALL)));
+        let this = cx.entity().downgrade();
+        modal(
+            &self.focus,
+            content,
+            Rc::new(move |window, cx| {
+                let _ = this.update(cx, |dialog, cx| {
+                    dialog.finish(Finished::Cancelled, window, cx)
+                });
+            }),
+            window,
+            cx,
         )
-        .child(
-            div()
-                .w_full()
-                .h(px(TERMINAL_H))
-                .rounded(px(6.0))
-                .overflow_hidden()
-                .child(view.clone()),
-        )
-        .child(foot);
-    Some(modal(
-        focus,
-        content,
-        Rc::new(move |_, cx| close(&closer, id, cx)),
-        window,
-        cx,
-    ))
+    }
 }

@@ -27,7 +27,6 @@ function Install-File($from, $to) {
 Get-ChildItem -Path $dir -Filter '*.exe.*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
 $with_linux = $linux_url -ne $url
-if ($with_linux) { Invoke-WebRequest -Uri $linux_url -OutFile "$linux.new" -UseBasicParsing }
 
 $with_desktop = $false
 if ($desktop_url -ne $url) {
@@ -49,6 +48,12 @@ if ($with_desktop) {
 } else {
   Write-Output '이 릴리스에는 데스크톱 앱이 없습니다. 브라우저 판 loom만 설치합니다.'
   Invoke-WebRequest -Uri $url -OutFile "$exe.new" -UseBasicParsing
+}
+$bundled_linux = Join-Path $unpack '*\loom-linux'
+if ($with_desktop -and (Test-Path $bundled_linux)) {
+  Move-Item -Force $bundled_linux "$linux.new"
+} elseif ($with_linux) {
+  Invoke-WebRequest -Uri $linux_url -OutFile "$linux.new" -UseBasicParsing
 }
 Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
 

@@ -1,16 +1,17 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
 
-use api::graph::chat::{ChatRoomKind, SaveChatRoom};
+use api::graph::chat::{ChatRoom, ChatRoomKind, SaveChatRoom};
 use api::ids::NodeId;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    Anchor, AnchoredPositionMode, App, Context, Div, Entity, EventEmitter, FocusHandle, FontWeight,
-    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Render,
-    SharedString, StatefulInteractiveElement, Styled, Subscription, Window, anchored, deferred,
-    div, point, uniform_list,
+    Anchor, App, Context, Div, Entity, EventEmitter, FocusHandle, FontWeight, InteractiveElement,
+    IntoElement, KeyDownEvent, MouseButton, ParentElement, Render, SharedString,
+    StatefulInteractiveElement, Styled, Subscription, Window, anchored, deferred, div, point,
+    uniform_list,
 };
 
+use crate::link;
 use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::views::field::{self, Field, FieldEvent};
@@ -21,7 +22,6 @@ use crate::views::widgets::btn;
 use super::{ChatData, note, words};
 
 const PANEL_WIDTH: f32 = 380.0;
-const PANEL_LEFT: f32 = 288.0;
 const PICKER_ROW: f32 = 31.0;
 const PICKER_MAX_ROWS: usize = 6;
 
@@ -31,7 +31,8 @@ pub(super) struct CreateRoom {
     data: Entity<ChatData>,
     name: Entity<Field>,
     search: Entity<Field>,
-    trigger: FocusHandle,
+    return_focus: Option<FocusHandle>,
+    editing: Option<String>,
     field_keys: Vec<Subscription>,
     open: bool,
     saving: bool,
@@ -53,11 +54,7 @@ enum Row {
 }
 
 impl CreateRoom {
-    pub(super) fn new(
-        data: Entity<ChatData>,
-        trigger: FocusHandle,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub(super) fn new(data: Entity<ChatData>, cx: &mut Context<Self>) -> Self {
         let name = field::plain_label(Str::RoomName, cx);
         let search = field::plain_label(Str::RoomFindAgents, cx);
         cx.observe(&data, |this, _, cx| {
@@ -76,7 +73,8 @@ impl CreateRoom {
             data,
             name,
             search,
-            trigger,
+            return_focus: None,
+            editing: None,
             field_keys: Vec::new(),
             open: false,
             saving: false,
@@ -85,14 +83,38 @@ impl CreateRoom {
         }
     }
 
+    pub(super) fn is_open(&self) -> bool {
+        self.open
+    }
+
     pub(super) fn open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show(None, window, cx);
+    }
+
+    pub(super) fn edit_members(
+        &mut self,
+        room: &ChatRoom,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.show(Some(room), window, cx);
+    }
+
+    fn show(&mut self, room: Option<&ChatRoom>, window: &mut Window, cx: &mut Context<Self>) {
         if self.open {
             return;
         }
         self.open = true;
-        self.name.update(cx, |field, cx| field.set_text("", cx));
+        self.return_focus = window.focused(cx);
+        self.editing = room.map(|room| room.id.clone());
+        self.name.update(cx, |field, cx| {
+            field.set_text(room.map_or("", |room| room.name.as_str()), cx);
+        });
         self.search.update(cx, |field, cx| field.set_text("", cx));
-        self.selected.clear();
+        self.selected = room
+            .into_iter()
+            .flat_map(|room| room.members.iter().copied())
+            .collect();
         self.error = None;
         self.field_keys = vec![
             cx.subscribe_in(
@@ -114,7 +136,12 @@ impl CreateRoom {
                 },
             ),
         ];
-        window.focus(&self.name.read(cx).handle(), cx);
+        let focus = if room.is_some() {
+            &self.search
+        } else {
+            &self.name
+        };
+        window.focus(&focus.read(cx).handle(), cx);
         cx.notify();
     }
 
@@ -123,7 +150,9 @@ impl CreateRoom {
             return;
         }
         self.open = false;
-        window.focus(&self.trigger, cx);
+        if let Some(focus) = self.return_focus.take() {
+            window.focus(&focus, cx);
+        }
         cx.notify();
     }
 
@@ -131,10 +160,34 @@ impl CreateRoom {
         if !self.open || self.saving {
             return;
         }
-        let name = self.name.read(cx).text().trim().to_owned();
+        let editing = self.editing.clone();
+        let current = editing.as_ref().and_then(|id| {
+            self.data
+                .read(cx)
+                .rooms()
+                .iter()
+                .find(|room| room.id == *id)
+        });
+        let name = current.map_or_else(
+            || self.name.read(cx).text().trim().to_owned(),
+            |room| room.name.clone(),
+        );
         if name.is_empty() {
             self.error = Some(words(cx, "방 이름을 입력해 주세요.", "Enter a room name.").into());
             window.focus(&self.name.read(cx).handle(), cx);
+            cx.notify();
+            return;
+        }
+        if self.selected.is_empty() {
+            self.error = Some(
+                words(
+                    cx,
+                    "구성원을 한 명 이상 골라 주세요.",
+                    "Select at least one member.",
+                )
+                .into(),
+            );
+            window.focus(&self.search.read(cx).handle(), cx);
             cx.notify();
             return;
         }
@@ -146,7 +199,22 @@ impl CreateRoom {
         for field in [&self.name, &self.search] {
             field.update(cx, |field, cx| field.set_locked(true, cx));
         }
-        let task = self.data.update(cx, |data, cx| data.create(request, cx));
+        let task = if let Some(id) = &editing {
+            let path = format!("/api/chat/rooms/{}", link::escape(id));
+            self.data.read(cx).graph().read(cx).call(cx, move |base| {
+                link::send_json::<ChatRoom>(
+                    base,
+                    &path,
+                    ureq::http::Method::PUT,
+                    Some(
+                        serde_json::to_string(&request)
+                            .map_err(|error| crate::problem::Failure::Other(error.to_string()))?,
+                    ),
+                )
+            })
+        } else {
+            self.data.update(cx, |data, cx| data.create(request, cx))
+        };
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -158,7 +226,11 @@ impl CreateRoom {
                 match result {
                     Ok(room) => {
                         this.close(window, cx);
-                        cx.emit(Created(room.id));
+                        if editing.is_some() {
+                            this.data.update(cx, |data, cx| data.refresh(cx));
+                        } else {
+                            cx.emit(Created(room.id));
+                        }
                     }
                     Err(error) => {
                         this.error = Some(error);
@@ -172,9 +244,6 @@ impl CreateRoom {
 
     fn choices(&self, cx: &App) -> Vec<Row> {
         let data = self.data.read(cx);
-        let Some(recipients) = data.recipients() else {
-            return Vec::new();
-        };
         let query = self.search.read(cx).text().trim().to_lowercase();
         let works: HashMap<_, _> = data
             .rooms()
@@ -183,7 +252,12 @@ impl CreateRoom {
             .map(|room| (room.id.as_str(), room.name.as_str()))
             .collect();
         let mut groups = BTreeMap::new();
-        for agent in &recipients.agents {
+        let agents = data
+            .recipients()
+            .into_iter()
+            .flat_map(|catalog| &catalog.agents);
+        let available: HashSet<_> = agents.clone().map(|agent| agent.node).collect();
+        for agent in agents {
             let work = works.get(agent.work.as_str()).copied().unwrap_or(words(
                 cx,
                 "작업 없음",
@@ -194,13 +268,34 @@ impl CreateRoom {
                 continue;
             }
             groups
-                .entry((work, &agent.work))
+                .entry((work, agent.work.as_str()))
                 .or_insert_with(Vec::new)
                 .push(Row::Choice(Choice {
                     node: agent.node,
                     name: agent.name.clone().into(),
                     harness: agent.harness.as_ref().map(|id| id.0.clone().into()),
                 }));
+        }
+        let former = words(cx, "이전 구성원", "Previous members");
+        let original = self
+            .editing
+            .as_ref()
+            .and_then(|id| data.rooms().iter().find(|room| room.id == *id));
+        for room in data.rooms() {
+            if let ChatRoomKind::Agent { node } = room.kind
+                && original.is_some_and(|room| room.members.contains(&node))
+                && !available.contains(&node)
+                && room.name.to_lowercase().contains(&query)
+            {
+                groups
+                    .entry((former, ""))
+                    .or_default()
+                    .push(Row::Choice(Choice {
+                        node,
+                        name: room.name.clone().into(),
+                        harness: None,
+                    }));
+            }
         }
         groups
             .into_iter()
@@ -350,25 +445,29 @@ impl Render for CreateRoom {
         let cancel = btn::button("chat-create-cancel", cx)
             .child(say(cx, Str::CommonCancel))
             .on_click(cx.listener(|this, _, window, cx| this.close(window, cx)));
+        let can_save = !self.saving && !self.selected.is_empty();
         let save = btn::tabbable(div().id("chat-create-save"), cx)
             .flex()
             .items_center()
             .min_h(px(26.0))
             .px(px(10.0))
             .rounded(px(6.0))
-            .bg(if self.saving { c.panel } else { c.accent })
-            .text_color(if self.saving { c.ink_2 } else { c.accent_ink })
+            .bg(if can_save { c.accent } else { c.panel })
+            .text_color(if can_save { c.accent_ink } else { c.ink_2 })
             .child(if self.saving {
-                words(cx, "방을 만듭니다", "Creating room…")
+                words(cx, "저장 중…", "Saving…")
+            } else if self.editing.is_some() {
+                words(cx, "저장", "Save")
             } else {
                 words(cx, "방 만들기", "Create room")
             })
-            .when(!self.saving, |save| {
+            .when(can_save, |save| {
                 save.cursor_pointer()
                     .hover(move |style| style.bg(c.accent_ink).text_color(c.accent))
                     .on_click(cx.listener(|this, _, window, cx| this.save(window, cx)))
             });
         let selected = self.selected.len();
+        let editing = self.editing.is_some();
         let panel = div()
             .id("chat-create-panel")
             .flex()
@@ -398,9 +497,15 @@ impl Render for CreateRoom {
                 div()
                     .text_size(px(14.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(words(cx, "새 방", "New room")),
+                    .child(if editing {
+                        words(cx, "구성원 편집", "Edit members")
+                    } else {
+                        words(cx, "새 방", "New room")
+                    }),
             )
-            .child(field_label(say(cx, Str::RoomName), &self.name))
+            .when(!editing, |panel| {
+                panel.child(field_label(say(cx, Str::RoomName), &self.name))
+            })
             .children(
                 self.error
                     .clone()
@@ -427,32 +532,33 @@ impl Render for CreateRoom {
                     } else {
                         cancel
                     })
-                    .child(if self.saving { btn::inert(save) } else { save }),
+                    .child(if can_save { save } else { btn::inert(save) }),
             );
-        let backdrop = deferred(anchored().position(point(px(0.0), px(0.0))).child(
-            div().w(view.width).h(view.height).occlude().on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|this, _, window, cx| {
-                    this.close(window, cx);
-                }),
-            ),
-        ))
-        .with_priority(1);
-        let overlay = deferred(
-            anchored()
-                .anchor(Anchor::TopLeft)
-                .position_mode(AnchoredPositionMode::Local)
-                .position(point(px(PANEL_LEFT), px(8.0)))
-                .snap_to_window_with_margin(px(8.0))
-                .child(panel),
+        div().child(
+            deferred(
+                anchored()
+                    .anchor(Anchor::TopLeft)
+                    .position(point(px(0.0), px(0.0)))
+                    .child(
+                        div()
+                            .w(view.width)
+                            .h(view.height)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .bg(c.scrim)
+                            .occlude()
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, _, window, cx| {
+                                    this.close(window, cx);
+                                }),
+                            )
+                            .child(panel),
+                    ),
+            )
+            .with_priority(2),
         )
-        .with_priority(2);
-        div()
-            .absolute()
-            .top_0()
-            .left_0()
-            .child(backdrop)
-            .child(overlay)
     }
 }
 

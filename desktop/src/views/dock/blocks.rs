@@ -19,7 +19,6 @@ use crate::scale::fixed as px;
 use crate::strings::{Lang, Str};
 use crate::theme::Colors;
 use crate::views::icons::{Lucide, icon};
-use crate::views::prose::prose;
 use crate::views::tooltip::tip;
 use crate::views::widgets::btn;
 
@@ -38,7 +37,7 @@ struct Draw<'a> {
     cx: &'a App,
     c: Colors,
     follow: Follow,
-    selection: Option<Selectable>,
+    selection: &'a Selectable,
 }
 
 fn mentions_doc(blocks: &[Block]) -> bool {
@@ -51,31 +50,6 @@ fn mentions_doc(blocks: &[Block]) -> bool {
             .any(|row| row.iter().any(|cell| body::has_doc(cell))),
         Block::Code { .. } | Block::Rule => false,
     })
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn render(
-    id: impl Into<ElementId>,
-    blocks: &[Block],
-    plain: &str,
-    doc: Option<&WaitDoc>,
-    color: Rgba,
-    size: f32,
-    cx: &App,
-    follow: impl Fn(Target, &mut App) + 'static,
-) -> AnyElement {
-    let draw = Draw {
-        root: id.into(),
-        next: Cell::new(0),
-        doc,
-        color,
-        size,
-        cx,
-        c: ui::colors(cx),
-        follow: Rc::new(follow),
-        selection: None,
-    };
-    draw.render(blocks, plain).into_any_element()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -92,7 +66,8 @@ pub(crate) fn render_selectable(
 ) -> Div {
     let id = id.into();
     let selection = Selectable::new(id.clone(), window, cx);
-    let mut draw = Draw {
+    let follow: Follow = Rc::new(follow);
+    let draw = Draw {
         root: id,
         next: Cell::new(0),
         doc,
@@ -100,14 +75,11 @@ pub(crate) fn render_selectable(
         size,
         cx,
         c: ui::colors(cx),
-        follow: Rc::new(follow),
-        selection: Some(selection),
+        follow: follow.clone(),
+        selection: &selection,
     };
     let column = draw.render(blocks, plain);
-    draw.selection
-        .take()
-        .unwrap()
-        .attach(column, draw.follow, cx)
+    selection.attach(column, follow, cx)
 }
 
 impl Draw<'_> {
@@ -133,23 +105,12 @@ impl Draw<'_> {
     }
 
     fn text(&self, parts: &[TextPart], plain: &str) -> Option<AnyElement> {
-        if let Some(selection) = &self.selection {
-            return selection
-                .text(
-                    body::build(parts, plain, self.doc, self.color, self.cx),
-                    self.cx,
-                )
-                .map(IntoElement::into_any_element);
-        }
-        body::inline(
-            self.id("text"),
-            parts,
-            plain,
-            self.doc,
-            self.color,
-            self.cx,
-            &self.follow,
-        )
+        self.selection
+            .text(
+                body::build(parts, plain, self.doc, self.color, self.cx),
+                self.cx,
+            )
+            .map(IntoElement::into_any_element)
     }
 
     fn stack(&self, blocks: &[Block], gap: f32) -> gpui::Div {
@@ -193,12 +154,9 @@ impl Draw<'_> {
 
     fn code(&self, text: &str, language: Option<&str>) -> AnyElement {
         let shown = text.trim_end_matches('\n');
-        let shown = match &self.selection {
-            Some(selection) => selection
-                .text(body::build(&[], shown, None, self.color, self.cx), self.cx)
-                .map(IntoElement::into_any_element),
-            None => Some(prose(shown.to_owned()).into_any_element()),
-        };
+        let shown = self
+            .selection
+            .text(body::build(&[], shown, None, self.color, self.cx), self.cx);
         let label = language.unwrap_or(match self.cx.global::<Lang>() {
             Lang::Ko => "코드",
             Lang::En => "Code",
@@ -333,6 +291,27 @@ impl Draw<'_> {
     }
 }
 
+pub(crate) fn copy_feedback(
+    id: ElementId,
+    window: &mut Window,
+    cx: &mut App,
+) -> (bool, impl Fn(&str, &mut App) + 'static) {
+    let state = window.use_keyed_state(id, cx, |_, _| None::<Task<()>>);
+    (state.read(cx).is_some(), move |text, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
+        state.update(cx, |state, cx| {
+            *state = Some(cx.spawn(async move |entity, cx| {
+                cx.background_executor().timer(COPIED_TIME).await;
+                let _ = entity.update(cx, |state, cx| {
+                    *state = None;
+                    cx.notify();
+                });
+            }));
+            cx.notify();
+        });
+    })
+}
+
 #[derive(IntoElement)]
 struct CodeCopy {
     id: ElementId,
@@ -341,11 +320,10 @@ struct CodeCopy {
 
 impl RenderOnce for CodeCopy {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let copied = window.use_keyed_state(self.id.clone(), cx, |_, _| None::<Task<()>>);
-        let active = copied.read(cx).is_some();
+        let (active, copy) = copy_feedback(self.id.clone(), window, cx);
         let label = Str::TerminalCopy.text(*cx.global::<Lang>());
         let c = ui::colors(cx);
-        btn::ghost(self.id, cx)
+        btn::inert(btn::ghost(self.id, cx))
             .flex_none()
             .min_h(px(20.0))
             .px(px(4.0))
@@ -369,18 +347,6 @@ impl RenderOnce for CodeCopy {
             } else {
                 label
             })
-            .on_click(move |_, _, cx| {
-                cx.write_to_clipboard(ClipboardItem::new_string(self.text.clone()));
-                copied.update(cx, |copied, cx| {
-                    *copied = Some(cx.spawn(async move |state, cx| {
-                        cx.background_executor().timer(COPIED_TIME).await;
-                        let _ = state.update(cx, |copied, cx| {
-                            *copied = None;
-                            cx.notify();
-                        });
-                    }));
-                    cx.notify();
-                });
-            })
+            .on_click(move |_, _, cx| copy(&self.text, cx))
     }
 }

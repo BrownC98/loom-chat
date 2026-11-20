@@ -8,8 +8,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, div, point, relative,
 };
 
-use api::ids::RepoId;
-use api::repos::{FolderList, Locations, PlaceView};
+use api::repos::{FolderList, Locations, PlaceView, RepoView};
 use api::settings::places::{ReachView, SystemView};
 
 pub(crate) mod calls;
@@ -22,7 +21,7 @@ use crate::theme::{Colors, Theme};
 use crate::views::field::{self, Field, FieldEvent, Form};
 use crate::views::icons::{Lucide, icon};
 use crate::views::widgets::btn::tabbable;
-use crate::views::worktree::{Closed, Kind, actions, button, error, hint, labelled, shell, title};
+use crate::views::worktree::{Kind, actions, button, error, hint, labelled, shell, title};
 
 const WIDTH: f32 = 440.0;
 const DIRS: f32 = 168.0;
@@ -97,7 +96,12 @@ pub struct AddRepo {
     error: Option<String>,
 }
 
-impl EventEmitter<Closed> for AddRepo {}
+pub enum AddRepoEvent {
+    Added(RepoView),
+    Cancelled,
+}
+
+impl EventEmitter<AddRepoEvent> for AddRepo {}
 
 fn act(
     cx: &Context<AddRepo>,
@@ -315,11 +319,14 @@ impl AddRepo {
     }
 
     fn dismiss(&mut self, cx: &mut Context<Self>) {
-        if self.busy {
-            return;
+        if !self.busy {
+            self.finish(AddRepoEvent::Cancelled, cx);
         }
+    }
+
+    fn finish(&mut self, event: AddRepoEvent, cx: &mut Context<Self>) {
         self.release(cx);
-        cx.emit(Closed);
+        cx.emit(event);
     }
 
     fn load(&mut self, path: Option<String>, cx: &mut Context<Self>) {
@@ -610,13 +617,13 @@ impl AddRepo {
                 Tab::Create => calls::create_repo(base, &parent, &name),
             },
             |this, done, cx| match done {
-                Ok(id) => {
+                Ok(repo) => {
                     this.store.update(cx, |store, cx| {
-                        store.choose_repo(RepoId(id), cx);
+                        store.choose_repo(repo.id, cx);
                         store.reload(cx);
                     });
                     this.busy = false;
-                    this.dismiss(cx);
+                    this.finish(AddRepoEvent::Added(repo), cx);
                 }
                 Err(error) => {
                     this.error = Some(error);

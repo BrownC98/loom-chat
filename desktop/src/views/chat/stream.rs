@@ -1,6 +1,4 @@
-use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
-use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,16 +10,17 @@ use api::graph::waits::WaitTone;
 use api::ids::{NodeId, WaitId};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, Context, Div, Entity, EventEmitter, InteractiveElement, IntoElement, KeyDownEvent,
-    ListAlignment, ListOffset, ListState, ParentElement, Render, StatefulInteractiveElement,
-    Styled, Subscription, Task, Window, canvas, div, list,
+    Animation, AnimationExt, App, AppContext, Context, Div, Entity, EventEmitter,
+    InteractiveElement, IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, canvas,
+    div, list,
 };
 
 use super::data::ChatData;
 use super::words as tr;
 use crate::scale::px;
-use crate::store::BusyChanged;
 use crate::strings::{Lang, Str};
+use crate::views::dock::answers::Answers;
 use crate::views::icons::{Lucide, icon};
 use crate::views::scrollbar::Bar;
 use crate::views::widgets::btn;
@@ -32,7 +31,7 @@ mod acts;
 mod rows;
 mod waits;
 
-use acts::{Draft, Input, Target};
+use acts::Draft;
 
 const OVERDRAW: f32 = 240.0;
 const RESULT_TIME: Duration = Duration::from_millis(2500);
@@ -195,9 +194,10 @@ pub(super) struct Stream {
     expanded: HashMap<String, BTreeSet<ChatCursor>>,
     jumped: Option<ChatCursor>,
     jump_before: Option<ChatCursor>,
-    paged: bool,
-    drafts: HashMap<Input, Draft>,
-    busy: HashSet<Target>,
+    drafts: HashMap<u32, Draft>,
+    busy: HashSet<u32>,
+    withdrawing: Option<u32>,
+    answers: Entity<Answers>,
     result: Option<Banner>,
     new_messages: usize,
     _subs: [Subscription; 3],
@@ -206,23 +206,11 @@ pub(super) struct Stream {
 impl Stream {
     pub(super) fn new(data: Entity<ChatData>, cx: &mut Context<Self>) -> Self {
         let list = ListState::new(0, ListAlignment::Bottom, px(OVERDRAW));
-        let view = cx.entity().downgrade();
-        list.set_scroll_handler(move |event, _, cx| {
-            if event.is_scrolled {
-                let view = view.clone();
-                cx.defer(move |cx| {
-                    let _ = view.update(cx, |stream, cx| {
-                        if stream.list.logical_scroll_top().item_ix <= 1 {
-                            stream.load_older(cx);
-                        }
-                    });
-                });
-            }
-        });
         let graph = data.read(cx).graph().clone();
+        let answers = cx.new(|cx| Answers::new(graph.clone(), cx));
         let subs = [
             cx.observe(&data, |stream, _, cx| stream.sync(cx)),
-            cx.subscribe(&graph, |_, _, _: &BusyChanged, cx| cx.notify()),
+            cx.observe(&answers, |_, _, cx| cx.notify()),
             cx.observe(&graph, |_, _, cx| cx.notify()),
         ];
         let mut stream = Self {
@@ -236,9 +224,10 @@ impl Stream {
             expanded: HashMap::new(),
             jumped: None,
             jump_before: None,
-            paged: false,
             drafts: HashMap::new(),
             busy: HashSet::new(),
+            withdrawing: None,
+            answers,
             result: None,
             new_messages: 0,
             _subs: subs,
@@ -258,7 +247,9 @@ impl Stream {
             self.drafts.clear();
             self.jumped = None;
             self.jump_before = None;
-            self.paged = false;
+            self.withdrawing = None;
+            self.answers
+                .update(cx, |answers, _| answers.retain_images(|_| false));
             self.result = None;
             self.new_messages = 0;
         }
@@ -266,6 +257,19 @@ impl Stream {
             self.revision = Some(revision);
             self.rebuild(!changed_room, cx);
             self.prune_drafts(cx);
+            let waits = self
+                .data
+                .read(cx)
+                .items()
+                .iter()
+                .filter_map(|item| match &item.entry {
+                    ChatEntry::Wait {
+                        wait, closed: None, ..
+                    } => Some(wait.wait.id),
+                    _ => None,
+                })
+                .collect();
+            cx.emit(StreamEvent::VisibleWaits(waits));
         }
         if let Some(before) = self.jump_before {
             let data = self.data.read(cx);
@@ -316,6 +320,7 @@ impl Stream {
                         && matches!(
                             &items[index].entry,
                             ChatEntry::Message { .. }
+                                | ChatEntry::Wait { .. }
                                 | ChatEntry::Transcript {
                                     item: ChatTranscriptItem::Assistant { .. }
                                         | ChatTranscriptItem::User { .. },
@@ -371,7 +376,6 @@ impl Stream {
     fn load_older(&mut self, cx: &mut Context<Self>) {
         let data = self.data.read(cx);
         if data.before().is_some() && !data.loading_older() {
-            self.paged = true;
             self.data.update(cx, ChatData::load_older);
         }
     }
@@ -414,7 +418,6 @@ impl Stream {
         };
         self.jumped = None;
         self.jump_before = None;
-        self.paged = false;
         self.new_messages = 0;
         self.list.scroll_to_end();
         self.data.update(cx, |data, cx| data.select(room, cx));
@@ -492,7 +495,22 @@ impl Stream {
                 .py(px(5.0))
                 .text_color(c.ink_2)
                 .text_size(px(ui::SMALL))
-                .child(div().flex_none().size(px(6.0)).rounded_full().bg(c.run))
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(6.0))
+                        .rounded_full()
+                        .bg(c.run)
+                        .with_animation(
+                            "stream-working-dot",
+                            Animation::new(Duration::from_millis(1500))
+                                .repeat()
+                                .with_max_fps(24.0),
+                            |dot, phase| {
+                                dot.opacity(0.78 + 0.22 * (phase * std::f32::consts::TAU).cos())
+                            },
+                        ),
+                )
                 .child(div().min_w_0().truncate().child(text)),
         )
     }
@@ -552,22 +570,14 @@ impl Stream {
                 })
                 .on_click(cx.listener(|stream, _, _, cx| stream.next_question(cx)))
         });
-        let older = data.before().map(|_| {
-            let label = if data.loading_older() {
-                tr(cx, "이전 대화를 읽는 중", "Loading older messages")
-            } else {
-                tr(cx, "이전 대화", "Older messages")
-            };
-            btn::button("stream-older", cx)
-                .child(label)
-                .on_click(cx.listener(|stream, _, _, cx| stream.load_older(cx)))
+        let older = data.loading_older().then(|| {
+            div().text_size(px(ui::SMALL)).text_color(c.ink_2).child(tr(
+                cx,
+                "이전 대화를 읽는 중",
+                "Loading older messages",
+            ))
         });
-        let latest = self.paged.then(|| {
-            btn::button("stream-latest", cx)
-                .child(tr(cx, "최근 대화", "Latest messages"))
-                .on_click(cx.listener(|stream, _, _, cx| stream.latest(cx)))
-        });
-        if chips.is_none() && jump.is_none() && older.is_none() && latest.is_none() {
+        if chips.is_none() && jump.is_none() && older.is_none() {
             return None;
         }
         Some(
@@ -584,7 +594,6 @@ impl Stream {
                 .children(chips.into_iter().flatten())
                 .child(div().flex_1())
                 .children(older)
-                .children(latest)
                 .children(jump),
         )
     }
@@ -599,8 +608,6 @@ impl Render for Stream {
             self.new_messages = 0;
         }
         let toolbar = self.toolbar(cx);
-        let stream = cx.entity().downgrade();
-        let visible_waits = Rc::new(RefCell::new(Vec::new()));
         let data = self.data.read(cx);
         let c = ui::colors(cx);
         let content = if self.rows.visible.is_empty() {
@@ -621,27 +628,57 @@ impl Render for Stream {
                 .text_color(c.ink_2)
                 .child(label)
         } else {
-            let waits = visible_waits.clone();
             self.bar
                 .reserved(list(
                     self.list.clone(),
-                    cx.processor(move |stream, index, window, cx| {
-                        stream.row(index, &waits, window, cx)
-                    }),
+                    cx.processor(|stream, index, window, cx| stream.row(index, window, cx)),
                 ))
                 .flex_1()
                 .min_h_0()
         };
-        let jump_to_new = (self.new_messages > 0).then(|| {
-            let text = match *cx.global::<Lang>() {
+        let older = data
+            .before()
+            .filter(|_| !data.loading_older() && data.error().is_none())
+            .map(|before| {
+                let list = self.list.clone();
+                let view = cx.weak_entity();
+                let room = self.room.clone();
+                canvas(
+                    |_, _, _| (),
+                    move |_, (), _, cx| {
+                        if list.is_scrollbar_dragging()
+                            || list.scroll_px_offset_for_scrollbar().y.abs() > px(0.5)
+                        {
+                            return;
+                        }
+                        let (view, room) = (view.clone(), room.clone());
+                        cx.defer(move |cx| {
+                            let _ = view.update(cx, |stream, cx| {
+                                if stream.room == room
+                                    && stream.data.read(cx).before() == Some(before)
+                                {
+                                    stream.load_older(cx);
+                                }
+                            });
+                        });
+                    },
+                )
+                .absolute()
+                .size_full()
+            });
+        let jump_to_new = (!self.at_bottom() && !self.rows.visible.is_empty()).then(|| {
+            let label = tr(cx, "맨 아래로", "Jump to bottom");
+            let text = (self.new_messages > 0).then(|| match *cx.global::<Lang>() {
                 Lang::Ko => format!("새 말 {}", self.new_messages),
                 Lang::En => format!("{} new", self.new_messages),
-            };
+            });
             btn::button("stream-new-messages", cx)
                 .absolute()
                 .right(px(28.0))
                 .bottom(px(10.0))
-                .child(text)
+                .aria_label(label)
+                .tooltip(crate::views::tooltip::tip(label.to_owned()))
+                .children(text)
                 .child(icon(Lucide::ArrowDown, px(14.0), c.ink_2))
                 .on_click(cx.listener(|stream, _, _, cx| stream.latest(cx)))
         });
@@ -709,21 +746,7 @@ impl Render for Stream {
                     .flex_1()
                     .min_h_0()
                     .child(content)
-                    .child(
-                        canvas(
-                            |_, _, _| (),
-                            move |_, (), _, cx| {
-                                let ids = std::mem::take(&mut *visible_waits.borrow_mut());
-                                cx.defer(move |cx| {
-                                    let _ = stream.update(cx, |_, cx| {
-                                        cx.emit(StreamEvent::VisibleWaits(ids));
-                                    });
-                                });
-                            },
-                        )
-                        .absolute()
-                        .size_full(),
-                    )
+                    .children(older)
                     .children(jump_to_new),
             )
             .children(self.working(cx))

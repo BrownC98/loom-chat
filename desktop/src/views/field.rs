@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::ops::Range;
 
 use gpui::prelude::FluentBuilder;
@@ -26,6 +27,7 @@ const FORM_RING: f32 = 2.0;
 const NARROW_HEIGHT: f32 = 26.0;
 const CARET: f32 = 1.5;
 const ROUND: f32 = 6.0;
+const UNDO_LIMIT: usize = 64;
 
 pub enum FieldEvent {
     Changed,
@@ -50,6 +52,42 @@ enum Hint {
 
 type Files = Box<dyn Fn(Vec<ClipboardEntry>, &mut Window, &mut App)>;
 
+#[derive(PartialEq, Eq)]
+enum Direction {
+    Back,
+    Forward,
+}
+
+#[derive(PartialEq, Eq)]
+pub(super) enum WordClass {
+    Space,
+    Word,
+    Symbol,
+}
+
+impl WordClass {
+    pub(super) fn of(ch: char) -> Self {
+        if ch.is_whitespace() {
+            Self::Space
+        } else if ch.is_alphanumeric() || ch == '_' {
+            Self::Word
+        } else {
+            Self::Symbol
+        }
+    }
+}
+
+enum HistoryMove {
+    Undo,
+    Redo,
+}
+
+struct Edit {
+    text: String,
+    selected: Range<usize>,
+    reversed: bool,
+}
+
 pub struct Field {
     focus: FocusHandle,
     text: String,
@@ -69,6 +107,8 @@ pub struct Field {
     layout: Option<TextLayout>,
     selecting: bool,
     locked: bool,
+    undo: VecDeque<Edit>,
+    redo: Vec<Edit>,
 }
 
 impl EventEmitter<FieldEvent> for Field {}
@@ -129,6 +169,8 @@ impl Field {
             layout: None,
             selecting: false,
             locked: false,
+            undo: VecDeque::new(),
+            redo: Vec::new(),
         }
     }
 
@@ -198,12 +240,46 @@ impl Field {
     }
 
     fn replace_all(&mut self, text: &str, selected: Range<usize>, cx: &mut Context<Self>) {
+        self.reset(text, selected, cx);
+        cx.emit(FieldEvent::Changed);
+    }
+
+    pub(super) fn reset(&mut self, text: &str, selected: Range<usize>, cx: &mut Context<Self>) {
+        self.undo.clear();
+        self.redo.clear();
         self.text = text.to_owned();
         self.selected = selected;
         self.reversed = false;
         self.set_marked(None, cx);
-        cx.emit(FieldEvent::Changed);
         cx.notify();
+    }
+
+    pub(super) fn mention_start(&self) -> Option<usize> {
+        let cursor = self.cursor();
+        if !self.selected.is_empty() || self.composing() || !self.redo.is_empty() {
+            return None;
+        }
+        let start = cursor.checked_sub(1)?;
+        if self.text.as_bytes()[start] == b'@'
+            && self.text[..start]
+                .chars()
+                .next_back()
+                .is_none_or(char::is_whitespace)
+            && self.text[cursor..]
+                .chars()
+                .next()
+                .is_none_or(char::is_whitespace)
+        {
+            Some(start)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn remove_mention(&mut self, start: usize, window: &Window, cx: &mut Context<Self>) {
+        if self.mention_start() == Some(start) {
+            self.put(start..start + 1, "", window, cx);
+        }
     }
 
     pub fn on_files(
@@ -214,12 +290,7 @@ impl Field {
     }
 
     pub fn clear(&mut self, cx: &mut Context<Self>) {
-        self.text.clear();
-        self.selected = 0..0;
-        self.reversed = false;
-        self.set_marked(None, cx);
-        cx.emit(FieldEvent::Changed);
-        cx.notify();
+        self.replace_all("", 0..0, cx);
     }
 
     fn shown(&self) -> String {
@@ -269,6 +340,38 @@ impl Field {
             .chars()
             .next()
             .map_or(at, |next| at + next.len_utf8())
+    }
+
+    fn word(&self, direction: Direction) -> usize {
+        let at = self.cursor();
+        if direction == Direction::Back {
+            let mut chars = self.text[..at].char_indices().rev().peekable();
+            while chars.peek().is_some_and(|(_, ch)| ch.is_whitespace()) {
+                chars.next();
+            }
+            let Some((mut start, first)) = chars.next() else {
+                return 0;
+            };
+            while let Some((index, _)) =
+                chars.next_if(|(_, ch)| WordClass::of(*ch) == WordClass::of(first))
+            {
+                start = index;
+            }
+            start
+        } else {
+            let mut chars = self.text[at..].char_indices().peekable();
+            if let Some((_, first)) = chars.peek().filter(|(_, ch)| !ch.is_whitespace()) {
+                let class = WordClass::of(*first);
+                while chars
+                    .next_if(|(_, ch)| WordClass::of(*ch) == class)
+                    .is_some()
+                {}
+            }
+            while chars.next_if(|(_, ch)| ch.is_whitespace()).is_some() {}
+            chars
+                .peek()
+                .map_or(self.text.len(), |(index, _)| at + index)
+        }
     }
 
     fn line_start(&self, at: usize) -> usize {
@@ -333,16 +436,53 @@ impl Field {
         self.real_at(found)
     }
 
-    fn put(&mut self, range: Range<usize>, text: &str, window: &Window, cx: &mut Context<Self>) {
-        self.splice(range, text, window, cx);
+    fn snapshot(&self) -> Edit {
+        Edit {
+            text: self.text.clone(),
+            selected: self.selected.clone(),
+            reversed: self.reversed,
+        }
     }
 
-    fn splice(&mut self, range: Range<usize>, text: &str, window: &Window, cx: &mut Context<Self>) {
+    fn save_edit(&mut self) {
+        if self.marked.is_none() {
+            if self.undo.len() == UNDO_LIMIT {
+                self.undo.pop_front();
+            }
+            self.undo.push_back(self.snapshot());
+            self.redo.clear();
+        }
+    }
+
+    fn move_in_history(&mut self, movement: HistoryMove, window: &Window, cx: &mut Context<Self>) {
+        let edit = match movement {
+            HistoryMove::Undo => self.undo.pop_back(),
+            HistoryMove::Redo => self.redo.pop(),
+        };
+        let Some(edit) = edit else { return };
+        let current = Edit {
+            text: std::mem::replace(&mut self.text, edit.text),
+            selected: std::mem::replace(&mut self.selected, edit.selected),
+            reversed: std::mem::replace(&mut self.reversed, edit.reversed),
+        };
+        match movement {
+            HistoryMove::Undo => self.redo.push(current),
+            HistoryMove::Redo => self.undo.push_back(current),
+        }
+        window.notify_text_input_changed(&self.focus);
+        cx.emit(FieldEvent::Changed);
+        cx.notify();
+    }
+
+    fn put(&mut self, range: Range<usize>, text: &str, window: &Window, cx: &mut Context<Self>) {
         let text = if self.multiline {
             text.replace("\r\n", "\n").replace('\r', "\n")
         } else {
             text.replace(['\r', '\n'], " ")
         };
+        if self.text[range.clone()] != text {
+            self.save_edit();
+        }
         self.text.replace_range(range.clone(), &text);
         let end = range.start + text.len();
         self.selected = end..end;
@@ -353,33 +493,56 @@ impl Field {
         cx.notify();
     }
 
-    fn erase(&mut self, forward: bool, window: &Window, cx: &mut Context<Self>) {
-        if self.selected.is_empty() {
+    fn erase(&mut self, other: usize, window: &Window, cx: &mut Context<Self>) {
+        let range = if self.selected.is_empty() {
             let at = self.cursor();
-            let other = if forward {
-                self.after(at)
-            } else {
-                self.before(at)
-            };
-            if other == at {
-                return;
-            }
-            self.selected = at.min(other)..at.max(other);
+            at.min(other)..at.max(other)
+        } else {
+            self.selected.clone()
+        };
+        if !range.is_empty() {
+            self.put(range, "", window, cx);
         }
-        self.put(self.selected.clone(), "", window, cx);
     }
 
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let stroke = &event.keystroke;
         let command = stroke.modifiers.secondary(cx);
         let shift = stroke.modifiers.shift;
-        let other = stroke.modifiers.alt
-            || (stroke.modifiers.control && !command)
-            || (stroke.modifiers.platform && !command);
-        if other || (self.marked.is_some() && !command) {
+        let modifiers = stroke.modifiers;
+        if self.marked.is_some() && !command {
             return;
         }
         if self.locked && !matches!((command, stroke.key.as_str()), (true, "a" | "c")) {
+            return;
+        }
+        let key = stroke.key.as_str();
+        if self.marked.is_none() && !modifiers.platform {
+            match key {
+                "left" | "right" if modifiers.control || modifiers.alt => {
+                    let direction = if key == "left" {
+                        Direction::Back
+                    } else {
+                        Direction::Forward
+                    };
+                    self.go(self.word(direction), shift, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "backspace" if modifiers.control && !modifiers.alt => {
+                    self.erase(self.word(Direction::Back), window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "y" if modifiers.control && !modifiers.alt && !shift => {
+                    self.move_in_history(HistoryMove::Redo, window, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if modifiers.alt || (modifiers.control && !command) || (modifiers.platform && !command) {
             return;
         }
         let handled = match (command, stroke.key.as_str()) {
@@ -416,13 +579,22 @@ impl Field {
                 }
                 true
             }
+            (true, "z") if self.marked.is_none() => {
+                let movement = if shift {
+                    HistoryMove::Redo
+                } else {
+                    HistoryMove::Undo
+                };
+                self.move_in_history(movement, window, cx);
+                true
+            }
             (true, _) => false,
             (false, "backspace") => {
-                self.erase(false, window, cx);
+                self.erase(self.before(self.cursor()), window, cx);
                 true
             }
             (false, "delete") => {
-                self.erase(true, window, cx);
+                self.erase(self.after(self.cursor()), window, cx);
                 true
             }
             (false, "left") => {
@@ -616,6 +788,9 @@ impl EntityInputHandler for Field {
             .or_else(|| self.marked.clone())
             .unwrap_or_else(|| self.selected.clone());
         let start = range.start;
+        if self.text[range.clone()] != *text {
+            self.save_edit();
+        }
         self.text.replace_range(range, text);
         self.set_marked((!text.is_empty()).then(|| start..start + text.len()), cx);
         let start_units = self.byte_to_utf16(start);

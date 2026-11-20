@@ -4,13 +4,16 @@ mod title;
 use api::graph::pty::Pace;
 use gpui::{
     AppContext, Context, Entity, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    MouseDownEvent, ParentElement, Render, Styled, Subscription, Window, div,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
 use super::chat::Chat;
+use super::icons::{Lucide, icon};
+use super::widgets::btn;
+use crate::scale::px;
 use crate::settings::{Dialog, DialogEvent};
 use crate::store::Store;
-use crate::strings::Lang;
+use crate::strings::{Lang, Str};
 use crate::theme::Theme;
 use crate::{fonts, link};
 
@@ -21,6 +24,7 @@ pub struct Shell {
     chat: Entity<Chat>,
     focus: FocusHandle,
     settings: Option<(Entity<Dialog>, Subscription)>,
+    dismissed_startup_notice: Option<String>,
 }
 
 impl Shell {
@@ -41,6 +45,7 @@ impl Shell {
             chat,
             focus: cx.focus_handle(),
             settings: None,
+            dismissed_startup_notice: None,
         }
     }
 
@@ -74,13 +79,44 @@ impl Render for Shell {
         let lang = *cx.global::<Lang>();
         let title = title::bar(window, &theme.colors, lang);
         let status = status::bar(&self.store, self.chat.read(cx).repo(cx), &theme.colors, cx);
-        let notice = self.store.read(cx).notice().map(|notice| {
-            super::dock::ui::note(notice.text.clone(), true, cx)
-                .flex_none()
-                .bg(theme.colors.panel)
-                .border_t_1()
-                .border_color(theme.colors.line)
-        });
+        let store = self.store.read(cx);
+        if store.base().is_some() {
+            self.dismissed_startup_notice = None;
+        }
+        let notice = store
+            .notice()
+            .filter(|notice| self.dismissed_startup_notice.as_ref() != Some(&notice.text))
+            .map(|notice| {
+                div()
+                    .flex()
+                    .items_center()
+                    .flex_none()
+                    .pr(px(12.0))
+                    .bg(theme.colors.panel)
+                    .border_t_1()
+                    .border_color(theme.colors.line)
+                    .child(
+                        super::dock::ui::note(notice.text.clone(), true, cx)
+                            .flex_1()
+                            .min_w_0(),
+                    )
+                    .child(
+                        btn::ghost("shell-dismiss-notice", cx)
+                            .flex_none()
+                            .aria_label(Str::CommonClose.text(lang).to_owned())
+                            .child(icon(Lucide::X, px(14.0), theme.colors.ink_2))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                let store = this.store.read(cx);
+                                if store.base().is_none() {
+                                    this.dismissed_startup_notice =
+                                        store.notice().map(|notice| notice.text.clone());
+                                    cx.notify();
+                                } else {
+                                    this.store.update(cx, |store, cx| store.clear_notice(cx));
+                                }
+                            })),
+                    )
+            });
         div()
             .size_full()
             .flex()
@@ -103,6 +139,7 @@ impl Render for Shell {
                     cx.stop_propagation();
                 } else if stroke.modifiers.secondary(cx)
                     && !stroke.modifiers.alt
+                    && !stroke.modifiers.shift
                     && stroke.key == ","
                 {
                     this.open_settings(window, cx);
@@ -113,18 +150,34 @@ impl Render for Shell {
                 }
             }))
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                if this.settings.is_none() && event.keystroke.key == "escape" {
-                    this.chat
-                        .update(cx, |chat, cx| chat.alert_key(event, window, cx));
+                if this.settings.is_some() {
+                    return;
+                }
+                let stroke = &event.keystroke;
+                if stroke.key == "escape" {
+                    if this
+                        .chat
+                        .update(cx, |chat, cx| chat.close_narrow_side(window, cx))
+                    {
+                        cx.stop_propagation();
+                    } else {
+                        this.chat
+                            .update(cx, |chat, cx| chat.alert_key(event, window, cx));
+                    }
+                } else if stroke.modifiers.secondary(cx)
+                    && !stroke.modifiers.alt
+                    && !stroke.modifiers.shift
+                    && this
+                        .chat
+                        .update(cx, |chat, cx| chat.shortcut(event, window, cx))
+                {
+                    cx.stop_propagation();
                 }
             }))
             .font_family(fonts::UI_FAMILY)
             .on_action(
                 cx.listener(|this, _: &OpenSettings, window, cx| this.open_settings(window, cx)),
             )
-            .capture_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, _, cx| {
-                this.store.update(cx, |store, cx| store.clear_notice(cx));
-            }))
             .child(title)
             .child(div().relative().flex_1().min_h_0().child(self.chat.clone()))
             .children(notice)

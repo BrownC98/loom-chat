@@ -38,7 +38,20 @@ struct Draft {
     follow_up: Option<(NodeId, WaitId)>,
     last_send: Option<i64>,
     recoverable: VecDeque<SentDraft>,
-    error: Option<String>,
+    error: Option<DraftError>,
+}
+
+enum DraftError {
+    Input(String),
+    Send(String),
+}
+
+impl DraftError {
+    fn text(&self) -> &str {
+        match self {
+            Self::Input(text) | Self::Send(text) => text,
+        }
+    }
 }
 
 struct SentDraft {
@@ -87,8 +100,10 @@ impl Draft {
         self._pictures = subscriptions;
         self.pictures
             .update(cx, |pictures, cx| pictures.set_locked(false, cx));
-        self.field
-            .update(cx, |field, cx| field.set_text_at_end(&next.text, cx));
+        self.field.update(cx, |field, cx| {
+            let end = next.text.len();
+            field.reset(&next.text, end..end, cx);
+        });
         previous
     }
 
@@ -123,7 +138,7 @@ impl Draft {
     }
 
     fn mode(&self, plan: &Plan) -> Kind {
-        if plan.queue_only {
+        if !plan.working || plan.queue_only {
             Kind::Queue
         } else {
             self.mode
@@ -153,7 +168,7 @@ pub struct Composer {
     picker: Picker,
     alerts: Alerts,
     viewer: Entity<Viewer>,
-    visible_waits: Vec<WaitId>,
+    room_waits: Vec<WaitId>,
     trigger: FocusHandle,
     cancel: FocusHandle,
     mode_trigger: FocusHandle,
@@ -181,7 +196,7 @@ impl Composer {
             picker: Picker::new(cx),
             alerts,
             viewer,
-            visible_waits: Vec::new(),
+            room_waits: Vec::new(),
             trigger: cx.focus_handle().tab_stop(true),
             cancel: cx.focus_handle().tab_stop(true),
             mode_trigger: cx.focus_handle().tab_stop(true),
@@ -203,7 +218,7 @@ impl Composer {
                 .draft()
                 .is_some_and(|draft| draft.field.read(cx).focused(window));
         if changed {
-            self.picker.open = false;
+            self.picker.dismiss();
             self.mode_menu = false;
             self.review = None;
             self.active = id;
@@ -231,7 +246,16 @@ impl Composer {
                     match event {
                         FieldEvent::Enter => this.submit(SendIntent::Request, window, cx),
                         FieldEvent::Changed => {
+                            if let Some(draft) = this.draft_mut() {
+                                draft.error = None;
+                            }
                             this.review = None;
+                            if !this.picker.open
+                                && field.read(cx).focused(window)
+                                && let Some(at) = field.read(cx).mention_start()
+                            {
+                                this.open_mention(at, window, cx);
+                            }
                             cx.notify();
                         }
                         FieldEvent::Escape => this.cancel_review(window, cx),
@@ -272,7 +296,19 @@ impl Composer {
             );
         }
         let should_focus = focus_moved && data.room().is_some_and(|room| !room.archived);
-        let inset = controls::mode_inset(cx);
+        let working = data
+            .recipients()
+            .is_some_and(|recipients| Catalog::new(recipients).plan(draft.selected()).working);
+        if !working {
+            self.mode_menu = false;
+            self.review = None;
+            draft.mode = Kind::Queue;
+        }
+        let inset = if working {
+            controls::mode_inset(cx)
+        } else {
+            0.0
+        };
         draft.field.update(cx, |field, cx| {
             field.set_inset(controls::ATTACH_INSET, inset, cx);
         });
@@ -301,7 +337,7 @@ impl Composer {
                 && let Some(draft) = this.drafts.get_mut(&error_room)
                 && *draft.pictures == *source
             {
-                draft.error = Some(error.clone());
+                draft.error = Some(DraftError::Input(error.clone()));
                 cx.notify();
             }
         });
@@ -316,9 +352,9 @@ impl Composer {
     }
 
     pub(super) fn set_visible_waits(&mut self, ids: &[WaitId], cx: &mut Context<Self>) {
-        if self.visible_waits != ids {
-            self.visible_waits.clear();
-            self.visible_waits.extend_from_slice(ids);
+        if self.room_waits != ids {
+            self.room_waits.clear();
+            self.room_waits.extend_from_slice(ids);
             cx.notify();
         }
     }
@@ -357,7 +393,7 @@ impl Composer {
         if !self.writable(cx) {
             return;
         }
-        self.picker.open = false;
+        self.picker.dismiss();
         self.replace_targets(vec![Target::Node(node)], cx);
         if let Some(draft) = self.draft_mut() {
             draft.follow_up = Some((node, wait));
@@ -399,8 +435,8 @@ impl Composer {
             draft.quote = Some(quote);
             draft.follow_up = None;
         }
-        self.replace_targets(Vec::new(), cx);
-        self.open_picker(window, cx);
+        self.focus_input(window, cx);
+        cx.notify();
     }
 
     fn replace_targets(&mut self, selected: Vec<Target>, cx: &mut Context<Self>) {
@@ -470,7 +506,7 @@ impl Composer {
 
     fn set_error(&mut self, text: String, cx: &mut Context<Self>) {
         if let Some(draft) = self.draft_mut() {
-            draft.error = Some(text);
+            draft.error = Some(DraftError::Input(text));
             cx.notify();
         }
     }
@@ -479,22 +515,24 @@ impl Composer {
         if !self.writable(cx) || self.picker.open {
             return;
         }
-        let data = self.data.read(cx);
-        let Some((room, recipients)) = data.room().zip(data.recipients()) else {
-            return;
-        };
         let Some(draft) = self.draft() else { return };
         let field = draft.field.read(cx);
         if field.composing() || !draft.has_content(cx) || draft.pictures.read(cx).busy() {
             return;
         }
+        let data = self.data.read(cx);
+        let Some((room, recipients)) = data.room().zip(data.recipients()) else {
+            self.open_picker(window, cx);
+            return;
+        };
         let catalog = Catalog::new(recipients);
         let plan = catalog.plan(draft.selected());
-        if plan.unavailable {
-            self.set_error(unavailable_recipient(cx).into(), cx);
+        if plan.count() == 0 {
+            self.open_picker(window, cx);
             return;
         }
-        if plan.count() == 0 {
+        if plan.unavailable {
+            self.set_error(unavailable_recipient(cx).into(), cx);
             return;
         }
         let mode = draft.mode(&plan);
@@ -586,7 +624,7 @@ impl Composer {
             pictures,
             quote: None,
             selected: draft.selected.clone(),
-            mode: draft.mode,
+            mode: Kind::Queue,
             follow_up: None,
         };
         let saved = draft.replace(empty, subscriptions, cx);
@@ -654,16 +692,17 @@ impl Composer {
             && draft.pictures.read(cx).is_empty()
             && !draft.pictures.read(cx).busy()
             && draft.selected == saved.selected
-            && draft.mode == saved.mode
+            && draft.mode == Kind::Queue
             && draft.follow_up.is_none()
         {
             let subscriptions = Self::observe_pictures(room, &saved.pictures, cx);
             draft.replace(saved, subscriptions, cx);
             draft.last_send = None;
+            draft.error = Some(DraftError::Send(error));
         } else {
             draft.recoverable.push_back(saved);
+            draft.error = Some(DraftError::Input(error));
         }
-        draft.error = Some(error);
         cx.notify();
     }
 
@@ -725,12 +764,9 @@ impl Render for Composer {
                 .size_full(),
             )
             .children(alert);
-        if self.alerts.expanded {
-            return panel;
-        }
         let data = self.data.read(cx);
         let Some((room, draft)) = data.room().zip(self.draft()) else {
-            return div();
+            return panel;
         };
         if room.archived {
             return panel.child(div().text_color(colors.ink_2).child(local(
@@ -764,9 +800,9 @@ fn state_label(state: &api::graph::Status, cx: &App) -> String {
 
 fn mode_label(mode: Kind, cx: &App) -> &'static str {
     match mode {
-        Kind::Queue => local(cx, "일반", "Queue"),
-        Kind::Steer => ui::say(cx, Str::EventsHowSteer),
-        Kind::Interrupt => ui::say(cx, Str::EventsHowInterrupt),
+        Kind::Queue => local(cx, "작업 후 전달", "After work"),
+        Kind::Steer => local(cx, "진행 중 반영", "During work"),
+        Kind::Interrupt => local(cx, "멈추고 전달", "Stop and send"),
     }
 }
 

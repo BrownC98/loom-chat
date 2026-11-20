@@ -4,7 +4,7 @@ use std::sync::Arc;
 use api::graph::chat::{ChatCursor, ChatEntry, ChatItem, ChatTranscriptItem};
 use gpui::{App, Context, Div, ParentElement, Styled, div};
 
-use super::rows::{column, flow, meta, timestamp};
+use super::rows::{badge, column, flow, meta, timestamp};
 use super::{Stream, tr};
 use crate::scale::px;
 use crate::strings::Lang;
@@ -51,15 +51,35 @@ impl Stream {
             format!("{label} · {}", names.join(", "))
         };
         let c = ui::colors(cx);
+        let expanded = self.is_expanded(cursor, cx);
+        let failures = steps
+            .iter()
+            .filter(|step| {
+                matches!(
+                    step.result.unwrap_or(step.item),
+                    ChatTranscriptItem::ToolResult {
+                        failed: Some(true),
+                        ..
+                    }
+                )
+            })
+            .count();
         column()
             .items_start()
             .child(
                 self.expand_button(cursor, div().min_w_0().truncate().child(label), cx)
                     .rounded_full()
                     .border_color(c.line)
-                    .bg(c.surface),
+                    .bg(c.surface)
+                    .children((!expanded && failures > 0).then(|| {
+                        let label = match cx.global::<Lang>() {
+                            Lang::Ko => format!("실패 {failures}"),
+                            Lang::En => format!("{failures} failed"),
+                        };
+                        badge(label, c.err, cx)
+                    })),
             )
-            .children(self.is_expanded(cursor, cx).then(|| {
+            .children(expanded.then(|| {
                 column()
                     .pl(px(12.0))
                     .children(steps.iter().map(|step| step.render(cx)))

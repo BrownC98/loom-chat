@@ -9,7 +9,7 @@ use gpui::{
     StatefulInteractiveElement, Styled, div, uniform_list,
 };
 
-use super::super::{keep_ime_focus, room_title};
+use super::super::{guides, keep_ime_focus, room_title};
 use super::{SideEvent, SideSlot, SideTab, room_waiting, words};
 use crate::scale::px;
 use crate::strings::Lang;
@@ -26,8 +26,6 @@ use hierarchy::{Entry, Index};
 pub(super) use hierarchy::{Member, MemberKey};
 
 const ROW_HEIGHT: f32 = 44.0;
-const GUIDE_WIDTH: f32 = 12.0;
-const GUIDE_DEPTH: usize = 6;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum State {
@@ -65,11 +63,6 @@ impl State {
         };
         div().flex_none().size(px(7.0)).rounded(px(4.0)).bg(color)
     }
-}
-
-enum Action {
-    Room(String),
-    Terminal(NodeId),
 }
 
 struct Row {
@@ -193,10 +186,63 @@ impl Row {
 
     fn render(&self, cx: &Context<SideSlot>) -> Div {
         let c = ui::colors(cx);
-        let room_label = if self.member {
-            words(cx, "1:1 방 열기", "Open 1:1 room")
+        let body = div()
+            .id((gpui::ElementId::from("chat-member-room"), self.id.clone()))
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .children(self.state.map(|state| state.dot(&c)))
+                    .children(self.glyph.map(|glyph| icon(glyph, px(13.0), c.ink_2)))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(self.name.clone()),
+                    )
+                    .children(self.harness.as_ref().map(|harness| {
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_size(px(SMALL))
+                            .text_color(c.ink_2)
+                            .child(harness.clone())
+                    })),
+            )
+            .when(!self.detail.is_empty(), |body| {
+                body.child(
+                    div()
+                        .id(format!("chat-hierarchy-detail-{}", self.id))
+                        .truncate()
+                        .text_size(px(SMALL))
+                        .text_color(c.ink_2)
+                        .tooltip(tip(self.detail.clone()))
+                        .child(self.detail.clone()),
+                )
+            });
+        let body = if let Some(room) = &self.room {
+            let room = room.clone();
+            btn::tabbable(body, cx)
+                .role(Role::Button)
+                .aria_label(self.name.clone())
+                .justify_center()
+                .h_full()
+                .rounded(px(5.0))
+                .cursor_pointer()
+                .hover(move |row| row.bg(c.surface_hover))
+                .capture_any_mouse_down(keep_ime_focus)
+                .on_click(
+                    cx.listener(move |_, _, _, cx| cx.emit(SideEvent::OpenRoom(room.clone()))),
+                )
         } else {
-            words(cx, "방 열기", "Open room")
+            body
         };
         div()
             .w_full()
@@ -204,93 +250,18 @@ impl Row {
             .flex()
             .items_center()
             .gap(px(4.0))
-            .children(guides(&self.guides, &c))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap(px(2.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(5.0))
-                            .children(self.state.map(|state| state.dot(&c)))
-                            .children(self.glyph.map(|glyph| icon(glyph, px(13.0), c.ink_2)))
-                            .child(
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(self.name.clone()),
-                            )
-                            .children(self.harness.as_ref().map(|harness| {
-                                div()
-                                    .min_w_0()
-                                    .truncate()
-                                    .text_size(px(SMALL))
-                                    .text_color(c.ink_2)
-                                    .child(harness.clone())
-                            })),
-                    )
-                    .when(!self.detail.is_empty(), |body| {
-                        body.child(
-                            div()
-                                .id(format!("chat-hierarchy-detail-{}", self.id))
-                                .truncate()
-                                .text_size(px(SMALL))
-                                .text_color(c.ink_2)
-                                .tooltip(tip(self.detail.clone()))
-                                .child(self.detail.clone()),
-                        )
-                    }),
-            )
-            .when(self.member || self.room.is_some(), |row| {
-                row.child(self.button(
-                    "room",
-                    Lucide::MessageCircle,
-                    self.room.as_ref().map(|room| Action::Room(room.clone())),
-                    room_label,
-                    words(cx, "1:1 방 없음", "No 1:1 room"),
-                    cx,
-                ))
-            })
-            .when(self.member, |row| {
-                row.child(self.button(
-                    "terminal",
-                    Lucide::SquareTerminal,
-                    self.terminal.map(Action::Terminal),
-                    words(cx, "터미널 보기", "Show terminal"),
-                    words(cx, "터미널 없음", "No terminal"),
-                    cx,
-                ))
-            })
+            .children(guides(&self.guides, ROW_HEIGHT, cx))
+            .child(body)
+            .when(self.member, |row| row.child(self.terminal_button(cx)))
     }
 
-    fn button(
-        &self,
-        key: &str,
-        glyph: Lucide,
-        action: Option<Action>,
-        label: &'static str,
-        unavailable: &'static str,
-        cx: &Context<SideSlot>,
-    ) -> impl gpui::IntoElement {
+    fn terminal_button(&self, cx: &Context<SideSlot>) -> impl gpui::IntoElement {
         let c = ui::colors(cx);
-        let id = format!("chat-hierarchy-{key}-{}", self.id);
-        let Some(action) = action else {
-            return div()
-                .id(id)
-                .size(px(26.0))
-                .flex_none()
-                .flex()
-                .items_center()
-                .justify_center()
-                .tooltip(tip(unavailable.to_owned()))
-                .child(icon(glyph, px(14.0), c.ink_3));
+        let id = format!("chat-member-terminal-{}", self.id);
+        let Some(node) = self.terminal else {
+            return div().id(id).size(px(26.0)).flex_none();
         };
+        let label = words(cx, "터미널 보기", "Show terminal");
         btn::ghost(id, cx)
             .role(Role::Button)
             .aria_label(format!("{} · {label}", self.name))
@@ -299,53 +270,12 @@ impl Row {
             .flex_none()
             .justify_center()
             .tooltip(tip(label.to_owned()))
-            .child(icon(glyph, px(14.0), c.ink_2))
-            .when(matches!(action, Action::Room(_)), |button| {
-                button.capture_any_mouse_down(keep_ime_focus)
-            })
-            .on_click(cx.listener(move |this, _, window, cx| match &action {
-                Action::Room(room) => cx.emit(SideEvent::OpenRoom(room.clone())),
-                Action::Terminal(node) => {
-                    this.show(SideTab::Terminal, cx);
-                    this.member = Some(MemberKey::Local(*node));
-                    window.focus(&this.tab_focus[SideTab::Terminal as usize], cx);
-                }
+            .child(icon(Lucide::SquareTerminal, px(14.0), c.ink_2))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.inspect_terminal(node, cx);
+                this.focus_tab(window, cx);
             }))
     }
-}
-
-fn guides(guides: &[bool], c: &Colors) -> Option<Div> {
-    let (&continues, ancestors) = guides.split_last()?;
-    let ancestors = &ancestors[ancestors.len().saturating_sub(GUIDE_DEPTH - 1)..];
-    let columns = ancestors.iter().map(|&continues| {
-        div().w(px(GUIDE_WIDTH)).when(continues, |column| {
-            column.child(div().ml(px(4.0)).h_full().w(px(1.0)).bg(c.line_strong))
-        })
-    });
-    let elbow_at = ROW_HEIGHT / 2.0 - 8.0;
-    Some(
-        div().flex().flex_none().h_full().children(columns).child(
-            div()
-                .w(px(GUIDE_WIDTH))
-                .relative()
-                .child(
-                    div()
-                        .ml(px(4.0))
-                        .w(px(1.0))
-                        .h(px(if continues { ROW_HEIGHT } else { elbow_at }))
-                        .bg(c.line_strong),
-                )
-                .child(
-                    div()
-                        .absolute()
-                        .left(px(4.0))
-                        .top(px(elbow_at))
-                        .right_0()
-                        .h(px(1.0))
-                        .bg(c.line_strong),
-                ),
-        ),
-    )
 }
 
 fn member_count(count: usize, cx: &App) -> String {
@@ -531,7 +461,7 @@ impl SideSlot {
                     div()
                         .flex_none()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .child(words(cx, "위계", "Hierarchy")),
+                        .child(SideTab::Members.label(cx)),
                 )
                 .child(
                     div()

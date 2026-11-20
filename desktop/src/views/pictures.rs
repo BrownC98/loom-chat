@@ -15,7 +15,7 @@ use super::tooltip::tip;
 use super::widgets::btn;
 use crate::scale::fixed as px;
 use crate::store::Store;
-use crate::strings::Str;
+use crate::strings::{Lang, Str};
 
 pub const MEGABYTE: u64 = 1024 * 1024;
 pub const LIMIT_MEGABYTES: u64 = 32;
@@ -259,9 +259,10 @@ impl Pictures {
                                     ui::say_with(cx, Str::TerminalFolder, &[("name", &name)])
                                 }
                                 Unreadable::Big(name, bytes) => too_big(&name, bytes, cx),
-                                Unreadable::NotFile(name) => {
-                                    format!("{name}은 일반 파일이 아닙니다.")
-                                }
+                                Unreadable::NotFile(name) => match cx.global::<Lang>() {
+                                    Lang::Ko => format!("일반 파일만 첨부할 수 있습니다. ({name})"),
+                                    Lang::En => format!("{name} is not a regular file."),
+                                },
                                 Unreadable::Io(text) => text,
                             };
                             cx.emit(PicturesEvent::Refused(text));
@@ -442,7 +443,10 @@ pub fn chips(
             };
             let label = match image.file.content {
                 Content::Image(_) => format!("{} · {name}", ui::say(cx, Str::InboxRemoveImage)),
-                Content::File(_) => format!("{name} 빼기"),
+                Content::File(_) => match cx.global::<Lang>() {
+                    Lang::Ko => format!("{name} 빼기"),
+                    Lang::En => format!("Remove {name}"),
+                },
             };
             let removable = !pictures.read(cx).locked && !matches!(image.state, Upload::Busy);
             div()

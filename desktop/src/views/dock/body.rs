@@ -16,6 +16,7 @@ use super::ui;
 use crate::scale::fixed as px;
 use crate::store::Store;
 use crate::strings::Str;
+use crate::views::field::WordClass;
 use crate::views::icons::{Lucide, icon};
 use crate::views::prose::prose;
 use crate::views::tooltip::tip;
@@ -121,7 +122,7 @@ pub fn tail(id: ElementId, doc: &WaitDoc, color: Rgba, cx: &App, follow: &Follow
         .on_click(move |_, _, cx| follow(target.clone(), cx))
 }
 
-pub fn inline(
+fn inline(
     id: ElementId,
     parts: &[TextPart],
     plain: &str,
@@ -237,6 +238,50 @@ struct Document {
 }
 
 impl Document {
+    fn word_at(&self, section: &Section, offset: usize) -> Range<usize> {
+        let end = section.offset + section.len;
+        let offset = offset.min(end);
+        let start = if offset == end {
+            self.text[..offset]
+                .char_indices()
+                .next_back()
+                .map_or(offset, |(at, _)| at)
+        } else {
+            offset
+        };
+        let word = &self.text[section.offset..end];
+        let local = start.saturating_sub(section.offset);
+        let Some(ch) = word[local..].chars().next() else {
+            return offset..offset;
+        };
+        let class = WordClass::of(ch);
+        let before = word[..local]
+            .char_indices()
+            .rev()
+            .take_while(|(_, ch)| WordClass::of(*ch) == class)
+            .last()
+            .map_or(local, |(index, _)| index);
+        let after = word[local..]
+            .char_indices()
+            .find(|(_, ch)| WordClass::of(*ch) != class)
+            .map_or(word.len(), |(index, _)| local + index);
+        section.offset + before..section.offset + after
+    }
+
+    fn line_at(&self, section: &Section, position: Point<Pixels>) -> Range<usize> {
+        let bounds = section.layout.bounds();
+        let edge = |x| {
+            let point = gpui::point(x, position.y);
+            let index = section
+                .layout
+                .index_for_position(point)
+                .unwrap_or_else(|index| index);
+            self.text
+                .floor_char_boundary(section.offset + index.min(section.len))
+        };
+        edge(bounds.left() - px(1.0))..edge(bounds.right() + px(1.0))
+    }
+
     fn at(&self, point: Point<Pixels>) -> Option<(&Section, usize)> {
         let section = self.sections.iter().min_by_key(|section| {
             let bounds = section.layout.bounds();
@@ -307,7 +352,7 @@ impl Selectable {
             ..shown.floor_char_boundary(self.range.end.saturating_sub(offset).min(len));
         let c = ui::colors(cx);
         let selected = HighlightStyle {
-            background_color: Some(c.accent_wash.into()),
+            background_color: Some(c.accent.opacity(0.25).into()),
             ..Default::default()
         };
         let styles = if range.is_empty() {
@@ -334,16 +379,21 @@ impl Selectable {
             .on_mouse_down(MouseButton::Left, {
                 let (document, selection) = (document.clone(), selection.clone());
                 move |event, window, cx| {
-                    let Some((_, offset)) = document.at(event.position) else {
+                    let Some((section, offset)) = document.at(event.position) else {
                         return;
                     };
                     focus.focus(window, cx);
+                    let range = match event.click_count {
+                        0 | 1 => offset..offset,
+                        2 => document.word_at(section, offset),
+                        _ => document.line_at(section, event.position),
+                    };
                     selection.update(cx, |selection, cx| {
-                        if !event.modifiers.shift {
-                            selection.anchor = offset;
+                        if !event.modifiers.shift || event.click_count > 1 {
+                            selection.anchor = range.start;
                         }
-                        selection.head = offset;
-                        selection.down = true;
+                        selection.head = range.end;
+                        selection.down = event.click_count <= 1;
                         cx.notify();
                     });
                 }

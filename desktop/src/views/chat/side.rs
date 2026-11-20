@@ -46,7 +46,7 @@ impl SideTab {
 
     pub(super) fn icon(self) -> Lucide {
         match self {
-            Self::Members => Lucide::Workflow,
+            Self::Members => Lucide::Users,
             Self::Terminal => Lucide::SquareTerminal,
             Self::Docs => Lucide::FileText,
             Self::History => Lucide::AlignLeft,
@@ -56,6 +56,7 @@ impl SideTab {
 
 pub enum SideEvent {
     OpenRoom(String),
+    Close,
 }
 
 pub struct SideSlot {
@@ -116,6 +117,12 @@ impl SideSlot {
         self.panel.as_ref().map(Panel::tab)
     }
 
+    pub(super) fn focus_tab(&self, window: &mut Window, cx: &mut App) {
+        if let Some(tab) = self.tab() {
+            window.focus(&self.tab_focus[tab as usize], cx);
+        }
+    }
+
     pub fn show(&mut self, tab: SideTab, cx: &mut Context<Self>) {
         self.sync_room(cx);
         if self.tab() != Some(tab) {
@@ -123,6 +130,12 @@ impl SideSlot {
             self.panel = Some(Panel::open(tab, &self.data, cx));
             cx.notify();
         }
+    }
+
+    pub(super) fn inspect_terminal(&mut self, node: api::ids::NodeId, cx: &mut Context<Self>) {
+        self.show(SideTab::Terminal, cx);
+        self.member = Some(MemberKey::Local(node));
+        cx.notify();
     }
 
     pub fn hide(&mut self, cx: &mut Context<Self>) {
@@ -140,14 +153,24 @@ impl SideSlot {
     }
 
     fn sync_room(&mut self, cx: &mut Context<Self>) {
-        let room = self.data.read(cx).room().map(|room| &room.id);
-        if self.room.as_ref() == room {
+        let room = self.data.read(cx).room();
+        if self.room.as_ref() == room.map(|room| &room.id) {
             return;
         }
-        self.room = room.cloned();
+        let missing_terminal = self.tab() == Some(SideTab::Terminal)
+            && room.is_none_or(|room| {
+                room.archived
+                    || !self
+                        .members(room, cx)
+                        .iter()
+                        .any(|member| member.terminal().is_some())
+            });
+        self.room = room.map(|room| room.id.clone());
         self.member = None;
         self.clear_tab(cx);
-        if let Some(Panel::History(history)) = &mut self.panel {
+        if missing_terminal {
+            self.panel = Some(Panel::Members);
+        } else if let Some(Panel::History(history)) = &mut self.panel {
             history.reset();
         }
     }
@@ -234,7 +257,7 @@ impl SideSlot {
                     .justify_center()
                     .tooltip(tip(close.to_owned()))
                     .child(icon(Lucide::X, px(14.0), c.ink_2))
-                    .on_click(cx.listener(|this, _, _, cx| this.hide(cx))),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(SideEvent::Close))),
             )
     }
 }

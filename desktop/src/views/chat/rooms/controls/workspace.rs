@@ -20,7 +20,7 @@ use crate::views::ui::{SMALL, TEXT, colors, say};
 use crate::views::widgets::btn;
 
 use super::{
-    Index, Overlay, Panel, Rooms, below, calls, chevron, option, place_of, words, work_in,
+    Index, Overlay, Panel, Removal, Rooms, below, calls, chevron, option, place_of, words, work_in,
     work_label,
 };
 use crate::views::chat::rooms::{RoomsEvent, badge};
@@ -69,7 +69,11 @@ impl Rooms {
                 self.tool(
                     "chat-settings",
                     Lucide::Settings,
-                    say(cx, Str::SettingsTitle),
+                    if cfg!(target_os = "macos") {
+                        words(cx, "설정 (⌘+,)", "Settings (⌘+,)")
+                    } else {
+                        words(cx, "설정 (Ctrl+,)", "Settings (Ctrl+,)")
+                    },
                     cx,
                 )
                 .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
@@ -217,9 +221,11 @@ impl Rooms {
         if self.starting_scratch {
             return;
         }
-        self.open_panel(Panel::AgentPlace, at, window, cx);
+        self.action_error = None;
         self.starting_scratch = true;
+        cx.notify();
         cx.emit(RoomsEvent::ScratchChanged);
+        let from_picker = self.overlay.is_some();
         let store = self.store(cx);
         let task = store.read(cx).call(cx, |base| {
             link::post::<RepoView>(base, "/api/repos/scratch", None)
@@ -235,26 +241,19 @@ impl Rooms {
                 cx.notify();
                 match result {
                     Ok(repo)
-                        if matches!(
-                            this.overlay,
-                            Some(Overlay::Panel {
-                                panel: Panel::AgentPlace,
-                                ..
-                            })
-                        ) =>
+                        if if from_picker {
+                            matches!(
+                                this.overlay,
+                                Some(Overlay::Panel {
+                                    panel: Panel::AgentPlace,
+                                    ..
+                                })
+                            )
+                        } else {
+                            this.overlay.is_none()
+                        } =>
                     {
-                        let place = Place {
-                            repo: repo.id,
-                            worktree: repo.path,
-                        };
-                        this.open_agent(
-                            place,
-                            words(cx, "저장소 없는 작업공간", "Workspace without a repository")
-                                .to_owned(),
-                            at,
-                            window,
-                            cx,
-                        );
+                        this.agent_at_repo(&repo, at, window, cx);
                     }
                     Ok(_) => {}
                     Err(error) => {
@@ -301,6 +300,8 @@ impl Rooms {
                     working += usize::from(matches!(node.status, Status::Working { .. }));
                     asked += usize::from(matches!(node.status, Status::Human));
                 }
+                let agent_repo = repo.clone();
+                let remove_name = repo.name.clone();
                 let git = repo.git;
                 let lang = *cx.global::<Lang>();
                 let status = match lang {
@@ -366,7 +367,22 @@ impl Rooms {
                         div()
                             .flex()
                             .justify_end()
+                            .flex_wrap()
                             .gap(px(3.0))
+                            .child(
+                                btn::ghost(("chat-new-agent-in", id.0), cx)
+                                    .child(words(cx, "새 에이전트", "New agent"))
+                                    .on_click(cx.listener(
+                                        move |this, event: &ClickEvent, window, cx| {
+                                            this.agent_at_repo(
+                                                &agent_repo,
+                                                below(event),
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
+                            )
                             .when(git, |row| {
                                 let create = btn::ghost(("chat-new-worktree-in", id.0), cx)
                                     .child(say(cx, Str::RepoNewWorktree));
@@ -392,10 +408,20 @@ impl Rooms {
                             })
                             .child(
                                 btn::ghost(("chat-remove-workspace", id.0), cx)
-                                    .child(say(cx, Str::TreeRemoveRepo))
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.remove_workspace(id, cx)
-                                    })),
+                                    .child(words(cx, "작업공간 빼기", "Remove workspace"))
+                                    .on_click(cx.listener(
+                                        move |this, event: &ClickEvent, window, cx| {
+                                            this.open_panel(
+                                                Panel::Confirm(
+                                                    Removal::Workspace(id),
+                                                    remove_name.clone(),
+                                                ),
+                                                below(event),
+                                                window,
+                                                cx,
+                                            );
+                                        },
+                                    )),
                             ),
                     )
             }))
@@ -412,7 +438,7 @@ impl Rooms {
             )
     }
 
-    fn remove_workspace(&mut self, repo: RepoId, cx: &mut Context<Self>) {
+    pub(super) fn remove_workspace(&mut self, repo: RepoId, cx: &mut Context<Self>) {
         self.action_error = None;
         let store = self.store(cx);
         cardlink::run(
@@ -452,18 +478,20 @@ impl Rooms {
                 )
                 .on_click(cx.listener(move |this, _, window, cx| this.new_agent(at, window, cx))),
             )
-            .child(
-                option(
-                    "chat-new-room-option",
-                    Lucide::MessageCircle,
-                    words(cx, "새 방", "New room"),
-                    cx,
+            .when(!index.nodes.is_empty(), |menu| {
+                menu.child(
+                    option(
+                        "chat-new-room-option",
+                        Lucide::MessageCircle,
+                        words(cx, "새 방", "New room"),
+                        cx,
+                    )
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close_overlay(window, cx);
+                        this.create.update(cx, |create, cx| create.open(window, cx));
+                    })),
                 )
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.close_overlay(window, cx);
-                    this.create.update(cx, |create, cx| create.open(window, cx));
-                })),
-            )
+            })
             .when(has_git, |menu| {
                 menu.child(
                     option(
@@ -490,7 +518,12 @@ impl Rooms {
             )
     }
 
-    fn new_agent(&mut self, at: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(in crate::views::chat) fn new_agent(
+        &mut self,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let index = Index::new(self.data.read(cx), cx);
         let place = self.data.read(cx).room().and_then(|room| match &room.kind {
             ChatRoomKind::Work { place } => Some(place),
@@ -518,6 +551,20 @@ impl Rooms {
         } else {
             self.open_panel(Panel::AgentPlace, at, window, cx);
         }
+    }
+
+    pub(super) fn agent_at_repo(
+        &mut self,
+        repo: &RepoView,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let place = Place {
+            repo: repo.id,
+            worktree: repo.path.clone(),
+        };
+        self.open_agent(place, repo.name.clone(), at, window, cx);
     }
 
     fn scoped_repos<'a>(&self, index: &Index<'a>) -> Vec<&'a RepoView> {

@@ -760,7 +760,8 @@ fn icons(manifest: &std::path::Path, lucide_sources: &[&str], agent_mark: &str) 
     let mut paths = String::new();
     let mut assets = String::new();
     let mut files = BTreeSet::new();
-    let names = lucide_names(lucide_sources);
+    let mut names = lucide_names(lucide_sources);
+    names.insert("Users".to_owned());
     for name in &names {
         let line = index
             .lines()

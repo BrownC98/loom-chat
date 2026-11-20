@@ -8,6 +8,7 @@ mod terminal;
 
 pub use accounts::login;
 pub use agents::parts::{keep_focus, modal};
+pub use display::reset_colors;
 
 use gpui::{App, Window};
 

@@ -6,10 +6,11 @@ use gpui::{
 
 use crate::fonts;
 use crate::scale::px;
+use crate::settings::dialog::Disclosure;
 use crate::settings::widgets::{field_reset, tabbable};
 use crate::settings::{Ctx, Section};
 use crate::store::Store;
-use crate::strings::Str;
+use crate::strings::{Lang, Str};
 use crate::views::dock::ui::{SMALL, TEXT, colors, open_url, say, say_with};
 use crate::views::icons::{Lucide, agent_mark, icon};
 
@@ -37,6 +38,7 @@ pub struct State {
     more: Shared<Option<bool>>,
     limits: limits::State,
     roles: roles::State,
+    advanced: Disclosure,
 }
 
 fn rescan(store: &Entity<Store>, scan: Bound<Scan>, cx: &mut App) {
@@ -68,13 +70,27 @@ pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App)
     }
     let loaded = loaded.as_deref().map(Vec::as_slice);
     let agents = loaded.unwrap_or_default();
-    vec![
+    let mut sections = vec![
         installed(state, loaded, ctx, cx),
         missing(state, agents, ctx, cx),
-        skills::section(ctx, cx),
-        roles::section(&mut state.roles, agents, ctx, window, cx),
-        limits::section(&mut state.limits, ctx, window, cx),
-    ]
+    ];
+    let label = match cx.global::<Lang>() {
+        Lang::Ko => "고급 (다중 에이전트 협업)",
+        Lang::En => "Advanced (multi-agent collaboration)",
+    };
+    sections.extend(
+        state
+            .advanced
+            .sections("agents-advanced", label, ctx, cx, |cx| {
+                let mut advanced = vec![skills::section(ctx, cx)];
+                if ctx.view.always_on.o_mode {
+                    advanced.push(roles::section(&mut state.roles, agents, ctx, window, cx));
+                }
+                advanced.push(limits::section(&mut state.limits, ctx, window, cx));
+                advanced
+            }),
+    );
+    sections
 }
 
 fn at_places(agent: &AgentView) -> impl Iterator<Item = &AgentAt> {

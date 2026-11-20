@@ -1,26 +1,21 @@
-use std::cell::Cell;
-use std::rc::Rc;
-
-use api::settings::{FloatSize, HexColor, Language, Theme as ThemeSetting, ThemedColor, UiColors};
+use api::settings::{HexColor, ThemedColor, UiColors};
 use gpui::prelude::FluentBuilder as _;
 use gpui::{
     Anchor, App, AppContext, Div, ElementId, Entity, FocusHandle, FontWeight, InteractiveElement,
-    IntoElement, MouseButton, ParentElement, Rgba, SharedString, Stateful,
-    StatefulInteractiveElement, Styled, Subscription, WeakEntity, Window, anchored, deferred, div,
-    point,
+    IntoElement, MouseButton, ParentElement, Rgba, Stateful, StatefulInteractiveElement, Styled,
+    Subscription, WeakEntity, Window, anchored, deferred, div, point,
 };
 use serde_json::Value;
 
 use super::agents::parts::badge;
 use crate::fonts::latin_mono;
-use crate::scale::{self, px};
+use crate::scale::px;
+use crate::settings::dialog::Disclosure;
+use crate::settings::patch;
 use crate::settings::widgets::button;
-use crate::settings::widgets::{
-    Label, Select, SelectEvent, Text, TextEvent, field_reset, inert, segmented, segmented_on,
-    tabbable,
-};
+use crate::settings::widgets::{Text, TextEvent, inert, tabbable};
 use crate::settings::{Ctx, Dialog, Section, Writer};
-use crate::strings::Str;
+use crate::strings::{Lang, Str};
 use crate::theme::{self, Colors, Scheme, Theme, luminance_of, mix, ratio};
 use crate::views::dock::ui::{GAP, SMALL, TEXT, colors, say, say_with};
 use crate::views::icons::{Lucide, icon};
@@ -39,6 +34,7 @@ const RING: f32 = 4.0;
 const DISABLED: f32 = 0.6;
 
 struct Row {
+    key: &'static str,
     name: Str,
     usage: Str,
     slot: fn(&UiColors) -> &ThemedColor,
@@ -47,8 +43,9 @@ struct Row {
     against: fn(&Colors) -> Rgba,
 }
 
-const ROWS: [Row; 9] = [
+const ROWS: [Row; 6] = [
     Row {
+        key: "warn",
         name: Str::ColorsNameWarn,
         usage: Str::ColorsUseWarn,
         slot: |c| &c.warn,
@@ -57,6 +54,7 @@ const ROWS: [Row; 9] = [
         against: |c| c.warn_ink,
     },
     Row {
+        key: "run",
         name: Str::ColorsNameRun,
         usage: Str::ColorsUseRun,
         slot: |c| &c.run,
@@ -65,6 +63,7 @@ const ROWS: [Row; 9] = [
         against: |c| c.surface,
     },
     Row {
+        key: "ok",
         name: Str::ColorsNameOk,
         usage: Str::ColorsUseOk,
         slot: |c| &c.ok,
@@ -73,6 +72,7 @@ const ROWS: [Row; 9] = [
         against: |c| c.surface,
     },
     Row {
+        key: "err",
         name: Str::ColorsNameErr,
         usage: Str::ColorsUseErr,
         slot: |c| &c.err,
@@ -81,30 +81,7 @@ const ROWS: [Row; 9] = [
         against: |c| c.err_ink,
     },
     Row {
-        name: Str::ColorsNameEdge,
-        usage: Str::ColorsUseEdge,
-        slot: |c| &c.edge,
-        slot_mut: |c| &mut c.edge,
-        paint: |c| c.edge,
-        against: |c| c.bg,
-    },
-    Row {
-        name: Str::ColorsNameRepo,
-        usage: Str::ColorsUseRepo,
-        slot: |c| &c.repo,
-        slot_mut: |c| &mut c.repo,
-        paint: |c| c.repo_line,
-        against: |c| c.bg,
-    },
-    Row {
-        name: Str::ColorsNameWorktree,
-        usage: Str::ColorsUseWorktree,
-        slot: |c| &c.worktree,
-        slot_mut: |c| &mut c.worktree,
-        paint: |c| c.group_line,
-        against: |c| c.bg,
-    },
-    Row {
+        key: "notice",
         name: Str::ColorsNameNotice,
         usage: Str::ColorsUseNotice,
         slot: |c| &c.notice,
@@ -113,6 +90,7 @@ const ROWS: [Row; 9] = [
         against: |c| c.notice_ink,
     },
     Row {
+        key: "accent",
         name: Str::ColorsNameAccent,
         usage: Str::ColorsUseAccent,
         slot: |c| &c.accent,
@@ -121,6 +99,10 @@ const ROWS: [Row; 9] = [
         against: |c| c.accent_ink,
     },
 ];
+
+pub fn reset_colors() -> Value {
+    patch::nulls(&ROWS.map(|row| row.key))
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Target {
@@ -137,11 +119,14 @@ struct Pop {
 
 #[derive(Default)]
 pub struct State {
-    ui_size_hover: Rc<Cell<Option<FloatSize>>>,
-    pop: Option<Entity<Pop>>,
-    hex: Option<Entity<Text>>,
-    language: Option<Entity<Select>>,
-    subs: Vec<Subscription>,
+    advanced: Disclosure,
+    picker: Option<Picker>,
+}
+
+struct Picker {
+    pop: Entity<Pop>,
+    hex: Entity<Text>,
+    _sub: Subscription,
 }
 
 fn parse(text: &str) -> Option<HexColor> {
@@ -222,184 +207,45 @@ fn halves(
         .child(div().flex_1().h_full().bg(dark))
 }
 
-fn setup(
-    state: &mut State,
-    ctx: &Ctx,
-    window: &mut Window,
-    cx: &mut App,
-) -> (Entity<Pop>, Entity<Text>, Entity<Select>) {
-    if let (Some(pop), Some(hex), Some(language)) = (&state.pop, &state.hex, &state.language) {
-        return (pop.clone(), hex.clone(), language.clone());
+impl Picker {
+    fn new(ctx: &Ctx, window: &mut Window, cx: &mut App) -> Self {
+        let pop = cx.new(|cx| Pop {
+            focus: cx.focus_handle(),
+            open: None,
+            target: Target::Both,
+            presets: Vec::new(),
+        });
+        let hex = cx.new(|cx| Text::narrow("#rrggbb", window, cx));
+        let (for_event, writer, dialog) = (pop.clone(), ctx.writer.clone(), ctx.dialog.clone());
+        let sub = cx.subscribe(&hex, move |_, event: &TextEvent, cx| {
+            let TextEvent::Commit(text) = event;
+            let pop = for_event.read(cx);
+            if let (Some(row), Some(hex)) = (pop.open, parse(text.trim())) {
+                pick(&writer, row, pop.target, Some(hex), cx);
+            }
+            let _ = dialog.update(cx, |_, cx| cx.notify());
+        });
+        Self {
+            pop,
+            hex,
+            _sub: sub,
+        }
     }
-    let pop = cx.new(|cx| Pop {
-        focus: cx.focus_handle(),
-        open: None,
-        target: Target::Both,
-        presets: Vec::new(),
-    });
-    let hex = cx.new(|cx| Text::narrow("#rrggbb", window, cx));
-    let language = cx.new(|cx| Select::new("language", cx).full());
-    {
-        let (pop, writer, dialog) = (pop.clone(), ctx.writer.clone(), ctx.dialog.clone());
-        state
-            .subs
-            .push(cx.subscribe(&hex, move |_, event: &TextEvent, cx| {
-                let TextEvent::Commit(text) = event;
-                let (open, target) = {
-                    let pop = pop.read(cx);
-                    (pop.open, pop.target)
-                };
-                if let (Some(row), Some(hex)) = (open, parse(text.trim())) {
-                    pick(&writer, row, target, Some(hex), cx);
-                }
-                let _ = dialog.update(cx, |_, cx| cx.notify());
-            }));
-    }
-    {
-        let writer = ctx.writer.clone();
-        state
-            .subs
-            .push(cx.subscribe(&language, move |_, event: &SelectEvent, cx| {
-                let SelectEvent::Pick(index) = event;
-                let chosen = [Language::System, Language::En, Language::Ko][*index];
-                writer.edit(cx, move |settings| settings.language = chosen);
-            }));
-    }
-    state.pop = Some(pop.clone());
-    state.hex = Some(hex.clone());
-    state.language = Some(language.clone());
-    (pop, hex, language)
 }
 
 pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App) -> Vec<Section> {
-    let (pop, hex, language) = setup(state, ctx, window, cx);
-    vec![
-        theme_section(ctx, cx),
-        size_section(&state.ui_size_hover, ctx, cx),
-        colors_section(&pop, &hex, ctx, window, cx),
-        language_section(&language, ctx, cx),
-    ]
-}
-
-fn size_section(hovered: &Rc<Cell<Option<FloatSize>>>, ctx: &Ctx, cx: &App) -> Section {
-    let c = colors(cx);
-    let mut section = Section::new(Some(say(cx, Str::FloatSizeUiSize)), ctx);
-    let choices = [
-        (FloatSize::Small, Str::FloatSizeSmall),
-        (FloatSize::Normal, Str::FloatSizeNormal),
-        (FloatSize::Large, Str::FloatSizeLarge),
-        (FloatSize::Huge, Str::FloatSizeHuge),
-    ];
-    let sizes = choices
-        .iter()
-        .map(|&(size, label)| {
-            let text = say(cx, label);
-            let _ = section.text(text, cx);
-            (size, SharedString::from(text))
-        })
-        .collect();
-    let writer = ctx.writer.clone();
-    let preview = hovered.clone();
-    let radios = segmented_on(
-        "display-ui-size",
-        sizes,
-        ctx.view.ui_size,
-        move |size, _, cx| writer.edit(cx, |view| view.ui_size = size),
-        Some(move |size, window: &mut Window, _: &mut App| {
-            if preview.replace(size) != size {
-                window.refresh();
-            }
-        }),
-        cx,
-    );
-    let size = hovered.get().unwrap_or(ctx.view.ui_size);
-    let sample = section.text(say(cx, Str::FloatSizeSampleAsk), cx);
-    let label = choices
-        .iter()
-        .find(|(value, _)| *value == size)
-        .map_or("", |(_, label)| say(cx, *label));
-    let caption = section.text(&say_with(cx, Str::FloatSizePreview, &[("size", label)]), cx);
-    let hint = section.text(say(cx, Str::FloatSizeUiSizeHint), cx);
-    let example = div()
-        .min_h(px(62.0))
-        .flex()
-        .flex_col()
-        .items_start()
-        .gap(px(4.0))
-        .text_color(c.ink_2)
-        .child(div().text_size(px(SMALL)).child(caption))
-        .child(
-            div()
-                .rounded(px(6.0))
-                .px(px(10.0))
-                .py(px(4.0))
-                .bg(c.accent_wash)
-                .text_color(c.ink)
-                .text_size(scale::fixed(TEXT * scale::zoom(size)))
-                .child(sample),
-        );
-    section
-        .beside(field_reset("reset-ui-size", &["uiSize"], ctx, cx))
-        .child(radios)
-        .child(example)
-        .child(div().text_size(px(SMALL)).text_color(c.ink_3).child(hint))
-}
-
-fn theme_section(ctx: &Ctx, cx: &mut App) -> Section {
-    let c = colors(cx);
-    let mut section = Section::new(Some(say(cx, Str::ThemeHeading)), ctx);
-    let items: Vec<(ThemeSetting, Label)> = [
-        (ThemeSetting::System, Str::CommonSystem, Lucide::Monitor),
-        (ThemeSetting::Light, Str::ThemeLight, Lucide::Sun),
-        (ThemeSetting::Dark, Str::ThemeDark, Lucide::Moon),
-    ]
-    .into_iter()
-    .map(|(value, label, glyph)| {
-        let _ = section.text(say(cx, label), cx);
-        (
-            value,
-            Label::with_icon(SharedString::from(say(cx, label)), glyph),
-        )
-    })
-    .collect();
-    let writer = ctx.writer.clone();
-    let row = div().flex().items_center().gap(px(GAP)).child(segmented(
-        "theme",
-        items,
-        ctx.view.theme,
-        move |value, _, cx| writer.edit(cx, |settings| settings.theme = value),
-        cx,
-    ));
-    let hint = section.text(say(cx, Str::ThemeSystemHint), cx);
-    section
-        .beside(field_reset("reset-theme", &["theme"], ctx, cx))
-        .child(row)
-        .child(div().text_size(px(SMALL)).text_color(c.ink_3).child(hint))
-}
-
-fn language_section(select: &Entity<Select>, ctx: &Ctx, cx: &mut App) -> Section {
-    let mut section = Section::new(Some(say(cx, Str::SettingsLanguage)), ctx);
-    let items: Vec<SharedString> = [Str::CommonSystem, Str::LanguageNameEn, Str::LanguageNameKo]
-        .into_iter()
-        .map(|label| {
-            let _ = section.text(say(cx, label), cx);
-            SharedString::from(say(cx, label))
-        })
-        .collect();
-    let current = match ctx.view.language {
-        Language::System => 0,
-        Language::En => 1,
-        Language::Ko => 2,
+    let label = match cx.global::<Lang>() {
+        Lang::Ko => "고급 색 설정",
+        Lang::En => "Advanced colors",
     };
-    select.update(cx, |select, cx| select.show(items, current, cx));
-    let row = div()
-        .flex()
-        .items_center()
-        .gap(px(GAP))
-        .child(select.clone());
-    section
-        .beside(field_reset("reset-language", &["language"], ctx, cx))
-        .child(row)
+    state
+        .advanced
+        .sections("display-advanced-colors", label, ctx, cx, |cx| {
+            let picker = state
+                .picker
+                .get_or_insert_with(|| Picker::new(ctx, window, cx));
+            vec![colors_section(&picker.pop, &picker.hex, ctx, window, cx)]
+        })
 }
 
 fn colors_section(
@@ -621,30 +467,9 @@ fn colors_section(
         .child(waiting)
         .child(dot(now.run))
         .child(dot(now.ok))
-        .child(dot(now.err))
-        .child(
-            div()
-                .flex()
-                .p(px(4.0))
-                .rounded(px(8.0))
-                .border_2()
-                .border_color(now.repo_line)
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .p(px(4.0))
-                        .rounded(px(6.0))
-                        .border_2()
-                        .border_color(now.group_line)
-                        .child(sample_card(now))
-                        .child(div().w(px(14.0)).h(px(2.0)).bg(now.edge))
-                        .child(sample_card(now)),
-                ),
-        );
+        .child(dot(now.err));
     let hint = section.text(say(cx, Str::ColorsHint), cx);
     section
-        .beside(field_reset("reset-colors", &["colors"], ctx, cx))
         .child(rows)
         .child(strip)
         .child(div().text_size(px(SMALL)).text_color(c.ink_3).child(hint))
@@ -925,14 +750,4 @@ fn ring(color: Rgba, radius: f32) -> Div {
         .rounded(px(radius))
         .border_2()
         .border_color(color)
-}
-
-fn sample_card(now: &Colors) -> Div {
-    div()
-        .w(px(22.0))
-        .h(px(14.0))
-        .rounded(px(3.0))
-        .border_1()
-        .border_color(now.line_strong)
-        .bg(now.term)
 }

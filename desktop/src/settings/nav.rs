@@ -13,22 +13,22 @@ use crate::views::icons::{Lucide, icon};
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Tab {
     General,
-    Phone,
     Agents,
     Accounts,
     Display,
     Terminal,
+    Phone,
     About,
 }
 
 impl Tab {
     pub const ALL: [Tab; 7] = [
         Tab::General,
-        Tab::Phone,
         Tab::Agents,
         Tab::Accounts,
         Tab::Display,
         Tab::Terminal,
+        Tab::Phone,
         Tab::About,
     ];
 
@@ -62,9 +62,12 @@ pub fn resettable() -> Vec<&'static str> {
 }
 
 pub const OWNERS: [(&str, Option<Tab>); 28] = [
+    ("language", Some(Tab::General)),
+    ("theme", Some(Tab::General)),
+    ("uiSize", Some(Tab::General)),
+    ("osNotify", Some(Tab::General)),
     ("workspaceDir", Some(Tab::General)),
     ("wslWorkspaceDirs", Some(Tab::General)),
-    ("osNotify", Some(Tab::General)),
     ("bypassOff", Some(Tab::Agents)),
     ("alwaysOn", Some(Tab::Agents)),
     ("roles", Some(Tab::Agents)),
@@ -72,10 +75,7 @@ pub const OWNERS: [(&str, Option<Tab>); 28] = [
     ("autoSwitch", Some(Tab::Accounts)),
     ("accounts", None),
     ("wslAccounts", None),
-    ("theme", Some(Tab::Display)),
-    ("uiSize", Some(Tab::Display)),
     ("colors", Some(Tab::Display)),
-    ("language", Some(Tab::Display)),
     ("cardView", None),
     ("graphScope", None),
     ("edgeStyle", None),
@@ -177,11 +177,6 @@ pub(super) fn column(
         .child(finder)
         .children(tabs)
         .child(div().flex_1())
-        .child(
-            nav_button("settings-reset-all", Lucide::RotateCcw, cx)
-                .child(say(cx, Str::SettingsResetAll))
-                .on_click(cx.listener(|this, _, window, cx| this.ask(Ask::ResetAll, window, cx))),
-        )
         .child(
             nav_button("settings-stop", Lucide::Power, cx)
                 .child(say(cx, Str::SettingsStop))

@@ -322,16 +322,13 @@ pub fn section(
             cx,
         )
     });
-    let mut body = div()
+    let body = div()
         .flex()
         .flex_col()
         .gap(px(8.0))
         .child(rows(items, cx))
         .child(div().flex().child(add))
         .child(hint(note, cx));
-    if !ctx.view.always_on.o_mode {
-        body = body.opacity(FADED);
-    }
     let section = section
         .beside(field_reset("agents-roles-reset", &["roles"], ctx, cx))
         .child(body);

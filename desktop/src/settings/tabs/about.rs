@@ -12,10 +12,12 @@ use crate::link;
 use crate::link::VERSION;
 use crate::program;
 use crate::scale::px;
+use crate::settings::dialog::Ask;
 use crate::settings::widgets::{button, inert};
 use crate::settings::{Ctx, Dialog, Section};
 use crate::strings::{Lang, Str};
 use crate::views::dock::ui::{GAP, SMALL, TEXT, colors, say, say_with};
+use crate::views::icons::{Lucide, icon};
 use crate::views::prose::Prose;
 
 const CHECK_LIMIT: Duration = Duration::from_secs(60);
@@ -200,12 +202,10 @@ pub fn sections(state: &mut State, ctx: &Ctx, _: &mut Window, cx: &mut App) -> V
             format!("loom v{daemon}"),
         ));
     }
-    if daemon.as_deref().is_none_or(|daemon| daemon != VERSION) {
-        rows.push((
-            section.text(say(cx, Str::AboutApp), cx),
-            format!("loom v{VERSION}"),
-        ));
-    }
+    rows.push((
+        section.text(say(cx, Str::AboutApp), cx),
+        format!("loom v{VERSION}"),
+    ));
     let versions = div()
         .flex()
         .flex_col()
@@ -224,9 +224,11 @@ pub fn sections(state: &mut State, ctx: &Ctx, _: &mut Window, cx: &mut App) -> V
                 )
         }));
     section = section.child(versions);
+    let shortcuts = shortcuts(ctx, cx);
+    let reset = reset(ctx, cx);
 
     let Some(view) = model.read(cx).view.clone().filter(|view| view.checks) else {
-        return vec![section];
+        return vec![section, shortcuts, reset];
     };
     let (checking, outcome) = {
         let model = model.read(cx);
@@ -327,5 +329,74 @@ pub fn sections(state: &mut State, ctx: &Ctx, _: &mut Window, cx: &mut App) -> V
             }
         }
     }
-    vec![section]
+    vec![section, shortcuts, reset]
+}
+
+fn shortcuts(ctx: &Ctx, cx: &App) -> Section {
+    let (title, search, new, panel, send, newline) = match cx.global::<Lang>() {
+        Lang::Ko => (
+            "단축키",
+            "방 찾기",
+            "새 에이전트",
+            "옆 칸 접기·펴기",
+            "보내기",
+            "줄 바꾸기",
+        ),
+        Lang::En => (
+            "Keyboard shortcuts",
+            "Find rooms",
+            "New agent",
+            "Toggle side panel",
+            "Send",
+            "New line",
+        ),
+    };
+    let modifier = if cx.platform_info().is_mac() {
+        "Cmd"
+    } else {
+        "Ctrl"
+    };
+    let bindings = [
+        (format!("{modifier}+,"), say(cx, Str::SettingsTitle)),
+        (format!("{modifier}+K"), search),
+        (format!("{modifier}+N"), new),
+        (format!("{modifier}+B"), panel),
+        ("Enter".to_owned(), send),
+        ("Shift+Enter".to_owned(), newline),
+    ];
+    let c = colors(cx);
+    let mut section = Section::new(Some(title), ctx);
+    let rows = div()
+        .flex()
+        .flex_col()
+        .gap(px(GAP))
+        .text_size(px(TEXT))
+        .children(bindings.into_iter().map(|(key, action)| {
+            div()
+                .flex()
+                .gap(px(12.0))
+                .child(
+                    div()
+                        .w(px(LABEL_W))
+                        .font_family(fonts::TERMINAL_FAMILY)
+                        .child(section.text(&key, cx)),
+                )
+                .child(div().text_color(c.ink_2).child(section.text(action, cx)))
+        }));
+    section.child(rows)
+}
+
+fn reset(ctx: &Ctx, cx: &App) -> Section {
+    let c = colors(cx);
+    let dialog = ctx.dialog.clone();
+    let mut section = Section::new(None, ctx);
+    let label = section.text(say(cx, Str::SettingsResetAll), cx);
+    let button = button("settings-reset-all", cx)
+        .text_color(c.err)
+        .child(icon(Lucide::RotateCcw, px(14.0), c.err))
+        .child(label)
+        .on_click(move |_, window, cx| {
+            let _ = dialog.update(cx, |dialog, cx| dialog.ask(Ask::ResetAll, window, cx));
+        });
+    section.child(div().flex().child(button))
 }

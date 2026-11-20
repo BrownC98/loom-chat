@@ -1,11 +1,7 @@
-use std::cell::Cell;
-use std::rc::Rc;
-
-use gpui::prelude::FluentBuilder;
 use gpui::{
     Anchor, Context, EventEmitter, FocusHandle, InteractiveElement, IntoElement, KeyDownEvent,
-    Keystroke, MouseButton, ParentElement, Pixels, Render, SharedString, Size,
-    StatefulInteractiveElement, Styled, Window, anchored, deferred, div, point,
+    Keystroke, MouseButton, ParentElement, Render, SharedString, StatefulInteractiveElement,
+    Styled, Window, anchored, deferred, div, point,
 };
 
 use crate::scale::px;
@@ -22,8 +18,6 @@ pub enum SelectEvent {
 
 pub struct Select {
     id: &'static str,
-    full: bool,
-    size: Rc<Cell<Size<Pixels>>>,
     items: Vec<SharedString>,
     current: usize,
     open: bool,
@@ -36,18 +30,11 @@ impl Select {
     pub fn new(id: &'static str, cx: &mut Context<Self>) -> Self {
         Self {
             id,
-            full: false,
-            size: Rc::default(),
             items: Vec::new(),
             current: 0,
             open: false,
             focus: cx.focus_handle().tab_stop(true),
         }
-    }
-
-    pub fn full(mut self) -> Self {
-        self.full = true;
-        self
     }
 
     pub fn show(&mut self, items: Vec<SharedString>, current: usize, cx: &mut Context<Self>) {
@@ -113,11 +100,7 @@ impl Render for Select {
             .id(self.id)
             .track_focus(&self.focus)
             .on_key_down(cx.listener(Self::key))
-            .when_else(
-                self.full,
-                |button| button.w_full(),
-                |button| button.w(px(WIDTH)),
-            )
+            .w(px(WIDTH))
             .relative()
             .h(px(HEIGHT))
             .px(px(9.0))
@@ -137,23 +120,12 @@ impl Render for Select {
             .cursor_pointer()
             .child(label)
             .child(icon(Lucide::ChevronDown, px(14.0), c.ink_3))
-            .when(self.full, |button| {
-                button.child(measure(self.size.clone(), cx.entity_id()))
-            })
             .on_click(cx.listener(|this, _, window, cx| {
                 this.open = !this.open;
                 window.focus(&this.focus, cx);
                 cx.notify();
             }));
-        let host = div()
-            .relative()
-            .when(self.full, Styled::w_full)
-            .child(button);
-        let list_w = if self.full {
-            self.size.get().width
-        } else {
-            px(WIDTH)
-        };
+        let host = div().relative().child(button);
         if !self.open {
             return host;
         }
@@ -200,7 +172,7 @@ impl Render for Select {
                 .snap_to_window()
                 .child(
                     div()
-                        .w(list_w)
+                        .w(px(WIDTH))
                         .occlude()
                         .rounded(px(6.0))
                         .border_1()
@@ -214,18 +186,4 @@ impl Render for Select {
         .with_priority(2);
         host.child(backdrop).child(list)
     }
-}
-
-fn measure(cell: Rc<Cell<Size<Pixels>>>, owner: gpui::EntityId) -> impl IntoElement {
-    gpui::canvas(
-        move |bounds, _, cx| {
-            if cell.get() != bounds.size {
-                cell.set(bounds.size);
-                cx.notify(owner);
-            }
-        },
-        |_, _, _, _| (),
-    )
-    .absolute()
-    .size_full()
 }

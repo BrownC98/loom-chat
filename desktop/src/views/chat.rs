@@ -609,14 +609,14 @@ impl Chat {
                                 .child(div().truncate().child(facts)),
                         )
                     })
-                    .child(
+                    .children(workspace.map(|label| {
                         div()
                             .min_w_0()
                             .truncate()
                             .text_size(px(SMALL))
                             .text_color(colors.ink_2)
-                            .children(workspace),
-                    ),
+                            .child(label)
+                    })),
             )
             .children(actions)
             .child(div().flex().flex_none().gap(px(2.0)).children(side_buttons))

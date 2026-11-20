@@ -766,11 +766,14 @@ impl Rooms {
     }
 
     pub(super) fn overlays(&self, window: &Window, cx: &Context<Self>) -> Div {
-        let index = Index::new(self.data.read(cx), cx);
+        let overlay = self.overlay.as_ref().and_then(|_| {
+            let index = Index::new(self.data.read(cx), cx);
+            self.overlay(&index, window, cx)
+        });
         div()
             .absolute()
             .inset_0()
-            .children(self.overlay(&index, window, cx))
+            .children(overlay)
             .child(self.create.clone())
     }
 }

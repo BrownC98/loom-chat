@@ -81,10 +81,9 @@ fn cleared(field: Entity<Field>) -> Done {
 pub(crate) struct Answers {
     store: Entity<Store>,
     fields: HashMap<(u32, Slot), Draft>,
-    shown: HashMap<u32, Prompt>,
+    shown: HashMap<u32, TerminalInput>,
     notes: HashMap<u32, String>,
-    images: HashMap<(u32, usize), Arc<Image>>,
-    loading: HashSet<(u32, usize)>,
+    images: HashMap<(u32, usize), Option<Arc<Image>>>,
     attached: HashMap<u32, Attach>,
     waiting: HashMap<u32, (Text, Option<Done>)>,
     viewer: Entity<Viewer>,
@@ -97,26 +96,26 @@ enum Slot {
     Answer,
     Option(usize),
     Field,
+    Screen,
+}
+
+#[derive(PartialEq, Eq)]
+enum TerminalInput {
+    Prompt(Prompt),
+    Screen(Vec<String>),
 }
 
 pub(crate) fn in_alert_strip(wait: &ScreenWait) -> bool {
     matches!(
         wait.wait.kind,
-        WaitKind::Question | WaitKind::Done | WaitKind::Reply
+        WaitKind::Question
+            | WaitKind::Done
+            | WaitKind::Reply
+            | WaitKind::Approval
+            | WaitKind::Trust
+            | WaitKind::Auth
+            | WaitKind::Input
     )
-}
-
-fn drop_absent_slots(fields: &mut HashMap<(u32, Slot), Draft>, id: u32, prompt: Option<&Prompt>) {
-    fields.retain(|&(wait_id, slot), _| {
-        wait_id != id
-            || match slot {
-                Slot::Answer => true,
-                Slot::Option(index) => prompt
-                    .and_then(|p| p.options.get(index))
-                    .is_some_and(|o| o.writes),
-                Slot::Field => prompt.is_some_and(|p| p.field.is_some()),
-            }
-    });
 }
 
 impl Answers {
@@ -127,7 +126,6 @@ impl Answers {
             shown: HashMap::new(),
             notes: HashMap::new(),
             images: HashMap::new(),
-            loading: HashSet::new(),
             attached: HashMap::new(),
             waiting: HashMap::new(),
             viewer: cx.new(Viewer::new),
@@ -152,16 +150,21 @@ impl Answers {
             .into_iter()
             .flat_map(|snapshot| &snapshot.nodes)
             .flat_map(|node| &node.waits)
-            .filter(|wait| in_alert_strip(wait))
             .map(|wait| wait.wait.id.0)
             .collect();
         self.shown.retain(|id, _| live.contains(id));
         self.fields.retain(|(id, _), _| live.contains(id));
         self.notes.retain(|id, _| live.contains(id));
-        self.images.retain(|(id, _), _| live.contains(id));
-        self.loading.retain(|(id, _)| live.contains(id));
         self.attached.retain(|id, _| live.contains(id));
-        self.waiting.retain(|id, _| live.contains(id));
+        self.waiting.retain(|id, _| {
+            if live.contains(id) {
+                true
+            } else {
+                self.store
+                    .update(cx, |store, cx| store.set_busy(*id, false, cx));
+                false
+            }
+        });
         cx.notify();
     }
 
@@ -169,6 +172,15 @@ impl Answers {
         self.ensure_pictures(node, wait, cx);
         self.ensure_fields(wait, cx);
         self.load_images(wait, cx);
+    }
+
+    pub(crate) fn retain_images(&mut self, keep: impl Fn(u32) -> bool) {
+        self.images.retain(|(id, _), _| keep(*id));
+        self.zoomed = self.zoomed.filter(|&id| keep(id));
+    }
+
+    pub(crate) fn is_zoomed(&self, cx: &App) -> bool {
+        self.zoomed.is_some() && self.viewer.read(cx).is_open()
     }
 
     pub(crate) fn focus(&self, id: WaitId, window: &mut Window, cx: &mut App) {
@@ -188,24 +200,23 @@ impl Answers {
         self.run(wait, None, task, cx);
     }
 
-    fn load_images(&mut self, wait: &ScreenWait, cx: &mut Context<Self>) {
+    pub(crate) fn load_images(&mut self, wait: &ScreenWait, cx: &mut Context<Self>) {
         let id = wait.wait.id;
         for index in 0..wait.wait.images.len() {
             let key = (id.0, index);
-            if self.images.contains_key(&key) || !self.loading.insert(key) {
+            let std::collections::hash_map::Entry::Vacant(entry) = self.images.entry(key) else {
                 continue;
-            }
+            };
+            entry.insert(None);
             let task = self
                 .store
                 .update(cx, |store, cx| store.wait_image(id, index, cx));
             cx.spawn(async move |this, cx| {
                 let result = task.await;
                 let _ = this.update(cx, |answers, cx| {
-                    if answers.loading.remove(&key) {
+                    if let Some(saved) = answers.images.get_mut(&key) {
                         match result {
-                            Ok(image) => {
-                                answers.images.insert(key, image);
-                            }
+                            Ok(image) => *saved = Some(image),
                             Err(error) => {
                                 answers.notes.insert(id.0, error);
                             }
@@ -276,9 +287,18 @@ impl Answers {
             self.make_field(id, Slot::Answer, Caption::Label(hint), false, true, cx);
             self.hook_files(id, cx);
         }
-        let prompt = wait.wait.prompt.as_ref();
-        drop_absent_slots(&mut self.fields, id, prompt);
-        let Some(prompt) = prompt else {
+        self.ensure_terminal_input(wait);
+        let Some(prompt) = wait.wait.prompt.as_ref() else {
+            if matches!(self.shown.get(&id), Some(TerminalInput::Screen(_))) {
+                self.make_field(
+                    id,
+                    Slot::Screen,
+                    Caption::Label(Str::InboxTextLabel),
+                    false,
+                    true,
+                    cx,
+                );
+            }
             return;
         };
         for (index, option) in prompt.options.iter().enumerate() {
@@ -301,6 +321,26 @@ impl Answers {
                 Str::InboxTextLabel
             };
             self.make_field(id, Slot::Field, Caption::Label(hint), secret, false, cx);
+        }
+    }
+
+    fn ensure_terminal_input(&mut self, wait: &ScreenWait) {
+        let id = wait.wait.id.0;
+        let input = if let Some(prompt) = wait.wait.prompt.as_ref() {
+            Some(TerminalInput::Prompt(prompt.clone()))
+        } else if !wait.wait.answerable && !wait.wait.screen.is_empty() {
+            Some(TerminalInput::Screen(wait.wait.screen.clone()))
+        } else {
+            None
+        };
+        if self.shown.get(&id) != input.as_ref() {
+            self.fields
+                .retain(|(wait, slot), _| *wait != id || *slot == Slot::Answer);
+            if let Some(input) = input {
+                self.shown.insert(id, input);
+            } else {
+                self.shown.remove(&id);
+            }
         }
     }
 
@@ -338,8 +378,13 @@ impl Answers {
             Caption::Label(label) => field::boxed_label(label, secret, multiline, cx),
             Caption::Text(text) => field::boxed(text, secret, multiline, cx),
         };
-        let sub = cx.subscribe(&field, move |answers, _, event: &FieldEvent, cx| {
-            if matches!(event, FieldEvent::Enter) {
+        let sub = cx.subscribe(&field, move |answers, source, event: &FieldEvent, cx| {
+            if matches!(event, FieldEvent::Enter)
+                && answers
+                    .fields
+                    .get(&(id, slot))
+                    .is_some_and(|draft| draft.field.entity_id() == source.entity_id())
+            {
                 answers.submit(id, slot, cx);
             }
         });
@@ -418,6 +463,9 @@ impl Answers {
         else {
             return;
         };
+        if field.read(cx).composing() {
+            return;
+        }
         let text = field.read(cx).text().to_owned();
         let id = WaitId(wait);
         let store = self.store.clone();
@@ -433,19 +481,28 @@ impl Answers {
                 self.send(wait, Text::Field(field.clone()), Some(cleared(field)), cx);
                 return;
             }
-            Slot::Option(index) => {
-                let Some(prompt) = self.shown.get(&wait).cloned() else {
+            Slot::Option(_) | Slot::Field => {
+                let Some(TerminalInput::Prompt(prompt)) = self.shown.get(&wait) else {
                     return;
                 };
+                let option = match slot {
+                    Slot::Option(index) => Some(index),
+                    _ => None,
+                };
+                let prompt = prompt.clone();
                 store.update(cx, |store, cx| {
-                    store.type_text(id, prompt, text, Some(index), cx)
+                    store.type_text(id, prompt, text, option, cx)
                 })
             }
-            Slot::Field => {
-                let Some(prompt) = self.shown.get(&wait).cloned() else {
+            Slot::Screen => {
+                let Some(TerminalInput::Screen(screen)) = self.shown.get(&wait) else {
                     return;
                 };
-                store.update(cx, |store, cx| store.type_text(id, prompt, text, None, cx))
+                let keys = PressKeys {
+                    screen: screen.clone(),
+                    press: Press::Text(text),
+                };
+                store.update(cx, |store, cx| store.press_keys(id, keys, cx))
             }
         };
         self.run(wait, Some(cleared(field)), task, cx);
@@ -495,9 +552,10 @@ impl Answers {
         if self.store.read(cx).is_busy(wait) {
             return;
         }
-        let Some(prompt) = self.shown.get(&wait).cloned() else {
+        let Some(TerminalInput::Prompt(prompt)) = self.shown.get(&wait) else {
             return;
         };
+        let prompt = prompt.clone();
         let id = WaitId(wait);
         let task = self
             .store
@@ -516,7 +574,7 @@ impl Answers {
             if prompt.options.get(nth).is_none_or(|option| option.writes) {
                 return false;
             }
-            self.shown.insert(id, prompt.clone());
+            self.ensure_terminal_input(wait);
             self.pick(id, nth, cx);
             return true;
         }
@@ -546,10 +604,6 @@ impl Answers {
     }
 }
 
-fn hint(index: usize) -> Option<String> {
-    (index < 9).then(|| format!("Alt+{}", index + 1))
-}
-
 fn scaled(
     answers: &Entity<Answers>,
     id: u32,
@@ -567,19 +621,46 @@ fn scaled(
     Some(field)
 }
 
-pub(crate) fn content(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &mut App) -> Div {
-    let id = wait.wait.id.0;
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CardState {
+    Alert,
+    Inline,
+    ReadOnly,
+}
+
+impl CardState {
+    fn hint(self, index: usize) -> Option<String> {
+        (self == Self::Alert && index < 9).then(|| format!("Alt+{}", index + 1))
+    }
+}
+
+pub(crate) fn content(
+    answers: &Entity<Answers>,
+    wait: &ScreenWait,
+    state: CardState,
+    z: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
     let c = ui::colors(cx);
-    let state = answers.read(cx);
-    let error = state.notes.get(&id).cloned();
-    let viewer =
-        (state.zoomed == Some(id) && state.viewer.read(cx).is_open()).then(|| state.viewer.clone());
-    wait_content(answers, wait, z, cx)
+    let id = wait.wait.id.0;
+    let answers_state = answers.read(cx);
+    let error = answers_state.notes.get(&id).cloned();
+    let viewer = (answers_state.zoomed == Some(id) && answers_state.viewer.read(cx).is_open())
+        .then(|| answers_state.viewer.clone());
+    wait_content(answers, wait, state, z, window, cx)
         .children(error.map(|text| div().text_size(px(SMALL * z)).text_color(c.err).child(text)))
         .children(viewer)
 }
 
-fn wait_content(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &mut App) -> Div {
+fn wait_content(
+    answers: &Entity<Answers>,
+    wait: &ScreenWait,
+    state: CardState,
+    z: f32,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
     let c = ui::colors(cx);
     let id = wait.wait.id.0;
     let done = matches!(wait.tone, WaitTone::Done);
@@ -591,7 +672,10 @@ fn wait_content(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &mut A
         .flex_col()
         .gap(px(GAP * z));
     let shots: Vec<(usize, Arc<Image>)> = (0..wait.wait.images.len())
-        .filter_map(|index| Some((index, answers.read(cx).images.get(&(id, index))?.clone())))
+        .filter_map(|index| {
+            let image = answers.read(cx).images.get(&(id, index))?.clone()?;
+            Some((index, image))
+        })
         .collect();
     if !shots.is_empty() {
         body = body.child(
@@ -630,31 +714,53 @@ fn wait_content(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &mut A
                 })),
         );
     }
-    if wait.wait.prompt.is_none() {
-        answers.update(cx, |answers, _| {
-            answers.shown.remove(&id);
-        });
+    if let Some(instruction) = &wait.wait.instruction {
+        body = body.child(
+            div()
+                .text_size(px(SMALL * z))
+                .text_color(c.ink_2)
+                .child(ui::say_with(
+                    cx,
+                    Str::InboxInstruction,
+                    &[("text", instruction)],
+                )),
+        );
     }
     if let Some(prompt) = &wait.wait.prompt {
-        answers.update(cx, |answers, _| {
-            if answers.shown.get(&id) != Some(prompt) {
-                answers.shown.insert(id, prompt.clone());
-            }
-        });
-        body = body.child(prompt_body(answers, wait, prompt, z, cx));
+        let text = if prompt.body.is_empty() {
+            prompt.summary.clone()
+        } else {
+            prompt.body.join("\n")
+        };
+        body = body.child(entry::prompt_box(crate::views::prose::prose(text), z, &c));
+        if state != CardState::ReadOnly {
+            body = body.child(prompt_actions(answers, wait, prompt, state, z, cx));
+        }
     } else if !wait.wait.text.is_empty() || !wait.wait.blocks.is_empty() || wait.wait.doc.is_some()
     {
         let owner = answers.clone();
-        body = body.child(div().text_size(px(ui::TEXT * z)).child(blocks::render(
-            ("text", id as usize),
-            &wait.wait.blocks,
-            &wait.wait.text,
-            wait.wait.doc.as_ref(),
-            entry::tone_of(wait.tone, &c),
-            ui::TEXT * z,
-            cx,
-            move |target, cx| owner.update(cx, |answers, cx| answers.follow(id, target, cx)),
-        )));
+        body = body.child(
+            div()
+                .text_size(px(ui::TEXT * z))
+                .child(blocks::render_selectable(
+                    ("wait-text", id as usize),
+                    &wait.wait.blocks,
+                    &wait.wait.text,
+                    wait.wait.doc.as_ref(),
+                    entry::tone_of(wait.tone, &c),
+                    ui::TEXT * z,
+                    window,
+                    cx,
+                    move |target, cx| {
+                        owner.update(cx, |answers, cx| answers.follow(id, target, cx))
+                    },
+                )),
+        );
+    } else if state == CardState::ReadOnly && !wait.summary.trim().is_empty() {
+        body = body.child(crate::views::prose::prose(wait.summary.clone()));
+    }
+    if state == CardState::ReadOnly {
+        return body;
     }
     if wait.wait.answerable && !done && !wait.wait.choices.is_empty() {
         body = body.child(div().flex().flex_wrap().gap(px(GAP * z)).children(
@@ -677,7 +783,7 @@ fn wait_content(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &mut A
                     button,
                     Choice {
                         key: key.to_string(),
-                        hint: hint(index),
+                        hint: state.hint(index),
                         label: &choice.label,
                         recommended: choice.recommended,
                         look,
@@ -711,7 +817,10 @@ fn wait_content(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &mut A
             ),
         );
     }
-    body.children(screen_keys(answers, wait, z, cx))
+    body.children(screen_keys(answers, wait, z, cx)).children(
+        scaled(answers, id, Slot::Screen, wait.tone, z, cx)
+            .map(|field| send_row(answers, id, Slot::Screen, wait.tone, &field, z, cx)),
+    )
 }
 
 fn act(
@@ -902,6 +1011,7 @@ fn send_row(
         Slot::Answer => 0,
         Slot::Option(index) => index + 1,
         Slot::Field => 255,
+        Slot::Screen => 254,
     };
     let empty = {
         let state = answers.read(cx);
@@ -947,25 +1057,18 @@ fn send_row(
         .child(send)
 }
 
-fn prompt_body(
+fn prompt_actions(
     answers: &Entity<Answers>,
     wait: &ScreenWait,
     prompt: &Prompt,
+    state: CardState,
     z: f32,
     cx: &mut App,
 ) -> AnyElement {
     let (id, tone) = (wait.wait.id.0, wait.tone);
     let c = ui::colors(cx);
     let busy = answers.read(cx).store.read(cx).is_busy(id);
-    let mut body = div()
-        .flex()
-        .flex_col()
-        .gap(px(GAP * z))
-        .child(entry::prompt_box(
-            crate::views::prose::prose(prompt.body.join("\n")),
-            z,
-            &c,
-        ));
+    let mut body = div().flex().flex_col().gap(px(GAP * z));
     let options =
         div()
             .flex()
@@ -1002,7 +1105,7 @@ fn prompt_body(
                     button,
                     Choice {
                         key: label,
-                        hint: hint(index),
+                        hint: state.hint(index),
                         label: &option.label,
                         recommended: index == 0,
                         look: if index == 0 {

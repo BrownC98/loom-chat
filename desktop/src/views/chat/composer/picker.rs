@@ -95,11 +95,21 @@ impl Listing {
             self.counts[filter as usize] += 1;
         }
     }
+
+    fn highlighted(&self, catalog: &Catalog, selected: Option<&Target>) -> Option<Target> {
+        let mut targets = self.rows.iter().filter_map(|row| row.target(catalog));
+        let first = targets.next()?;
+        selected
+            .filter(|&current| current == &first || targets.any(|target| &target == current))
+            .cloned()
+            .or(Some(first))
+    }
 }
 
 pub(super) struct Picker {
     pub open: bool,
     query: Entity<Field>,
+    mention: Option<usize>,
     focus: FocusHandle,
     list_focus: FocusHandle,
     filter: Filter,
@@ -114,8 +124,8 @@ impl Picker {
         let query = field::boxed(
             local(
                 cx,
-                "이름·방·하네스로 찾기",
-                "Find by name, room, or harness",
+                "이름·방·에이전트로 찾기",
+                "Find by name, room, or agent",
             ),
             false,
             false,
@@ -130,6 +140,7 @@ impl Picker {
         Self {
             open: false,
             query,
+            mention: None,
             focus: cx.focus_handle(),
             list_focus: cx.focus_handle().tab_stop(true),
             filter: Filter::All,
@@ -138,6 +149,11 @@ impl Picker {
             focus_out: None,
             _query: query_subscription,
         }
+    }
+
+    pub(super) fn dismiss(&mut self) {
+        self.open = false;
+        self.mention = None;
     }
 
     fn reset_highlight(&mut self) {
@@ -222,7 +238,7 @@ impl Picker {
 impl Composer {
     pub fn open_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.sync_room(window, cx);
-        if !self.writable(cx) || self.alerts.expanded {
+        if !self.writable(cx) {
             return;
         }
         self.mode_menu = false;
@@ -236,7 +252,7 @@ impl Composer {
                 Some(
                     cx.on_focus_out(&self.picker.focus, window, |this, _, window, cx| {
                         if !this.trigger.is_focused(window) {
-                            this.picker.open = false;
+                            this.picker.dismiss();
                             cx.notify();
                         }
                     }),
@@ -247,10 +263,22 @@ impl Composer {
         cx.notify();
     }
 
+    pub(super) fn open_mention(&mut self, at: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_picker(window, cx);
+        if self.picker.open {
+            self.picker.mention = Some(at);
+        }
+    }
+
     pub(super) fn close_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.picker.open {
-            self.picker.open = false;
-            window.focus(&self.trigger, cx);
+            let mention = self.picker.mention.is_some();
+            self.picker.dismiss();
+            if mention {
+                self.focus_input(window, cx);
+            } else {
+                window.focus(&self.trigger, cx);
+            }
             cx.notify();
         }
     }
@@ -275,10 +303,25 @@ impl Composer {
                 }
             }
             "enter" if in_list || in_query => {
-                self.close_picker(window, cx);
-                self.focus_input(window, cx);
+                if let Some(target) = self.highlighted_target(cx) {
+                    self.choose_recipient(target, window, cx);
+                } else if !self.picker.query.read(cx).is_blank() || self.picker.mention.is_some() {
+                    return;
+                } else {
+                    self.close_picker(window, cx);
+                    self.focus_input(window, cx);
+                }
             }
-            "space" if in_list => self.toggle_highlight(cx),
+            "space" if in_list => {
+                if let Some(target) = self.highlighted_target(cx) {
+                    if self.picker.mention.is_some() {
+                        self.choose_recipient(target, window, cx);
+                    } else {
+                        self.picker.highlight = Some(target.clone());
+                        self.toggle(target, cx);
+                    }
+                }
+            }
             _ => return,
         }
         window.prevent_default();
@@ -306,10 +349,9 @@ impl Composer {
             .highlight
             .as_ref()
             .and_then(|target| rows.iter().position(|(_, row)| row == target))
-            .map_or_else(
-                || if by < 0 { rows.len() - 1 } else { 0 },
-                |at| at.saturating_add_signed(by).min(rows.len() - 1),
-            );
+            .unwrap_or_default()
+            .saturating_add_signed(by)
+            .min(rows.len() - 1);
         let (index, target) = &rows[at];
         self.picker.highlight = Some(target.clone());
         self.picker
@@ -319,23 +361,32 @@ impl Composer {
         true
     }
 
-    fn toggle_highlight(&mut self, cx: &mut Context<Self>) {
+    fn highlighted_target(&self, cx: &App) -> Option<Target> {
         let data = self.data.read(cx);
-        let Some((room, recipients)) = data.room().zip(data.recipients()) else {
-            return;
-        };
+        let (room, recipients) = data.room().zip(data.recipients())?;
         let catalog = Catalog::new(recipients);
-        let listing = self.picker.listing(room, &catalog, cx);
-        let mut targets = listing.rows.iter().filter_map(|row| row.target(&catalog));
-        let target = if let Some(current) = &self.picker.highlight {
-            targets.find(|target| target == current)
-        } else {
-            targets.next()
-        };
-        if let Some(target) = target {
-            self.picker.highlight = Some(target.clone());
+        self.picker
+            .listing(room, &catalog, cx)
+            .highlighted(&catalog, self.picker.highlight.as_ref())
+    }
+
+    fn choose_recipient(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
+        if !self
+            .draft()
+            .is_some_and(|draft| draft.selected().contains(&target))
+        {
             self.toggle(target, cx);
         }
+        if let Some(at) = self.picker.mention.take()
+            && let Some(draft) = self.draft()
+        {
+            draft
+                .field
+                .update(cx, |field, cx| field.remove_mention(at, window, cx));
+        }
+        self.picker.dismiss();
+        self.focus_input(window, cx);
+        cx.notify();
     }
 
     pub(super) fn picker_view(
@@ -354,10 +405,9 @@ impl Composer {
             });
         let bounds = self.bounds.get();
         let available = (bounds.origin.y - px(164.0)).max(px(68.0));
-        let list_height =
-            px((listing.rows.len() as f32 * ROW_HEIGHT).clamp(ROW_HEIGHT, LIST_HEIGHT))
-                .min(available);
+        let list_height = px(LIST_HEIGHT).min(available);
         let width = px(PANEL_WIDTH).min(window.viewport_size().width - px(16.0));
+        let query = self.picker.query.read(cx);
         let panel = div()
             .id("chat-recipient-picker")
             .track_focus(&self.picker.focus)
@@ -385,34 +435,48 @@ impl Composer {
             .text_color(c.ink)
             .text_size(px(ui::TEXT))
             .shadow_lg()
-            .child(self.picker_header(cx));
-        let panel = if listing.rows.is_empty() {
-            panel.child(
+            .child(self.picker_header(cx))
+            .child(
                 div()
-                    .p(px(8.0))
-                    .text_color(c.ink_2)
-                    .child(if catalog.is_some() {
-                        ui::say(cx, Str::InboxNoMatch)
-                    } else {
-                        local(
-                            cx,
-                            "받는 이 목록을 불러오는 중입니다.",
-                            "Loading recipients…",
-                        )
-                    }),
-            )
+                    .id("chat-picker-query")
+                    .track_focus(&query.handle().tab_stop(false))
+                    .role(Role::TextInput)
+                    .aria_label(local(
+                        cx,
+                        "이름·방·에이전트로 찾기",
+                        "Find by name, room, or agent",
+                    ))
+                    .aria_value(query.text().to_owned())
+                    .child(self.picker.query.clone()),
+            );
+        let panel = if listing.rows.is_empty() {
+            panel.child(div().h(list_height).p(px(8.0)).text_color(c.ink_2).child(
+                if catalog.is_some() {
+                    ui::say(cx, Str::InboxNoMatch)
+                } else {
+                    local(
+                        cx,
+                        "받는 이 목록을 불러오는 중입니다.",
+                        "Loading recipients…",
+                    )
+                },
+            ))
         } else {
+            let highlighted = catalog
+                .and_then(|catalog| listing.highlighted(catalog, self.picker.highlight.as_ref()));
             let rows = listing.rows;
             let list = uniform_list(
                 "chat-recipient-list",
                 rows.len(),
-                cx.processor(move |this, range: Range<usize>, window, cx| {
+                cx.processor(move |this, range: Range<usize>, _, cx| {
                     let Some(data) = this.data.read(cx).recipients() else {
                         return Vec::new();
                     };
                     let catalog = Catalog::new(data);
                     range
-                        .map(|index| this.picker_row(index, &rows[index], &catalog, window, cx))
+                        .map(|index| {
+                            this.picker_row(index, &rows[index], &catalog, highlighted.as_ref(), cx)
+                        })
                         .collect()
                 }),
             )
@@ -432,21 +496,7 @@ impl Composer {
                     .child(list),
             )
         };
-        let query = self.picker.query.read(cx);
         let panel = panel
-            .child(
-                div()
-                    .id("chat-picker-query")
-                    .track_focus(&query.handle().tab_stop(false))
-                    .role(Role::TextInput)
-                    .aria_label(local(
-                        cx,
-                        "이름·방·하네스로 찾기",
-                        "Find by name, room, or harness",
-                    ))
-                    .aria_value(query.text().to_owned())
-                    .child(self.picker.query.clone()),
-            )
             .child(self.filters(listing.counts, cx))
             .children(data.room().zip(self.draft()).and_then(|(room, draft)| {
                 (!draft.selected().is_empty())
@@ -458,8 +508,8 @@ impl Composer {
                     .text_size(px(ui::SMALL))
                     .child(local(
                         cx,
-                        "↑↓ 이동 · Space 선택 · Enter 적용 · Esc 닫기",
-                        "↑↓ Move · Space Select · Enter Apply · Esc Close",
+                        "↑↓ 이동 · Space 선택 · Enter 선택 · Esc 닫기",
+                        "↑↓ Move · Space Select · Enter Select · Esc Close",
                     )),
             );
         deferred(
@@ -540,7 +590,7 @@ impl Composer {
         index: usize,
         row: &Row,
         catalog: &Catalog,
-        window: &Window,
+        highlighted: Option<&Target>,
         cx: &Context<Self>,
     ) -> AnyElement {
         let c = ui::colors(cx);
@@ -578,7 +628,7 @@ impl Composer {
                         if agent.modes.contains(&Kind::Steer) {
                             ""
                         } else {
-                            local(cx, " · 일반만", " · Queue only")
+                            local(cx, " · 작업 후 전달만", " · After work only")
                         }
                     ),
                     agent.last_activity,
@@ -598,7 +648,12 @@ impl Composer {
                     })
                     .count();
                 let summary = if room.members.is_empty() {
-                    local(cx, "외부 에이전트 · 일반만", "Outside agent · Queue only").to_owned()
+                    local(
+                        cx,
+                        "외부 에이전트 · 작업 후 전달만",
+                        "Outside agent · After work only",
+                    )
+                    .to_owned()
                 } else {
                     match cx.global::<Lang>() {
                         Lang::Ko => {
@@ -618,8 +673,7 @@ impl Composer {
             Row::Head(_) => return base.into_any_element(),
         };
         let selected = draft.selected().contains(&target);
-        let highlighted = self.picker.highlight.as_ref() == Some(&target)
-            && self.picker.list_focus.is_focused(window);
+        let highlighted = highlighted == Some(&target);
         let time = last.map_or(String::new(), |seconds| ui::clock(seconds, TIME));
         base.id(("chat-picker-row", index))
             .role(Role::CheckBox)
@@ -638,9 +692,13 @@ impl Composer {
             .when(selected, |row| row.bg(c.accent_wash))
             .hover(move |style| style.bg(c.surface_hover))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.picker.highlight = Some(target.clone());
-                this.toggle(target.clone(), cx);
-                window.focus(&this.picker.list_focus, cx);
+                if this.picker.mention.is_some() {
+                    this.choose_recipient(target.clone(), window, cx);
+                } else {
+                    this.picker.highlight = Some(target.clone());
+                    this.toggle(target.clone(), cx);
+                    window.focus(&this.picker.list_focus, cx);
+                }
             }))
             .child(
                 div()
@@ -688,9 +746,7 @@ fn harness<'a>(agent: &'a ChatRecipient, cx: &App) -> &'a str {
     agent
         .harness
         .as_ref()
-        .map_or(local(cx, "명령 노드", "Command node"), |id| {
-            id.0.as_str()
-        })
+        .map_or(local(cx, "터미널", "Terminal"), |id| id.0.as_str())
 }
 
 fn state_color(state: &Status, c: &Colors) -> gpui::Rgba {

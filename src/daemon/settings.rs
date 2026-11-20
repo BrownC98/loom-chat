@@ -60,8 +60,16 @@ struct LoginProcess {
     exit: watch::Sender<Option<Exit>>,
 }
 
-fn login_stopped(exit: Option<Exit>) -> bool {
-    matches!(exit, Some(Exit::Command(_) | Exit::Setup(_)))
+fn login_exit_problem(exit: Option<Exit>, command: &str) -> Option<Problem> {
+    match exit {
+        Some(Exit::Command(_) | Exit::Setup(_)) => None,
+        None => Some(internal(
+            "Wait for the previous login for this account to stop, then try again.",
+        )),
+        Some(Exit::Lost | Exit::Gone) => Some(internal(format!(
+            "Loom lost contact with the previous {command} login. Check that login process on its PC or WSL distribution. If it still runs, stop it. Confirm that it stopped before you restart the Loom daemon and try again."
+        ))),
+    }
 }
 
 impl Logins {
@@ -75,13 +83,12 @@ impl Logins {
 
     fn reserve(&self, key: LoginKey) -> Result<(LoginId, watch::Sender<Option<Exit>>), Problem> {
         let mut sessions = self.sessions.lock().unwrap();
-        if sessions
+        if let Some(problem) = sessions
             .values()
-            .any(|process| process.key == key && !login_stopped(*process.exit.borrow()))
+            .filter(|process| process.key == key)
+            .find_map(|process| login_exit_problem(*process.exit.borrow(), key.command))
         {
-            return Err(internal(
-                "Wait for the previous login for this account to stop, then try again.",
-            ));
+            return Err(problem);
         }
         let id = LoginId(self.next.fetch_add(1, Ordering::Relaxed));
         let (exit, _) = watch::channel(None);
@@ -495,18 +502,18 @@ async fn close_login(
         .lock()
         .unwrap()
         .get(&id)
-        .map(|process| process.exit.subscribe());
+        .map(|process| (process.exit.subscribe(), process.key.command));
     app.logins.host.kill(id);
-    let Some(mut exit) = exit else {
+    let Some((mut exit, command)) = exit else {
         return Ok(Json(()));
     };
-    let confirmed = tokio::time::timeout(STOP_WAIT, exit.wait_for(Option::is_some))
+    let exit = tokio::time::timeout(STOP_WAIT, exit.wait_for(Option::is_some))
         .await
         .ok()
         .and_then(Result::ok)
-        .is_some_and(|exit| login_stopped(*exit));
-    if !confirmed {
-        return Err(internal("could not confirm that the login process stopped"));
+        .and_then(|exit| *exit);
+    if let Some(problem) = login_exit_problem(exit, command) {
+        return Err(problem);
     }
     app.logins.sessions.lock().unwrap().remove(&id);
     Ok(Json(()))

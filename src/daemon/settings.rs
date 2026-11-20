@@ -66,10 +66,14 @@ fn login_exit_problem(exit: Option<Exit>, command: &str) -> Option<Problem> {
         None => Some(internal(
             "Wait for the previous login for this account to stop, then try again.",
         )),
-        Some(Exit::Lost | Exit::Gone) => Some(internal(format!(
-            "Loom lost contact with the previous {command} login. Check that login process on its PC or WSL distribution. If it still runs, stop it. Confirm that it stopped before you restart the Loom daemon and try again."
-        ))),
+        Some(Exit::Lost | Exit::Gone) => Some(login_recovery(command)),
     }
+}
+
+fn login_recovery(command: &str) -> Problem {
+    internal(format!(
+        "Loom lost contact with the previous {command} login. Check that login process on its PC or WSL distribution. If it still runs, stop it. Confirm that it stopped before you restart the Loom daemon and try again."
+    ))
 }
 
 impl Logins {
@@ -335,33 +339,34 @@ fn start_login(
     app: Arc<App>,
     key: LoginKey,
     build: impl FnOnce() -> Result<CommandBuilder, LaunchError>,
-    discard: impl Fn() + Clone + Send + 'static,
+    discard: impl Fn() + Send + 'static,
 ) -> Result<LoginId, Problem> {
+    let command = key.command;
     let (login, exit_state) = app.logins.reserve(key).inspect_err(|_| discard())?;
+    let cmd = build().inspect_err(|_| {
+        discard();
+        app.logins.sessions.lock().unwrap().remove(&login);
+    })?;
     let on_exit = {
         let app = app.clone();
-        let discard = discard.clone();
+        let exit_state = exit_state.clone();
         move |exit| {
-            if exit != Exit::Command(0) {
+            if matches!(exit, Exit::Command(1..) | Exit::Setup(_)) {
                 discard();
             }
             exit_state.send_replace(Some(exit));
             app.graph.publish_view_changed();
         }
     };
-    build()
-        .map_err(Problem::from)
-        .and_then(|cmd| {
-            app.logins
-                .host
-                .spawn_while_linked(login, &cmd, on_exit)
-                .map_err(internal)
+    app.logins
+        .host
+        .spawn_while_linked(login, &cmd, on_exit)
+        .map_err(|error| {
+            crate::log::logln!("loom: 로그인 PTY 시작을 확인하지 못했다: {error}");
+            exit_state.send_replace(Some(Exit::Lost));
+            login_recovery(command)
         })
         .map(|()| login)
-        .inspect_err(|_| {
-            discard();
-            app.logins.sessions.lock().unwrap().remove(&login);
-        })
 }
 
 async fn logout(

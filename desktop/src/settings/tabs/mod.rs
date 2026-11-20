@@ -7,6 +7,7 @@ mod phone;
 mod terminal;
 
 pub use agents::parts::{keep_focus, modal};
+pub use display::reset_colors;
 
 use gpui::{App, Window};
 

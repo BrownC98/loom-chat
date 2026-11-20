@@ -178,10 +178,18 @@ impl Dialog {
 
     fn run(&mut self, ask: Ask, cx: &mut Context<Self>) {
         match ask {
-            Ask::ResetAll => self.send(patch::nulls(&nav::resettable()), cx),
-            Ask::ResetTab(tab) => self.send(patch::nulls(&tab.keys()), cx),
+            Ask::ResetAll => self.reset(&nav::resettable(), cx),
+            Ask::ResetTab(tab) => self.reset(&tab.keys(), cx),
             Ask::Stop => self.stop(cx),
         }
+    }
+
+    fn reset(&mut self, keys: &[&str], cx: &mut Context<Self>) {
+        let mut settings = patch::nulls(keys);
+        if let Some(colors) = settings.get_mut("colors") {
+            *colors = tabs::reset_colors();
+        }
+        self.send(settings, cx);
     }
 
     fn stop(&mut self, cx: &mut Context<Self>) {

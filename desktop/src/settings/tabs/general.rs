@@ -1,4 +1,6 @@
+use std::cell::Cell;
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use api::repos::Locations;
 use api::settings::{FloatSize, Language, Theme as ThemeSetting};
@@ -9,12 +11,14 @@ use gpui::{
 
 use crate::link;
 use crate::problem::Failure;
-use crate::scale::px;
+use crate::scale::{self, px};
 use crate::settings::notify;
-use crate::settings::widgets::{Label, Text, TextEvent, button, field_reset, segmented, switch};
+use crate::settings::widgets::{
+    Label, Text, TextEvent, button, field_reset, segmented, segmented_on, switch,
+};
 use crate::settings::{Ctx, Dialog, Section};
 use crate::strings::{Lang, Str};
-use crate::views::dock::ui::{GAP, SMALL, colors, say, say_with};
+use crate::views::dock::ui::{GAP, SMALL, TEXT, colors, say, say_with};
 use crate::views::icons::{Lucide, icon};
 
 const PC: &str = "";
@@ -34,6 +38,7 @@ struct Places {
 
 #[derive(Default)]
 pub struct State {
+    ui_size_hover: Rc<Cell<Option<FloatSize>>>,
     places: Option<Entity<Places>>,
     fields: BTreeMap<String, Entity<Text>>,
     subs: Vec<Subscription>,
@@ -232,7 +237,7 @@ pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App)
     let mut out = vec![
         language_section(ctx, cx),
         theme_section(ctx, cx),
-        size_section(ctx, cx),
+        size_section(&state.ui_size_hover, ctx, cx),
     ];
     if notify::SUPPORTED {
         out.push(notify_section(ctx, cx));
@@ -359,38 +364,68 @@ fn language_section(ctx: &Ctx, cx: &App) -> Section {
         ))
 }
 
-fn size_section(ctx: &Ctx, cx: &App) -> Section {
+fn size_section(hovered: &Rc<Cell<Option<FloatSize>>>, ctx: &Ctx, cx: &App) -> Section {
+    let c = colors(cx);
     let mut section = Section::new(Some(say(cx, Str::FloatSizeUiSize)), ctx);
-    let items = [
+    let choices = [
         (FloatSize::Small, Str::FloatSizeSmall),
         (FloatSize::Normal, Str::FloatSizeNormal),
         (FloatSize::Large, Str::FloatSizeLarge),
         (FloatSize::Huge, Str::FloatSizeHuge),
-    ]
-    .into_iter()
-    .map(|(value, label)| {
-        let label = say(cx, label);
-        section.text(label, cx);
-        (value, SharedString::from(label))
-    })
-    .collect();
+    ];
+    let sizes = choices
+        .iter()
+        .map(|&(size, label)| {
+            let text = say(cx, label);
+            let _ = section.text(text, cx);
+            (size, SharedString::from(text))
+        })
+        .collect();
     let writer = ctx.writer.clone();
+    let preview = hovered.clone();
+    let radios = segmented_on(
+        "general-ui-size",
+        sizes,
+        ctx.view.ui_size,
+        move |size, _, cx| writer.edit(cx, |view| view.ui_size = size),
+        Some(move |size, window: &mut Window, _: &mut App| {
+            if preview.replace(size) != size {
+                window.refresh();
+            }
+        }),
+        cx,
+    );
+    let size = hovered.get().unwrap_or(ctx.view.ui_size);
+    let sample = section.text(say(cx, Str::FloatSizeSampleAsk), cx);
+    let label = choices
+        .iter()
+        .find(|(value, _)| *value == size)
+        .map_or("", |(_, label)| say(cx, *label));
+    let caption = section.text(&say_with(cx, Str::FloatSizePreview, &[("size", label)]), cx);
     let hint = section.text(say(cx, Str::FloatSizeUiSizeHint), cx);
-    section
-        .beside(field_reset("reset-ui-size", &["uiSize"], ctx, cx))
-        .child(segmented(
-            "display-ui-size",
-            items,
-            ctx.view.ui_size,
-            move |value, _, cx| writer.edit(cx, |settings| settings.ui_size = value),
-            cx,
-        ))
+    let example = div()
+        .min_h(px(62.0))
+        .flex()
+        .flex_col()
+        .items_start()
+        .gap(px(4.0))
+        .text_color(c.ink_2)
+        .child(div().text_size(px(SMALL)).child(caption))
         .child(
             div()
-                .text_size(px(SMALL))
-                .text_color(colors(cx).ink_3)
-                .child(hint),
-        )
+                .rounded(px(6.0))
+                .px(px(10.0))
+                .py(px(4.0))
+                .bg(c.accent_wash)
+                .text_color(c.ink)
+                .text_size(scale::fixed(TEXT * scale::zoom(size)))
+                .child(sample),
+        );
+    section
+        .beside(field_reset("reset-ui-size", &["uiSize"], ctx, cx))
+        .child(radios)
+        .child(example)
+        .child(div().text_size(px(SMALL)).text_color(c.ink_3).child(hint))
 }
 
 fn theme_section(ctx: &Ctx, cx: &mut App) -> Section {

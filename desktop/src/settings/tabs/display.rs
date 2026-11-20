@@ -11,8 +11,9 @@ use super::agents::parts::badge;
 use crate::fonts::latin_mono;
 use crate::scale::px;
 use crate::settings::dialog::Disclosure;
+use crate::settings::patch;
 use crate::settings::widgets::button;
-use crate::settings::widgets::{Text, TextEvent, field_reset, inert, tabbable};
+use crate::settings::widgets::{Text, TextEvent, inert, tabbable};
 use crate::settings::{Ctx, Dialog, Section, Writer};
 use crate::strings::{Lang, Str};
 use crate::theme::{self, Colors, Scheme, Theme, luminance_of, mix, ratio};
@@ -33,6 +34,7 @@ const RING: f32 = 4.0;
 const DISABLED: f32 = 0.6;
 
 struct Row {
+    key: &'static str,
     name: Str,
     usage: Str,
     slot: fn(&UiColors) -> &ThemedColor,
@@ -43,6 +45,7 @@ struct Row {
 
 const ROWS: [Row; 6] = [
     Row {
+        key: "warn",
         name: Str::ColorsNameWarn,
         usage: Str::ColorsUseWarn,
         slot: |c| &c.warn,
@@ -51,6 +54,7 @@ const ROWS: [Row; 6] = [
         against: |c| c.warn_ink,
     },
     Row {
+        key: "run",
         name: Str::ColorsNameRun,
         usage: Str::ColorsUseRun,
         slot: |c| &c.run,
@@ -59,6 +63,7 @@ const ROWS: [Row; 6] = [
         against: |c| c.surface,
     },
     Row {
+        key: "ok",
         name: Str::ColorsNameOk,
         usage: Str::ColorsUseOk,
         slot: |c| &c.ok,
@@ -67,6 +72,7 @@ const ROWS: [Row; 6] = [
         against: |c| c.surface,
     },
     Row {
+        key: "err",
         name: Str::ColorsNameErr,
         usage: Str::ColorsUseErr,
         slot: |c| &c.err,
@@ -75,6 +81,7 @@ const ROWS: [Row; 6] = [
         against: |c| c.err_ink,
     },
     Row {
+        key: "notice",
         name: Str::ColorsNameNotice,
         usage: Str::ColorsUseNotice,
         slot: |c| &c.notice,
@@ -83,6 +90,7 @@ const ROWS: [Row; 6] = [
         against: |c| c.notice_ink,
     },
     Row {
+        key: "accent",
         name: Str::ColorsNameAccent,
         usage: Str::ColorsUseAccent,
         slot: |c| &c.accent,
@@ -91,6 +99,10 @@ const ROWS: [Row; 6] = [
         against: |c| c.accent_ink,
     },
 ];
+
+pub fn reset_colors() -> Value {
+    patch::nulls(&ROWS.map(|row| row.key))
+}
 
 #[derive(Clone, Copy, PartialEq)]
 enum Target {
@@ -458,7 +470,6 @@ fn colors_section(
         .child(dot(now.err));
     let hint = section.text(say(cx, Str::ColorsHint), cx);
     section
-        .beside(field_reset("reset-colors", &["colors"], ctx, cx))
         .child(rows)
         .child(strip)
         .child(div().text_size(px(SMALL)).text_color(c.ink_3).child(hint))

@@ -24,7 +24,7 @@ function Install-File($from, $to) {
   Move-Item $from $to
 }
 
-Get-ChildItem -Path $home_dir, $dir -Filter '*.exe.*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+Get-ChildItem -Path $dir -Filter '*.exe.*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
 $with_desktop = $false
 $with_embedded = $false
@@ -35,7 +35,7 @@ if ($desktop_url -ne $url) {
     $bundled_app = Join-Path $unpack 'loom-desktop.exe'
     $with_embedded = Test-Path $bundled_app
     if (!$with_embedded) { $bundled_app = Join-Path $unpack '*\loom-desktop.exe' }
-    $with_desktop = Test-Path $bundled_app
+    $with_desktop = $with_embedded -or (Test-Path $bundled_app)
   } catch {
     $with_desktop = $false
   }
@@ -43,9 +43,7 @@ if ($desktop_url -ne $url) {
 }
 $with_web = !$with_desktop
 if ($with_desktop) {
-  if ($with_embedded) {
-    $app = Join-Path $home_dir 'loom-desktop.exe'
-  } else {
+  if (!$with_embedded) {
     $web = Join-Path $unpack '*\loom.exe'
     $with_web = Test-Path $web
     if ($with_web) { Move-Item -Force $web "$exe.new" }
@@ -67,7 +65,12 @@ Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
 
 if ($with_linux) { Move-Item -Force "$linux.new" $linux }
 if ($with_web) { Install-File "$exe.new" $exe }
-if ($with_desktop) { Install-File "$app.new" $app }
+if ($with_desktop) {
+  Install-File "$app.new" $app
+  if ($with_embedded -and !(Test-Path -LiteralPath $exe) -and (Test-Path -LiteralPath $linux -PathType Leaf)) {
+    Remove-Item -LiteralPath $linux -Force -ErrorAction SilentlyContinue
+  }
+}
 
 $icon = Join-Path $home_dir 'icon.ico'
 try { Invoke-WebRequest -Uri "$raw/app/icons/icon.ico" -OutFile $icon -UseBasicParsing } catch { $icon = $null }

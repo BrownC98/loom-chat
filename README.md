@@ -77,7 +77,7 @@ loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead o
 | Systems | Windows, macOS | Windows x64, macOS Apple Silicon | Windows, macOS, Linux |
 | Update | Update card in the screen | **Update** in Settings › About | Update card in the screen |
 
-**Install with one line (recommended).** The Windows and macOS lines above install loom desktop when the release has it. Windows: `%LOCALAPPDATA%\loom\loom-desktop.exe` and a **loom** icon on the desktop. macOS: `loom-desktop.app` in the Applications folder.
+**Install with one line (recommended).** The Windows and macOS lines above install loom desktop when the release has it. Windows: `%LOCALAPPDATA%\loom\bin\loom-desktop.exe` and a **loom** icon on the desktop. macOS: `loom-desktop.app` in the Applications folder.
 
 **Install by hand:**
 
@@ -91,11 +91,11 @@ loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead o
 
 **Close and stop.** When you close the window, the daemon and the agents continue. Run the desktop executable with `stop` to stop the daemon.
 
-- Windows (one line): `& "$env:LOCALAPPDATA\loom\loom-desktop.exe" stop | Out-Host`
+- Windows (one line): `& "$env:LOCALAPPDATA\loom\bin\loom-desktop.exe" stop | Out-Host`
 - macOS (one line): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop` (or `~/Applications/…`)
 - Hand install: `<folder>/loom-desktop stop`
 
-At a Windows command prompt, a direct call to `loom-desktop.exe` can return before the command exits. To wait and get the exit code, pipe to `Out-Host` in PowerShell or use `start "" /wait "%LOCALAPPDATA%\loom\loom-desktop.exe" stop` in Command Prompt.
+At a Windows command prompt, a direct call to `loom-desktop.exe` can return before the command exits. To wait and get the exit code, pipe to `Out-Host` in PowerShell or use `start "" /wait "%LOCALAPPDATA%\loom\bin\loom-desktop.exe" stop` in Command Prompt.
 
 **Update.** Open Settings › About and click **Check for updates**, then **Update**. When `loom-desktop` runs the daemon, the update replaces that executable and restarts the daemon. Quit the window and open it again to use the new version.
 

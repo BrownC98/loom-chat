@@ -199,6 +199,11 @@ fn trim_tail(mut found: &str) -> &str {
     found
 }
 
+pub fn message_blocks(text: &str) -> Option<Vec<Block>> {
+    let blocks = markdown(text);
+    (!blocks.is_empty()).then_some(blocks)
+}
+
 pub fn markdown(text: &str) -> Vec<Block> {
     let mut out = Shaped::default();
     for (event, range) in Parser::new_ext(text, Options::ENABLE_TABLES).into_offset_iter() {

@@ -927,9 +927,9 @@ impl Graph {
             .prepare(
                 "SELECT n.id, n.repo, n.agent IS NOT NULL AND n.agent != 'null'
                  FROM nodes n JOIN repos r ON r.id = n.repo
-                 WHERE n.parent IS NULL AND n.default_name = 1 AND r.path != ?1 ORDER BY n.id",
+                 WHERE n.parent IS NULL AND n.default_name = 1 ORDER BY n.id",
             )?
-            .query_map([&scratch], |row| {
+            .query_map([], |row| {
                 Ok((NodeId(row.get(0)?), row.get(1)?, row.get(2)?))
             })?
             .collect::<rusqlite::Result<Vec<(NodeId, u32, bool)>>>()?;

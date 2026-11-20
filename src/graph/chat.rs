@@ -11,7 +11,6 @@ use api::graph::docs::PostOutside;
 use api::graph::errors::{BRIEF_LIMIT_BYTES, Refusal};
 use api::graph::events::Who;
 use api::graph::messages::{Kind, MessageKind, Question};
-use api::graph::text::Block;
 use api::graph::waits::{Closed, HumanWait};
 use api::ids::{AccountId, AgentId, NodeId, RepoId};
 
@@ -19,6 +18,7 @@ use super::{
     Graph, REACHABLE, doc_talk, folder_name, from_json, hosts, mailbox, optional_json, status,
     to_json, waits,
 };
+use crate::link_text::message_blocks;
 use crate::process_tree::Identity;
 use crate::protocol::{Delivery, HUMAN, LOOM, MessageId, Session};
 
@@ -1075,11 +1075,6 @@ fn read_message(db: &Connection, room: &str, id: i64) -> rusqlite::Result<ChatMe
 
 fn display_outside(name: &str) -> String {
     doc_talk::outside_name(name).unwrap_or_else(|_| "외부 에이전트".to_owned())
-}
-
-fn message_blocks(text: &str) -> Option<Vec<Block>> {
-    let blocks = crate::link_text::markdown(text);
-    (!blocks.is_empty()).then_some(blocks)
 }
 
 fn origin(from: &Who) -> ChatOrigin {

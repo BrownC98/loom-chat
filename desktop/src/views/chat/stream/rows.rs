@@ -34,11 +34,6 @@ const SENDER_WINDOW_MS: i64 = 3 * 60 * 1000;
 const BUBBLE_WIDTH: f32 = 720.0;
 const BUBBLE_SHARE: f32 = 0.72;
 
-pub(super) fn turn_boundary(item: &ChatItem) -> bool {
-    matches!(&item.entry, ChatEntry::Transcript { item: ChatTranscriptItem::Status { text }, .. }
-        if matches!(text.trim(), "턴을 시작했습니다." | "턴이 끝났습니다."))
-}
-
 pub(super) fn hidden(item: &ChatItem) -> bool {
     match &item.entry {
         ChatEntry::Message { message } => {
@@ -52,7 +47,7 @@ pub(super) fn hidden(item: &ChatItem) -> bool {
                     ))
         }
         ChatEntry::Transcript { item, .. } => match item {
-            ChatTranscriptItem::Assistant { text, .. } | ChatTranscriptItem::User { text } => {
+            ChatTranscriptItem::Assistant { text, .. } | ChatTranscriptItem::User { text, .. } => {
                 text.trim().is_empty()
             }
             ChatTranscriptItem::Thinking { summary } => {
@@ -520,7 +515,8 @@ impl Stream {
     ) -> Div {
         let cursor = row.cursor;
         match item {
-            ChatTranscriptItem::User { text } | ChatTranscriptItem::Assistant { text, .. } => {
+            ChatTranscriptItem::User { text, blocks }
+            | ChatTranscriptItem::Assistant { text, blocks } => {
                 let mine = matches!(item, ChatTranscriptItem::User { .. });
                 let name = if mine {
                     tr(cx, "나", "Me").to_owned()
@@ -531,13 +527,8 @@ impl Stream {
                         .map(|room| room.name.clone())
                         .unwrap_or_else(|| tr(cx, "에이전트", "Agent").to_owned())
                 };
-                let content = match item {
-                    ChatTranscriptItem::Assistant { blocks, .. } => {
-                        blocks.as_deref().unwrap_or_default()
-                    }
-                    _ => &[],
-                };
-                let body = self.bubble(row, text, content, window, cx);
+                let body =
+                    self.bubble(row, text, blocks.as_deref().unwrap_or_default(), window, cx);
                 column()
                     .when(mine, |column| column.items_end())
                     .children((!grouped).then(|| {

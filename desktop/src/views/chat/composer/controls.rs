@@ -224,6 +224,19 @@ impl Composer {
                     .child(text.to_owned()),
             );
         }
+        let saved = draft.recoverable.len();
+        if saved > 0 {
+            let text = match cx.global::<Lang>() {
+                Lang::Ko => format!("초안 되돌리기 ({saved})"),
+                Lang::En => format!("Restore draft ({saved})"),
+            };
+            body = body.child(
+                btn::button("chat-recover-draft", cx)
+                    .self_start()
+                    .child(text)
+                    .on_click(cx.listener(|this, _, window, cx| this.recover_draft(window, cx))),
+            );
+        }
         if self.review.is_some()
             && mode == Kind::Interrupt
             && let Some(catalog) = catalog

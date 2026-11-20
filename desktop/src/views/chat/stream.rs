@@ -18,6 +18,7 @@ use gpui::{
 };
 
 use super::data::ChatData;
+use super::words as tr;
 use crate::scale::px;
 use crate::store::BusyChanged;
 use crate::strings::{Lang, Str};
@@ -130,10 +131,6 @@ impl Rows {
         }
         let mut in_activity = None;
         for (index, entry) in ordered {
-            if rows::turn_boundary(entry) {
-                in_activity = None;
-                continue;
-            }
             if rows::hidden(entry) {
                 continue;
             }
@@ -731,12 +728,5 @@ impl Render for Stream {
             )
             .children(self.working(cx))
             .children(banner)
-    }
-}
-
-fn tr<'a>(cx: &App, ko: &'a str, en: &'a str) -> &'a str {
-    match cx.global::<Lang>() {
-        Lang::Ko => ko,
-        Lang::En => en,
     }
 }

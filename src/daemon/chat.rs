@@ -413,14 +413,14 @@ fn transcript_item(kind: transcript::Kind) -> Option<ChatTranscriptItem> {
         Kind::Thinking(None) | Kind::Status(Status::TurnStarted | Status::TurnEnded) => {
             return None;
         }
-        Kind::User(text) => ChatTranscriptItem::User { text },
-        Kind::Assistant(text) => {
-            let blocks = crate::link_text::markdown(&text);
-            ChatTranscriptItem::Assistant {
-                text,
-                blocks: (!blocks.is_empty()).then_some(blocks),
-            }
-        }
+        Kind::User(text) => ChatTranscriptItem::User {
+            blocks: crate::link_text::message_blocks(&text),
+            text,
+        },
+        Kind::Assistant(text) => ChatTranscriptItem::Assistant {
+            blocks: crate::link_text::message_blocks(&text),
+            text,
+        },
         Kind::ToolCall { id, name, summary } => ChatTranscriptItem::ToolCall { id, name, summary },
         Kind::ToolResult {
             id,

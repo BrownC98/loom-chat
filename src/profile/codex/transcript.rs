@@ -67,14 +67,8 @@ pub(super) fn decode(entry: &Value, items: &mut Vec<Kind>) -> Parsed {
 fn event(payload: &Value, items: &mut Vec<Kind>) -> Parsed {
     let kind = match payload["type"].as_str().ok_or(Format)? {
         "item_completed" => return completed(&payload["item"], items),
-        "user_message" => message(
-            payload["message"].as_str().ok_or(Format)?.to_owned(),
-            Kind::User,
-        ),
-        "agent_message" => message(
-            payload["message"].as_str().ok_or(Format)?.to_owned(),
-            Kind::Assistant,
-        ),
+        "user_message" => Kind::User(payload["message"].as_str().ok_or(Format)?.to_owned()),
+        "agent_message" => Kind::Assistant(payload["message"].as_str().ok_or(Format)?.to_owned()),
         "agent_reasoning" => Kind::Thinking(payload["text"].as_str().and_then(summary)),
         "task_started" | "turn_started" => Kind::Status(Status::TurnStarted),
         "task_complete" | "turn_completed" => Kind::Status(Status::TurnEnded),
@@ -107,8 +101,8 @@ fn event(payload: &Value, items: &mut Vec<Kind>) -> Parsed {
 
 fn completed(item: &Value, items: &mut Vec<Kind>) -> Parsed {
     let kind = match item["type"].as_str().ok_or(Format)? {
-        "UserMessage" | "userMessage" => message(text(&item["content"])?, Kind::User),
-        "AgentMessage" | "agentMessage" => message(text(&item["content"])?, Kind::Assistant),
+        "UserMessage" | "userMessage" => Kind::User(text(&item["content"])?),
+        "AgentMessage" | "agentMessage" => Kind::Assistant(text(&item["content"])?),
         "Reasoning" | "reasoning" => Kind::Thinking(output_summary(&item["summary_text"])),
         "Extension" | "extension" if item["kind"] == "web.search" => {
             let id = identifier(&item["id"]);
@@ -153,14 +147,6 @@ fn completed(item: &Value, items: &mut Vec<Kind>) -> Parsed {
     };
     items.push(kind);
     Ok(())
-}
-
-fn message(text: String, kind: fn(String) -> Kind) -> Kind {
-    if text.trim().is_empty() {
-        Kind::Thinking(None)
-    } else {
-        kind(text)
-    }
 }
 
 fn text(content: &Value) -> Result<String, Format> {

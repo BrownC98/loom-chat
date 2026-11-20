@@ -288,7 +288,7 @@ impl ChatData {
     }
 
     fn read_next(&mut self, cx: &mut Context<Self>) {
-        if self.in_flight.is_some() {
+        if self.in_flight.is_some() || self.posting() {
             return;
         }
         let read = std::mem::take(&mut self.older_pending)
@@ -350,7 +350,7 @@ impl ChatData {
             };
             let _ = this.update(cx, |data, cx| {
                 if generation == data.generation {
-                    let page_error = if data.posting() {
+                    let page_error = if matches!(read, Read::Refresh(_)) && data.posting() {
                         None
                     } else {
                         page.and_then(|result| match result {
@@ -387,7 +387,7 @@ impl ChatData {
     }
 
     fn page_task(&self, read: Read, cx: &Context<Self>) -> Option<Task<Result<RoomPage, String>>> {
-        if self.posting() {
+        if matches!(read, Read::Refresh(_)) && self.posting() {
             return None;
         }
         let room = self.room()?;
@@ -565,8 +565,13 @@ impl ChatData {
             {
                 window.end = None;
             }
-            self.in_flight = None;
-            self.older_pending = false;
+            if self
+                .in_flight
+                .as_ref()
+                .is_some_and(|(read, _, _)| matches!(read, Read::Refresh(_)))
+            {
+                self.in_flight = None;
+            }
             self.refresh_pending = Some(Refresh::Immediate);
             self.sync_items();
             self.read_next(cx);

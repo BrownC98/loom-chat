@@ -5,7 +5,7 @@ mod picker;
 mod targets;
 
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
 use api::graph::chat::{ChatEntry, ChatItem, ChatRoomKind, ChatTranscriptItem, SendChat};
@@ -20,6 +20,7 @@ use self::alerts::Alerts;
 use self::picker::Picker;
 use self::targets::{Catalog, Plan, Target};
 use super::data::ChatData;
+use super::words as local;
 use crate::scale::px;
 use crate::strings::{Lang, Str};
 use crate::views::field::{self, Field, FieldEvent};
@@ -36,6 +37,7 @@ struct Draft {
     mode: Kind,
     follow_up: Option<(NodeId, WaitId)>,
     last_send: Option<i64>,
+    recoverable: VecDeque<SentDraft>,
     error: Option<String>,
 }
 
@@ -68,6 +70,28 @@ impl Quote {
 }
 
 impl Draft {
+    fn replace(
+        &mut self,
+        next: SentDraft,
+        subscriptions: [Subscription; 2],
+        cx: &mut App,
+    ) -> SentDraft {
+        let previous = SentDraft {
+            text: self.field.read(cx).text().to_owned(),
+            pictures: std::mem::replace(&mut self.pictures, next.pictures),
+            quote: std::mem::replace(&mut self.quote, next.quote),
+            selected: std::mem::replace(&mut self.selected, next.selected),
+            mode: std::mem::replace(&mut self.mode, next.mode),
+            follow_up: std::mem::replace(&mut self.follow_up, next.follow_up),
+        };
+        self._pictures = subscriptions;
+        self.pictures
+            .update(cx, |pictures, cx| pictures.set_locked(false, cx));
+        self.field
+            .update(cx, |field, cx| field.set_text_at_end(&next.text, cx));
+        previous
+    }
+
     fn selected(&self) -> &[Target] {
         self.selected.as_deref().unwrap_or_default()
     }
@@ -225,6 +249,7 @@ impl Composer {
                 mode: Kind::Queue,
                 follow_up: None,
                 last_send: None,
+                recoverable: VecDeque::new(),
                 error: None,
             }
         });
@@ -354,7 +379,7 @@ impl Composer {
                 message.origin.visible_text(&message.text),
             ),
             ChatEntry::Transcript {
-                item: ChatTranscriptItem::User { text },
+                item: ChatTranscriptItem::User { text, .. },
                 ..
             } => (local(cx, "나", "Me"), text.as_str()),
             ChatEntry::Transcript {
@@ -556,21 +581,20 @@ impl Composer {
         let subscriptions = Self::observe_pictures(&room, &pictures, cx);
         let id = data.update(cx, |data, cx| data.echo(&room, &req, echo_text, cx));
         let draft = self.drafts.get_mut(&room).expect("sending draft");
-        let saved = SentDraft {
-            text: draft.field.read(cx).text().to_owned(),
-            pictures: std::mem::replace(&mut draft.pictures, pictures),
-            quote: draft.quote.take(),
+        let empty = SentDraft {
+            text: String::new(),
+            pictures,
+            quote: None,
             selected: draft.selected.clone(),
             mode: draft.mode,
-            follow_up: draft.follow_up.take(),
+            follow_up: None,
         };
+        let saved = draft.replace(empty, subscriptions, cx);
         saved
             .pictures
             .update(cx, |pictures, cx| pictures.set_locked(true, cx));
-        draft._pictures = subscriptions;
         draft.last_send = Some(id);
         draft.error = None;
-        draft.field.update(cx, |field, cx| field.clear(cx));
         self.review = None;
         self.mode_menu = false;
         self.focus_input(window, cx);
@@ -633,18 +657,41 @@ impl Composer {
             && draft.mode == saved.mode
             && draft.follow_up.is_none()
         {
-            draft._pictures = Self::observe_pictures(room, &saved.pictures, cx);
-            draft.pictures = saved.pictures;
-            draft
-                .pictures
-                .update(cx, |pictures, cx| pictures.set_locked(false, cx));
-            draft.quote = saved.quote;
-            draft.follow_up = saved.follow_up;
-            draft
-                .field
-                .update(cx, |field, cx| field.set_text_at_end(&saved.text, cx));
+            let subscriptions = Self::observe_pictures(room, &saved.pictures, cx);
+            draft.replace(saved, subscriptions, cx);
+            draft.last_send = None;
+        } else {
+            draft.recoverable.push_back(saved);
         }
         draft.error = Some(error);
+        cx.notify();
+    }
+
+    fn recover_draft(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(room) = self.active.clone() else {
+            return;
+        };
+        let Some(draft) = self.drafts.get_mut(&room) else {
+            return;
+        };
+        if draft.field.read(cx).composing() {
+            return;
+        }
+        let Some(saved) = draft.recoverable.pop_front() else {
+            return;
+        };
+        let keep = !draft.field.read(cx).text().is_empty()
+            || draft.has_content(cx)
+            || draft.pictures.read(cx).busy()
+            || draft.follow_up.is_some();
+        let subscriptions = Self::observe_pictures(&room, &saved.pictures, cx);
+        let previous = draft.replace(saved, subscriptions, cx);
+        if keep {
+            draft.recoverable.push_back(previous);
+        }
+        draft.last_send = None;
+        draft.error = None;
+        self.focus_input(window, cx);
         cx.notify();
     }
 }
@@ -729,13 +776,6 @@ fn unavailable_recipient(cx: &App) -> &'static str {
         "보낼 수 없는 받는 이를 목록에서 빼 주세요.",
         "Remove recipients who cannot receive this message.",
     )
-}
-
-fn local(cx: &App, ko: &'static str, en: &'static str) -> &'static str {
-    match cx.global::<Lang>() {
-        Lang::Ko => ko,
-        Lang::En => en,
-    }
 }
 
 fn tab(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {

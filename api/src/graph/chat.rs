@@ -184,6 +184,9 @@ pub enum ChatEntry {
 pub enum ChatTranscriptItem {
     User {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        blocks: Option<Vec<Block>>,
     },
     Assistant {
         text: String,

@@ -40,7 +40,7 @@ const RAIL_WIDTH: f32 = 60.0;
 const MIN_ROOM_WIDTH: f32 = 350.0;
 const SIDE_OVERLAY_WIDTH: f32 = 1050.0;
 
-fn words(cx: &App, ko: &'static str, en: &'static str) -> &'static str {
+fn words<'a>(cx: &App, ko: &'a str, en: &'a str) -> &'a str {
     match cx.global::<Lang>() {
         Lang::Ko => ko,
         Lang::En => en,

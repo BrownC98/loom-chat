@@ -13,10 +13,10 @@ use crate::link;
 use crate::problem::Failure;
 use crate::scale::{self, px};
 use crate::store::Store;
-use crate::strings::Str;
 use crate::theme::mix;
-use crate::views::dock::answers::{self, Answers};
+use crate::views::dock::answers::{self, Answers, CardState};
 use crate::views::dock::entry::tone_of;
+use crate::views::dock::questions::kind_label;
 use crate::views::icons::{Lucide, icon};
 use crate::views::tooltip::tip;
 use crate::views::{ui, widgets::btn};
@@ -82,16 +82,26 @@ enum Move {
 
 impl Composer {
     fn notices<'a>(&self, cx: &'a App) -> Vec<Alert<'a>> {
-        let graph = self.data.read(cx).graph().read(cx);
+        let data = self.data.read(cx);
+        let room = data.room();
+        let graph = data.graph().read(cx);
         let mut notices: Vec<_> = graph
             .snapshot()
             .into_iter()
             .flat_map(|snapshot| &snapshot.nodes)
             .flat_map(|node| {
+                let same_room = room.is_some_and(|room| match room.kind {
+                    ChatRoomKind::Pinned => true,
+                    ChatRoomKind::Agent { node: owner } => owner == node.id,
+                    ChatRoomKind::Work { .. } => room.members.contains(&node.id),
+                    ChatRoomKind::Custom => false,
+                });
                 node.waits
                     .iter()
-                    .filter(|wait| {
-                        answers::in_alert_strip(wait) && !self.visible_waits.contains(&wait.wait.id)
+                    .filter(move |wait| {
+                        !same_room
+                            && answers::in_alert_strip(wait)
+                            && !self.room_waits.contains(&wait.wait.id)
                     })
                     .map(move |wait| Alert { node, wait })
             })
@@ -101,7 +111,11 @@ impl Composer {
     }
 
     fn move_alert(&mut self, movement: Move, cx: &mut Context<Self>) -> bool {
-        if self.picker.open || self.viewer.read(cx).is_open() {
+        if self.picker.open
+            || self.viewer.read(cx).is_open()
+            || self.alerts.answers.read(cx).is_zoomed(cx)
+            || (matches!(movement, Move::Choose(_)) && !self.alerts.expanded)
+        {
             return false;
         }
         let notices = self.notices(cx);
@@ -116,6 +130,9 @@ impl Composer {
         let notice = &notices[index];
         let wait = notice.wait.clone();
         let position = notice.position();
+        if matches!(movement, Move::Choose(_)) && self.alerts.selected != Some(position) {
+            return false;
+        }
         self.alerts.expanded = !matches!(movement, Move::Fold) || !self.alerts.expanded;
         self.mode_menu = false;
         self.alerts.selected = Some(position);
@@ -139,6 +156,9 @@ impl Composer {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.picker.open || self.alerts.answers.read(cx).is_zoomed(cx) {
+            return;
+        }
         let stroke = &event.keystroke;
         let modifiers = stroke.modifiers;
         if stroke.key == "escape"
@@ -180,6 +200,9 @@ impl Composer {
         {
             return;
         }
+        self.alerts
+            .answers
+            .update(cx, |answers, _| answers.retain_images(|seen| seen == id.0));
         self.alerts.context = Some((id, AlertContext::default()));
         self.alerts.reading = None;
         let data = self.data.read(cx);
@@ -280,18 +303,15 @@ impl Composer {
             });
             (repo.map(|repo| repo.name.clone()), task)
         };
+        let position = notice.position();
         if self.alerts.expanded {
+            self.alerts.selected = Some(position);
             self.read_context(node, &wait, cx);
         }
         let colors = ui::colors(cx);
-        let label = if self.alerts.expanded {
-            local(cx, "알림 접기", "Collapse alert")
-        } else {
-            local(cx, "알림 펼치기", "Expand alert")
-        };
         let tone = tone_of(wait.tone, &colors);
         let name = repo.map_or_else(|| name.clone(), |repo| format!("{repo} › {name}"));
-        let head = self.alert_header(index, total, &wait, name.clone(), label, cx);
+        let head = self.alert_header(index, total, &wait, name.clone(), node, cx);
         let strip = div()
             .flex()
             .flex_col()
@@ -363,7 +383,9 @@ impl Composer {
                         .child(answers::content(
                             &self.alerts.answers,
                             &wait,
+                            CardState::Alert,
                             scale::get(),
+                            window,
                             cx,
                         )),
                 )
@@ -383,14 +405,45 @@ impl Composer {
         total: usize,
         wait: &ScreenWait,
         name: String,
-        label: &'static str,
+        node: NodeId,
         cx: &Context<Self>,
     ) -> Div {
+        let label = if self.alerts.expanded {
+            local(cx, "알림 접기", "Collapse alert")
+        } else {
+            local(cx, "알림 펼치기", "Expand alert")
+        };
+        let destination = self
+            .alerts
+            .expanded
+            .then(|| {
+                self.data.read(cx).rooms().iter().find_map(|room| {
+                    matches!(room.kind, ChatRoomKind::Agent { node: owner } if owner == node)
+                        .then(|| room.id.clone())
+                })
+            })
+            .flatten();
         let colors = ui::colors(cx);
         let tone = tone_of(wait.tone, &colors);
-        let (icon_kind, kind) = match wait.tone {
-            WaitTone::Ask => (Lucide::CircleQuestionMark, ui::say(cx, Str::WaitQuestion)),
-            WaitTone::Done => (Lucide::Check, ui::say(cx, Str::WaitDone)),
+        let icon_kind = match wait.tone {
+            WaitTone::Ask => Lucide::CircleQuestionMark,
+            WaitTone::Done => Lucide::Check,
+        };
+        let kind = ui::say(cx, kind_label(wait.wait.kind));
+        let (shortcuts, hint) = if self.alerts.expanded {
+            (
+                "Alt+Up Alt+Down Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7 Alt+8 Alt+9",
+                local(
+                    cx,
+                    "Alt+↑↓ 알림 이동 · Alt+1~9 선택",
+                    "Alt+↑↓ Move between alerts · Alt+1–9 Choose",
+                ),
+            )
+        } else {
+            (
+                "Alt+Up Alt+Down",
+                local(cx, "Alt+↑↓ 알림 이동", "Alt+↑↓ Move between alerts"),
+            )
         };
         let arrow = |direction, id, hint: &'static str, glyph| {
             btn::ghost(id, cx)
@@ -414,18 +467,8 @@ impl Composer {
                     .role(Role::Button)
                     .aria_label(format!("{label} · {name}"))
                     .aria_expanded(self.alerts.expanded)
-                    .aria_keyshortcuts(
-                        "Alt+Up Alt+Down Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7 Alt+8 Alt+9",
-                    )
-                    .tooltip(tip(format!(
-                        "{} · {label} · {}",
-                        wait.wait.id,
-                        local(
-                            cx,
-                            "Alt+↑↓ 알림 이동 · Alt+1~9 선택",
-                            "Alt+↑↓ Move between alerts · Alt+1–9 Choose",
-                        )
-                    )))
+                    .aria_keyshortcuts(shortcuts)
+                    .tooltip(tip(format!("{label} · {hint}")))
                     .flex_1()
                     .min_w_0()
                     .bg(mix(tone, 0.17, colors.panel))
@@ -465,6 +508,16 @@ impl Composer {
                         colors.ink_2,
                     )),
             )
+            .children(destination.map(|room| {
+                btn::ghost("chat-alert-open-room", cx)
+                    .child(local(cx, "방에서 보기", "View in room"))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.move_alert(Move::Fold, cx);
+                        this.data
+                            .update(cx, |data, cx| data.select(room.clone(), cx));
+                        this.focus(window, cx);
+                    }))
+            }))
             .child(arrow(
                 -1,
                 "chat-alert-prev",

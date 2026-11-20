@@ -1,5 +1,6 @@
 use std::collections::{BTreeSet, HashMap};
 
+use api::graph::Status;
 use api::graph::chat::{ChatRecipient, ChatRecipients, ChatRoom, ChatRoomKind, SendChat};
 use api::graph::messages::Kind;
 use api::ids::NodeId;
@@ -80,6 +81,10 @@ impl<'a> Catalog<'a> {
                 Target::Node(_) => plan.unavailable = true,
             }
         }
+        plan.working = plan.nodes.iter().any(|&id| {
+            self.node(NodeId(id))
+                .is_some_and(|agent| matches!(agent.status, Status::Working { .. }))
+        });
         plan.queue_only = plan.outside_rooms > 0
             || plan.nodes.iter().any(|&id| {
                 self.node(NodeId(id))
@@ -100,6 +105,7 @@ pub(super) struct Plan {
     rooms: BTreeSet<String>,
     pub outside_rooms: usize,
     pub queue_only: bool,
+    pub working: bool,
     pub unavailable: bool,
 }
 

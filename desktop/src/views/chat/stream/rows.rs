@@ -1,5 +1,3 @@
-use std::cell::RefCell;
-use std::rc::Rc;
 use std::sync::Arc;
 
 use api::graph::chat::{
@@ -9,30 +7,29 @@ use api::graph::chat::{
 use api::graph::events::{BatchResult, Entry};
 use api::graph::messages::{Kind, MessageKind, Question};
 use api::graph::text::Block;
-use api::graph::waits::WaitTone;
-use api::ids::{NodeId, WaitId};
+use api::ids::NodeId;
 use api::repos::RepoView;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, Div, FontWeight, InteractiveElement, IntoElement,
-    ParentElement, Rgba, Stateful, StatefulInteractiveElement, Styled, Transformation, Window,
-    canvas, div, radians, relative,
+    AnyElement, App, Context, Div, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    Rgba, Stateful, StatefulInteractiveElement, Styled, Window, div, relative,
 };
 
 use super::{Quote, RowContent, Stream, StreamEvent, tr};
 use crate::scale::px;
 use crate::strings::{Lang, Str};
+use crate::theme::mix;
 use crate::views::dock::blocks;
 use crate::views::icons::{Lucide, icon};
 use crate::views::prose::prose;
-use crate::views::tooltip::{self, tip};
+use crate::views::tooltip::tip;
 use crate::views::ui;
 use crate::views::widgets::btn;
 
 const MESSAGE_GROUP: &str = "stream-message";
 const SENDER_WINDOW_MS: i64 = 3 * 60 * 1000;
-const BUBBLE_WIDTH: f32 = 720.0;
-const BUBBLE_SHARE: f32 = 0.72;
+const BUBBLE_WIDTH: f32 = 760.0;
+const HUMAN_BUBBLE_SHARE: f32 = 0.72;
 
 pub(super) fn hidden(item: &ChatItem) -> bool {
     match &item.entry {
@@ -101,7 +98,6 @@ impl Stream {
     pub(super) fn row(
         &mut self,
         index: usize,
-        visible_waits: &Rc<RefCell<Vec<WaitId>>>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -153,26 +149,7 @@ impl Stream {
             let item = self.data.read(cx).items()[index].clone();
             match &item.entry {
                 ChatEntry::Message { message } => self.message(&item, message, grouped, window, cx),
-                ChatEntry::Wait { wait, closed, .. } => {
-                    let visible =
-                        (matches!(wait.tone, WaitTone::Ask) && closed.is_none()).then(|| {
-                            let id = wait.wait.id;
-                            let visible_waits = visible_waits.clone();
-                            canvas(
-                                |_, _, _| (),
-                                move |bounds, (), window, _| {
-                                    if bounds.intersects(&window.content_mask().bounds) {
-                                        visible_waits.borrow_mut().push(id);
-                                    }
-                                },
-                            )
-                            .absolute()
-                            .size_full()
-                        });
-                    self.wait_card(item, window, cx)
-                        .relative()
-                        .children(visible)
-                }
+                ChatEntry::Wait { .. } => self.wait_card(item, window, cx),
                 ChatEntry::Notice { event } => {
                     let (label, detail) = notice(event, cx);
                     self.folded(cursor, label, detail, cx)
@@ -371,7 +348,7 @@ impl Stream {
             || mode.is_some()
             || source.is_some()
             || message.reply_to.is_some();
-        let receipts = self.receipts(message, agent, item.cursor, window, cx);
+        let receipts = self.receipts(message, agent, item.cursor, cx);
         let header = show_header.then(|| {
             flow()
                 .children(author)
@@ -391,11 +368,9 @@ impl Stream {
             item,
             text,
             message.blocks.as_deref().unwrap_or_default(),
+            (header.is_none() && receipts.is_none()).then(|| hover_time(item.cursor, mine, cx)),
             window,
             cx,
-        );
-        let body = body.relative().children(
-            (header.is_none() && receipts.is_none()).then(|| hover_time(item.cursor, mine, cx)),
         );
         let editor = self.message_editor(item, cx);
         column()
@@ -411,7 +386,6 @@ impl Stream {
         message: &ChatMessage,
         agent: Option<NodeId>,
         cursor: ChatCursor,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
         if message.receipts.is_empty() && !message.outside_read {
@@ -423,12 +397,12 @@ impl Stream {
             .iter()
             .map(|receipt| {
                 let (label, ink) = match receipt.state {
-                    ChatDelivery::Queued => (tr(cx, "대기 중", "Queued"), c.ink_2),
-                    ChatDelivery::Handed => (tr(cx, "전달됨", "Delivered"), c.ink_2),
-                    ChatDelivery::Printed => (tr(cx, "표시됨", "Shown"), c.ink_2),
                     ChatDelivery::Read => (tr(cx, "읽음", "Read"), c.ok),
-                    ChatDelivery::Retrying => (tr(cx, "다시 전달 중", "Retrying"), c.warn),
-                    ChatDelivery::Ended => (tr(cx, "전달하지 못함", "Undelivered"), c.err),
+                    ChatDelivery::Ended => (tr(cx, "전달 실패", "Delivery failed"), c.err),
+                    ChatDelivery::Queued
+                    | ChatDelivery::Handed
+                    | ChatDelivery::Printed
+                    | ChatDelivery::Retrying => (tr(cx, "보내는 중", "Sending"), c.ink_2),
                 };
                 let label = if agent.is_some() && receipt.to.id == agent {
                     label.to_owned()
@@ -438,9 +412,7 @@ impl Stream {
                 let room = receipt
                     .to
                     .id
-                    .filter(|_| {
-                        matches!(receipt.state, ChatDelivery::Ended | ChatDelivery::Retrying)
-                    })
+                    .filter(|_| matches!(receipt.state, ChatDelivery::Ended))
                     .and_then(|node| {
                         self.data.read(cx).rooms().iter().find_map(|room|
                     matches!(room.kind, ChatRoomKind::Agent { node: owner } if owner == node)
@@ -465,10 +437,10 @@ impl Stream {
             .id("stream-receipts")
             .flex()
             .items_center()
+            .flex_wrap()
             .min_w_0()
             .max_w_full()
             .gap(px(4.0))
-            .overflow_hidden()
             .text_size(px(ui::SMALL))
             .whitespace_nowrap()
             .tooltip(tip(detail))
@@ -484,9 +456,9 @@ impl Stream {
                             .min_w_0()
                             .child(div().min_w_0().truncate().text_color(ink).child(label))
                             .children(room.map(|id| {
-                                let label = tr(cx, "1:1 세션 열기", "Open session");
-                                let key = format!("stream-delivery-{index}");
-                                action_button(&key, Lucide::ExternalLink, label, window, cx)
+                                btn::ghost(("stream-delivery", index), cx)
+                                    .flex_none()
+                                    .child(tr(cx, "세션 열기", "Open session"))
                                     .on_click(cx.listener(move |_, _, _, cx| {
                                         cx.emit(StreamEvent::OpenRoom(id.clone()))
                                     }))
@@ -527,8 +499,14 @@ impl Stream {
                         .map(|room| room.name.clone())
                         .unwrap_or_else(|| tr(cx, "에이전트", "Agent").to_owned())
                 };
-                let body =
-                    self.bubble(row, text, blocks.as_deref().unwrap_or_default(), window, cx);
+                let body = self.bubble(
+                    row,
+                    text,
+                    blocks.as_deref().unwrap_or_default(),
+                    grouped.then(|| hover_time(cursor, mine, cx)),
+                    window,
+                    cx,
+                );
                 column()
                     .when(mine, |column| column.items_end())
                     .children((!grouped).then(|| {
@@ -536,10 +514,7 @@ impl Stream {
                             .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
                             .child(timestamp(cursor, cx))
                     }))
-                    .child(
-                        body.relative()
-                            .children(grouped.then(|| hover_time(cursor, mine, cx))),
-                    )
+                    .child(body)
             }
             ChatTranscriptItem::Status { text } => {
                 let text = if text == "턴이 멈췄습니다." {
@@ -696,9 +671,9 @@ pub(super) fn timestamp(cursor: ChatCursor, cx: &App) -> Div {
 fn hover_time(cursor: ChatCursor, mine: bool, cx: &App) -> Div {
     timestamp(cursor, cx)
         .absolute()
-        .bottom_0()
-        .when(mine, |time| time.left_0())
-        .when(!mine, |time| time.right_0())
+        .top_full()
+        .when(mine, |time| time.right_0())
+        .when(!mine, |time| time.left_0())
         .opacity(0.0)
         .group_hover(MESSAGE_GROUP, |style| style.opacity(1.0))
 }
@@ -718,6 +693,7 @@ impl Stream {
         item: &Arc<ChatItem>,
         text: &str,
         content: &[Block],
+        hover_time: Option<Div>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Div {
@@ -727,9 +703,8 @@ impl Stream {
         let forward = (item.cursor.id >= 0).then(|| {
             action_button(
                 "stream-forward",
-                Lucide::CornerLeftUp,
-                tr(cx, "전하기", "Forward"),
-                window,
+                Lucide::MessageSquare,
+                tr(cx, "인용하기", "Quote"),
                 cx,
             )
             .on_click(cx.listener(move |stream, _, _, cx| {
@@ -739,34 +714,46 @@ impl Stream {
             }))
         });
         let copy_text = text.to_owned();
+        let (copied, copy_text_to_clipboard) =
+            blocks::copy_feedback("stream-copy-feedback".into(), window, cx);
         let copy = action_button(
             "stream-copy",
-            Lucide::Copy,
-            ui::say(cx, Str::TerminalCopy),
-            window,
+            if copied { Lucide::Check } else { Lucide::Copy },
+            ui::say(
+                cx,
+                if copied {
+                    Str::RoomCopied
+                } else {
+                    Str::TerminalCopy
+                },
+            ),
             cx,
         )
-        .on_click(move |_, _, cx| {
-            cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()))
-        });
-        let edit = self.message_buttons(item, window, cx);
+        .when(copied, |button| button.opacity(1.0))
+        .on_click(move |_, _, cx| copy_text_to_clipboard(&copy_text, cx));
+        let edit = self.message_buttons(item, cx);
         let actions = div()
+            .relative()
             .flex()
             .flex_none()
             .items_center()
             .gap(px(2.0))
             .children(forward)
             .child(copy)
-            .children(edit.into_iter().flatten());
+            .children(edit.into_iter().flatten())
+            .children(hover_time);
         let follow = self.follow(cx);
-        let ink = if mine { c.accent_ink } else { c.ink };
-        let links = if mine { c.accent_ink } else { c.accent };
         let body = div()
             .min_w_0()
             .max_w(px(BUBBLE_WIDTH))
             .rounded(px(8.0))
-            .bg(if mine { c.accent } else { c.surface })
-            .text_color(ink)
+            .bg(if mine {
+                mix(c.accent, 0.10, c.surface)
+            } else {
+                c.surface
+            })
+            .text_color(c.ink)
+            .when(!mine, |body| body.w_full())
             .when(!mine, |body| body.border_1().border_color(c.line))
             .px(px(11.0))
             .py(px(7.0))
@@ -775,7 +762,7 @@ impl Stream {
                 content,
                 text,
                 None,
-                links,
+                c.accent,
                 ui::TEXT * crate::scale::get(),
                 window,
                 cx,
@@ -784,7 +771,8 @@ impl Stream {
         let body = div()
             .flex()
             .min_w_0()
-            .max_w(relative(BUBBLE_SHARE))
+            .when(mine, |body| body.max_w(relative(HUMAN_BUBBLE_SHARE)))
+            .when(!mine, |body| body.flex_1().max_w(px(BUBBLE_WIDTH)))
             .child(body);
         let row = div().flex().items_start().w_full().min_w_0().gap(px(6.0));
         if mine {
@@ -799,17 +787,10 @@ pub(super) fn action_button(
     id: &str,
     glyph: Lucide,
     label: &'static str,
-    window: &mut Window,
-    cx: &mut App,
+    cx: &App,
 ) -> Stateful<Div> {
-    let focus_key = format!("{id}-focus");
-    let focus = window.use_keyed_state(focus_key, cx, |_, cx| cx.focus_handle().tab_stop(true));
-    let focus = focus.read(cx);
-    let focused = focus.is_focused(window);
     let c = ui::colors(cx);
-    btn::ghost(id.to_owned(), cx)
-        .track_focus(focus)
-        .relative()
+    btn::inert(btn::ghost(id.to_owned(), cx))
         .flex_none()
         .size(px(26.0))
         .px(px(0.0))
@@ -818,24 +799,8 @@ pub(super) fn action_button(
         .group_hover(MESSAGE_GROUP, |style| style.opacity(1.0))
         .focus(|style| style.opacity(1.0))
         .aria_label(label)
-        .when(!focused, |button| button.tooltip(tip(label.to_owned())))
-        .when(focused, |button| {
-            button.child(
-                tooltip::label(label, cx)
-                    .whitespace_nowrap()
-                    .absolute()
-                    .right_0()
-                    .bottom_full()
-                    .mb(px(4.0)),
-            )
-        })
-        .child(
-            icon(glyph, px(14.0), c.ink_2).when(glyph == Lucide::CornerLeftUp, |icon| {
-                icon.with_transformation(Transformation::rotate(radians(
-                    std::f32::consts::FRAC_PI_2,
-                )))
-            }),
-        )
+        .tooltip(tip(label.to_owned()))
+        .child(icon(glyph, px(14.0), c.ink_2))
 }
 
 fn message_kind(kind: &MessageKind, cx: &App) -> Option<&'static str> {
@@ -867,8 +832,18 @@ fn message_kind(kind: &MessageKind, cx: &App) -> Option<&'static str> {
 fn notice(event: &Entry, cx: &App) -> (String, Option<String>) {
     let count = |ko, en, n| format!("{} {n}", tr(cx, ko, en));
     let (label, details) = match event {
-        Entry::Created { node, .. } => (tr(cx, "들어옴", "Joined"), Some(node.name.clone())),
-        Entry::Removed { node } => (tr(cx, "나감", "Left"), Some(node.name.clone())),
+        Entry::Created { node, .. } => {
+            return (
+                format!("{}{}", node.name, tr(cx, " 님이 들어왔습니다", " joined")),
+                None,
+            );
+        }
+        Entry::Removed { node } => {
+            return (
+                format!("{}{}", node.name, tr(cx, " 님이 나갔습니다", " left")),
+                None,
+            );
+        }
         Entry::Relaunched { node, error, .. } => {
             let detail = error.as_ref().map_or_else(
                 || node.name.clone(),

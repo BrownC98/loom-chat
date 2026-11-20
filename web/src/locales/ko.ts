@@ -206,7 +206,7 @@ const ko: typeof en = {
     sshHome: '호스트에 연결하면 그 PC의 폴더가 보입니다.',
     sshReached: '{{host}} · {{system}} · 연결됨',
     connecting: '연결하는 중…',
-    connectingHint: '{{host}}에 연결합니다. 그 PC에 같은 판의 loom이 없으면 ~/.loom/remote에 넣습니다. 처음 한 번만 넣습니다.',
+    connectingHint: '{{host}}에 연결합니다. 그 PC에 같은 판의 loom이 없으면 ~/.loom-chat/remote에 넣습니다. 처음 한 번만 넣습니다.',
     linux: 'Linux',
     mac: 'macOS',
     windowsWsl: 'Windows → WSL {{distro}}',

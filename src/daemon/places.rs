@@ -109,7 +109,7 @@ async fn ssh_release(State(app): State<Arc<App>>, Path(host): Path<String>) -> J
 }
 
 fn wsl_workspace(home: &FsPath) -> Result<PathBuf, Problem> {
-    worktree::workspace_in(&home.join("loom")).map_err(internal)
+    worktree::workspace_in(home).map_err(internal)
 }
 
 impl App {

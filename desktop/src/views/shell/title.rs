@@ -63,7 +63,7 @@ pub fn bar(window: &Window, colors: &Colors, lang: Lang) -> Div {
                 .gap(px(6.0))
                 .child(mark(colors.ink_2))
                 .text_color(colors.ink)
-                .child("loom"),
+                .child(crate::frame::NAME),
         ))
         .child(drag(div().flex_1().h_full()))
         .children(platform::captions(window, colors, lang))

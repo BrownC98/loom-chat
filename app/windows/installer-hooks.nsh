@@ -44,7 +44,7 @@
     Delete "$INSTDIR\loom.exe"
     Rename "$INSTDIR\loom.exe.keep" "$INSTDIR\loom.exe"
   ${EndIf}
-  CreateShortcut "$SMPROGRAMS\loom (browser).lnk" "$INSTDIR\loom.exe" "open" "$INSTDIR\${MAINBINARYNAME}.exe" 0 SW_SHOWMINIMIZED
+  CreateShortcut "$SMPROGRAMS\loom-chat (browser).lnk" "$INSTDIR\loom.exe" "open" "$INSTDIR\${MAINBINARYNAME}.exe" 0 SW_SHOWMINIMIZED
 !macroend
 
 !macro NSIS_HOOK_PREUNINSTALL
@@ -53,5 +53,5 @@
   Pop $0
   Sleep 1000
   Delete "$INSTDIR\loom.exe.*.old"
-  Delete "$SMPROGRAMS\loom (browser).lnk"
+  Delete "$SMPROGRAMS\loom-chat (browser).lnk"
 !macroend

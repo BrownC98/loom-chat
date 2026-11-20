@@ -9,7 +9,7 @@ import java.util.Base64
 import org.json.JSONObject
 
 object Find {
-    private const val PORT = 7430
+    private const val PORT = 7435
     private const val ROUNDS = 3
     private const val WAIT_MS = 1500
     private const val MAX_REPLIES = 16

@@ -27,10 +27,10 @@
 
 ### Windows
 
-`loom_<판>_x64-setup.exe`를 실행합니다. loom 창이 열립니다.
+`loom-chat_<판>_x64-setup.exe`를 실행합니다. loom 창이 열립니다.
 
-- 브라우저로도 씁니다. 시작 메뉴의 **loom (browser)**가 같은 loom을 기본 브라우저에 엽니다.
-- 설치 프로그램 없이: PowerShell에서 아래 한 줄을 실행합니다. `loom-desktop.exe`를 `%LOCALAPPDATA%\loom\bin`에 넣습니다. 바탕 화면에 **loom** 아이콘을 만들고 창을 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 데스크톱 프로그램이 없으면(옛 릴리스) 브라우저 판을 설치하고, 아이콘은 브라우저에 loom을 엽니다.
+- 브라우저로도 씁니다. 시작 메뉴의 **loom-chat (browser)**가 같은 loom을 기본 브라우저에 엽니다.
+- 설치 프로그램 없이: PowerShell에서 아래 한 줄을 실행합니다. `loom-desktop.exe`를 `%LOCALAPPDATA%\loom-chat\bin`에 넣습니다. 바탕 화면에 **loom-chat** 아이콘을 만들고 창을 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 데스크톱 프로그램이 없으면(옛 릴리스) 브라우저 판을 설치하고, 아이콘은 브라우저에 loom을 엽니다.
 
   ```powershell
   irm https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.ps1 | iex
@@ -40,14 +40,14 @@
 
 ### macOS(Apple Silicon)
 
-터미널에서 아래 한 줄을 실행합니다. loom 앱을 받아 응용 프로그램 폴더에 넣고 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 네이티브 데스크톱 프로그램이 있으면 `loom-desktop.app`(같은 릴리스의 네이티브 loom 창)도 응용 프로그램 폴더에 넣고 그 앱을 엽니다.
+터미널에서 아래 한 줄을 실행합니다. loom 앱을 받아 응용 프로그램 폴더에 넣고 엽니다. 다시 실행하면 새 판으로 바꿉니다. 릴리스에 네이티브 데스크톱 프로그램이 있으면 `loom-chat-desktop.app`(같은 릴리스의 네이티브 loom 창)도 응용 프로그램 폴더에 넣고 그 앱을 엽니다.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
-- 터미널 없이: `loom_<판>_aarch64.dmg`를 열고 loom을 응용 프로그램 폴더로 끕니다. 앱에 Apple 서명이 없어 macOS가 받은 앱이 「손상되었기 때문에 열 수 없습니다」라고 합니다. 처음 열기 전에 터미널에서 `xattr -cr /Applications/loom.app`을 실행합니다.
-- `~/Applications/loom (browser).command`는 같은 loom을 브라우저에 엽니다.
+- 터미널 없이: `loom-chat_<판>_aarch64.dmg`를 열고 loom을 응용 프로그램 폴더로 끕니다. 앱에 Apple 서명이 없어 macOS가 받은 앱이 「손상되었기 때문에 열 수 없습니다」라고 합니다. 처음 열기 전에 터미널에서 `xattr -cr /Applications/loom-chat.app`을 실행합니다.
+- `~/Applications/loom-chat (browser).command`는 같은 loom을 브라우저에 엽니다.
 - 지울 때는 응용 프로그램 폴더의 loom을 휴지통으로 옮깁니다.
 
 ### Linux(x86-64)
@@ -58,11 +58,11 @@ Linux의 loom은 브라우저에서 돕니다. 터미널에서 아래 한 줄을
 curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
-`~/loom/bin`에 `loom` 명령을 넣고, 앱 메뉴와 바탕 화면에 **loom**을 더하고, 브라우저에 loom을 엽니다. 다음부터는 **loom** 아이콘을 누릅니다. 다시 실행하면 새 판으로 바꿉니다.
+`~/loom-chat/bin`에 `loom` 명령을 넣고, 앱 메뉴와 바탕 화면에 **loom-chat**을 더하고, 브라우저에 loom을 엽니다. 다음부터는 **loom-chat** 아이콘을 누릅니다. 다시 실행하면 새 판으로 바꿉니다.
 
 ### WSL
 
-위 Linux 한 줄을 WSL 터미널에서 실행합니다. WSL에서는 위 Windows 한 줄을 실행해 Windows용 loom(네이티브 창, 옛 릴리스는 브라우저 판)을 설치하고 Windows 바탕 화면에 **loom** 아이콘을 만듭니다. WSL의 `loom` 명령은 그 Windows loom을 부릅니다.
+위 Linux 한 줄을 WSL 터미널에서 실행합니다. WSL에서는 위 Windows 한 줄을 실행해 Windows용 loom(네이티브 창, 옛 릴리스는 브라우저 판)을 설치하고 Windows 바탕 화면에 **loom-chat** 아이콘을 만듭니다. WSL의 `loom` 명령은 그 Windows loom을 부릅니다.
 
 Windows loom 하나가 Windows와 WSL의 에이전트를 함께 돌립니다. WSL의 저장소는 `\\wsl.localhost\<배포판>\…`에서 폴더를 더합니다. 그 저장소의 노드는 그 배포판의 에이전트 CLI와 git으로 그 배포판에서 돕니다. Windows 앱도 같습니다.
 
@@ -72,12 +72,12 @@ loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom �
 
 | | loom 앱 | loom desktop | 브라우저 판 |
 |---|---|---|---|
-| 릴리스 파일 | `loom_<판>_x64-setup.exe`, `loom_<판>_aarch64.dmg` | `loom-desktop-windows-x64.zip`, `loom-desktop-macos-arm64.tar.gz` | `loom-web-*` |
+| 릴리스 파일 | `loom-chat_<판>_x64-setup.exe`, `loom-chat_<판>_aarch64.dmg` | `loom-desktop-windows-x64.zip`, `loom-desktop-macos-arm64.tar.gz` | `loom-web-*` |
 | 창 | 웹뷰(Tauri) | 네이티브(GPUI) | 내 브라우저 |
 | 운영체제 | Windows, macOS | Windows x64, macOS Apple Silicon | Windows, macOS, Linux |
 | 업데이트 | 화면의 업데이트 카드 | 설정 › 정보의 **업데이트** | 화면의 업데이트 카드 |
 
-**한 줄로 설치(권장).** 위 Windows·macOS 한 줄은 릴리스에 loom desktop이 있으면 그것을 설치합니다. Windows는 `%LOCALAPPDATA%\loom\bin\loom-desktop.exe`와 바탕 화면의 **loom** 아이콘, macOS는 응용 프로그램 폴더의 `loom-desktop.app`입니다.
+**한 줄로 설치(권장).** 위 Windows·macOS 한 줄은 릴리스에 loom desktop이 있으면 그것을 설치합니다. Windows는 `%LOCALAPPDATA%\loom-chat\bin\loom-desktop.exe`와 바탕 화면의 **loom-chat** 아이콘, macOS는 응용 프로그램 폴더의 `loom-chat-desktop.app`입니다.
 
 **손으로 설치:**
 
@@ -91,15 +91,15 @@ loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom �
 
 **닫기와 끄기.** 창을 닫아도 데몬과 에이전트는 계속 돕니다. 데몬을 끄려면 데스크톱 실행 파일에 `stop`을 줍니다.
 
-- Windows(한 줄 설치): `& "$env:LOCALAPPDATA\loom\bin\loom-desktop.exe" stop | Out-Host`
-- macOS(한 줄 설치): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop`(또는 `~/Applications/…`)
+- Windows(한 줄 설치): `& "$env:LOCALAPPDATA\loom-chat\bin\loom-desktop.exe" stop | Out-Host`
+- macOS(한 줄 설치): `/Applications/loom-chat-desktop.app/Contents/MacOS/loom-desktop stop`(또는 `~/Applications/…`)
 - 손으로 설치: `<폴더>/loom-desktop stop`
 
-Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전에 프롬프트가 돌아올 수 있습니다. 명령이 끝날 때까지 기다리고 종료 코드를 받으려면 PowerShell에서 `| Out-Host`를 붙입니다. 명령 프롬프트에서는 `start "" /wait "%LOCALAPPDATA%\loom\bin\loom-desktop.exe" stop`을 씁니다.
+Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전에 프롬프트가 돌아올 수 있습니다. 명령이 끝날 때까지 기다리고 종료 코드를 받으려면 PowerShell에서 `| Out-Host`를 붙입니다. 명령 프롬프트에서는 `start "" /wait "%LOCALAPPDATA%\loom-chat\bin\loom-desktop.exe" stop`을 씁니다.
 
 **업데이트.** 설정 › 정보에서 **업데이트 확인**, 이어서 **업데이트**를 누릅니다. `loom-desktop`이 데몬을 돌리면 그 실행 파일을 바꾸고 데몬을 다시 띄웁니다. 새 판의 창을 보려면 창 프로그램을 끝내고 다시 엽니다.
 
-**WSL.** Windows의 `loom-desktop.exe`에 압축한 `loom-linux`가 들어 있습니다. WSL을 쓸 때도 데스크톱 실행 파일 하나면 됩니다. WSL 설치 명령은 Windows 설치가 고른 실행 파일을 `~/loom/bin/loom`에 연결합니다.
+**WSL.** Windows의 `loom-desktop.exe`에 압축한 `loom-linux`가 들어 있습니다. WSL을 쓸 때도 데스크톱 실행 파일 하나면 됩니다. WSL 설치 명령은 Windows 설치가 고른 실행 파일을 `~/loom-chat/bin/loom`에 연결합니다.
 
 **한계.** 릴리스에는 Windows x64와 macOS Apple Silicon용 loom desktop만 있습니다. Linux는 브라우저 판을 씁니다. v0.1.2825보다 옛 릴리스에는 없습니다. 그때 설치 한 줄은 브라우저 판(Windows) 또는 앱만(macOS) 설치합니다.
 
@@ -114,10 +114,10 @@ Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전
 
 ### 끄기, 업데이트, 데이터
 
-- **끄기:** `loom stop`을 실행하거나 설정의 **loom 끄기**를 누릅니다. 에이전트는 계속 돌고, loom이 다시 켜지면 다시 붙습니다.
+- **끄기:** 설정에서 **loom 끄기**를 누르거나 설치한 loom-chat 실행 파일을 `stop`으로 부릅니다. Linux와 WSL에서는 `~/loom-chat/bin/loom stop`을 실행합니다. 에이전트는 계속 돌고, loom이 다시 켜지면 다시 붙습니다.
 - **업데이트:** 새 판이 나오면 오른쪽 아래에 카드가 뜹니다. **업데이트**를 누릅니다. 도는 에이전트는 일을 계속합니다.
-- **데이터:** `~/.loom`(Windows는 `%APPDATA%\loom`)에 DB, 로그, 내장 스킬이 있습니다.
-- **주소:** 화면은 이 컴퓨터에서만 듣습니다(`127.0.0.1:7420`). 사용자가 한 명이라 로그인이 없으므로 `--listen`으로 다른 컴퓨터에 열지 않습니다. 휴대폰을 연결하면 loom은 연결한 기기만 받는 HTTPS 포트에서도 듣습니다.
+- **데이터:** `~/.loom-chat`(Windows는 `%APPDATA%\loom-chat`)에 DB, 로그, 내장 스킬이 있습니다. 같은 컴퓨터에서 상류 loom과 함께 실행할 수 있습니다.
+- **주소:** 화면은 이 컴퓨터에서만 듣습니다(`127.0.0.1:7425`). 사용자가 한 명이라 로그인이 없으므로 `--listen`으로 다른 컴퓨터에 열지 않습니다. 휴대폰을 연결하면 loom은 연결한 기기만 받는 HTTPS 포트에서도 듣습니다.
 
 ## 기능
 

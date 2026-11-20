@@ -118,6 +118,13 @@ impl Spec {
         }
     }
 
+    pub(super) fn endpoint(&self) -> Option<&str> {
+        self.env
+            .iter()
+            .find(|(key, _)| key == ENDPOINT_ENV)
+            .map(|(_, value)| value.as_str())
+    }
+
     pub(super) fn commands(self) -> (CommandBuilder, Option<CommandBuilder>) {
         let build = |argv| {
             let mut cmd = CommandBuilder::from_argv(argv);

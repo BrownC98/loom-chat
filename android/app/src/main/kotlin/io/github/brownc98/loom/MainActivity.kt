@@ -462,8 +462,9 @@ class MainActivity : ComponentActivity() {
                 url.host?.endsWith(TAILNET) == true -> {
                     pin = null
                     doors = emptyList()
-                    origin = "https://${url.host}"
-                    open("https://${url.host}/#pair=$pair")
+                    val tailnet = "https://${url.host}" + if (url.port > 0) ":${url.port}" else ""
+                    origin = tailnet
+                    open("$tailnet/#pair=$pair")
                 }
                 else -> showStart(R.string.qr_error)
             }

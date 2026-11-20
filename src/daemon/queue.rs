@@ -11,8 +11,8 @@ use crate::graph::{BatchId, Ended, Merge, Outcome, Queued};
 use crate::protocol::{self, Deploy};
 use crate::worktree;
 use crate::worktree::merge::{
-    self, ADVANCE, CHECK_FAILED, CLEAN, CONFLICT, CheckHeld, DIRTY, Lines, MOVED, PASSED, PUBLISH,
-    STACK, SYNC, UNDO, base_branch, bringing_merge, merge_commit, script,
+    self, ADVANCE, CHECK_FAILED, CONFLICT, CheckHeld, DIRTY, Lines, MOVED, PASSED, PUBLISH, STACK,
+    SYNC, UNDO, base_branch, bringing_merge, merge_commit, script,
 };
 use api::graph::errors::Refusal;
 use api::graph::events::{BatchMember, BatchResult, Entry};
@@ -121,9 +121,6 @@ async fn recover(app: &Arc<App>, repo: RepoId) {
             dir,
             target: stale.target,
         };
-        if let Err(e) = script(app.files(), &run.dir, CLEAN, &[]).await {
-            crate::log::logln!("loom: merge queue recovery: {e}");
-        }
         run.record(0, &stale.members, None, BatchResult::Interrupted, None);
         let checked = match (stale.base, stale.tip) {
             (Some(base), Some(tip)) => Some((base, tip)),

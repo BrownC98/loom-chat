@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "loom",
+  "productName": "loom-chat",
   "mainBinaryName": "loom-app",
-  "identifier": "io.github.brownc98.loom",
+  "identifier": "io.github.brownc98.loom-chat",
   "app": {
     "windows": []
   },
@@ -22,7 +22,7 @@
   "plugins": {
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCQzdFM0Y4MDEyQTg3MDkKUldRSmh5b0IrT1BIcTBDMEI0eUxnZ0ZZWUx3T3JxTEM3ZFQ2b1RONytiM29aMGozNE0yTytDL3cK",
-      "endpoints": ["https://github.com/BrownC98/loom/releases/latest/download/latest.json"]
+      "endpoints": ["https://github.com/BrownC98/loom-chat/releases/latest/download/latest.json"]
     }
   }
 }

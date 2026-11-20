@@ -108,7 +108,7 @@ impl Site {
     }
 
     pub fn wsl(inside: Inside) -> Self {
-        let cli_root = format!("{}/.loom/accounts", inside.home());
+        let cli_root = format!("{}/{}/accounts", inside.home(), crate::db::UNIX_DATA_DIR);
         Self {
             accounts: Accounts {
                 root: inside.local(&cli_root),

@@ -15,33 +15,12 @@ pub const DIRTY: i32 = 21;
 const BATCH_WAIT: Duration = Duration::from_secs(60 * 60);
 macro_rules! batches {
     () => {
-        "loom-batches"
+        "loom-chat-batches"
     };
 }
 
 pub const BATCHES: &str = batches!();
-
-macro_rules! common {
-    () => {
-        concat!(
-            "common=$(git rev-parse --path-format=absolute --git-common-dir)\nbatches=$common/",
-            batches!(),
-            "\n"
-        )
-    };
-}
-
-pub const CLEAN: &str = concat!(
-    common!(),
-    r#"for wt in "$batches"/*; do
-  [ -e "$wt" ] || continue
-  [ "$wt" = "$batches/check" ] && continue
-  git worktree remove --force "$wt" 2>/dev/null
-  rm -rf "$wt"
-done
-git worktree prune
-"#
-);
+pub(super) const UPSTREAM_BATCHES: &str = "loom-batches";
 
 pub const SYNC: &str = r#"set -u
 target=$1
@@ -55,15 +34,15 @@ git merge --ff-only --quiet "origin/$target" || { echo "$target and origin/$targ
 macro_rules! open {
     () => {
         concat!(
-            "set -u\n",
-            common!(),
-            r#"top=${common%/.git}
+            r#"set -u
+common=$(git rev-parse --path-format=absolute --git-common-dir)
+top=${common%/.git}
 wt=${XDG_CACHE_HOME:-$HOME/.cache}/"#,
             batches!(),
             r#"/${top##*/}-$(printf %s "$common" | git hash-object --stdin | cut -c1-12)
-log=$common/loom-logs/$1.log lock=$common/loom-check.lock base=$2 mark=$3
-trees=$common/loom-logs/passed-trees
-mkdir -p "$common/loom-logs"
+log=$common/loom-chat-logs/$1.log lock=$common/loom-chat-check.lock base=$2 mark=$3
+trees=$common/loom-chat-logs/passed-trees
+mkdir -p "$common/loom-chat-logs"
 exec 3>&1 >>"$log" 2>&1
 echo "log $log" >&3
 "#
@@ -84,14 +63,6 @@ else
   exit 1
 fi
 case $wt/ in */.git/*) echo "loom refuses the check folder $wt: tools skip paths under a .git folder" >&3; exit 1 ;; esac
-rm -rf "$common/loom-batch-target" "${XDG_CACHE_HOME:-$HOME/.cache}/loom-batch-target"
-if [ -e "$batches/check" ]; then
-  rm -f "$trees" || exit 1
-  git worktree remove --force "$batches/check" 2>/dev/null
-  rm -rf "$batches/check"
-  rmdir "$batches" 2>/dev/null
-  git worktree prune
-fi
 if ! { [ "$(git -C "$wt" rev-parse --is-inside-work-tree 2>/dev/null)" = true ] &&
   git -C "$wt" reset --hard --quiet &&
   git -C "$wt" checkout --detach --force --quiet "$base" &&
@@ -158,7 +129,7 @@ echo "tip $tip" >&3
 
 pub const STACK: &str = concat!(
     open!(),
-    r#"passed=$common/loom-logs/${1%-*}.passed
+    r#"passed=$common/loom-chat-logs/${1%-*}.passed
 rm -f "$passed"
 members=$(shift 3; printf 'member %s %s\n' "$@")
 pass() { printf 'base %s\ntip %s\n%s\n' "$base" "$tip" "$members" > "$passed.new" && mv "$passed.new" "$passed"; }
@@ -169,14 +140,14 @@ pass() { printf 'base %s\ntip %s\n%s\n' "$base" "$tip" "$members" > "$passed.new
 pub const CHECK: &str = concat!(open!(), "pass() { :; }\n", stack_and_check!());
 
 pub const PASSED: &str = r#"common=$(git rev-parse --path-format=absolute --git-common-dir)
-cat "$common/loom-logs/batch-$1.passed" 2>/dev/null
+cat "$common/loom-chat-logs/batch-$1.passed" 2>/dev/null
 exit 0
 "#;
 
 pub const PUBLISH: &str = r#"set -u
 common=$(git rev-parse --path-format=absolute --git-common-dir)
-log=$common/loom-logs/$1 target=$2 base=$3 tip=$4
-mkdir -p "$common/loom-logs"
+log=$common/loom-chat-logs/$1 target=$2 base=$3 tip=$4
+mkdir -p "$common/loom-chat-logs"
 exec 3>&1 >>"$log" 2>&1
 echo "log $log" >&3
 [ "$(git symbolic-ref --quiet --short HEAD)" = "$target" ] || { echo "the main checkout is not on $target"; exit 1; }
@@ -204,8 +175,8 @@ fi
 
 pub const SHIP: &str = r#"set -u
 common=$(git rev-parse --path-format=absolute --git-common-dir)
-log=$common/loom-logs/$1
-mkdir -p "$common/loom-logs"
+log=$common/loom-chat-logs/$1
+mkdir -p "$common/loom-chat-logs"
 exec 3>&1 >>"$log" 2>&1
 echo "log $log" >&3
 [ -f scripts/gate/ship.sh ] || { echo "no scripts/gate/ship.sh"; exit 0; }
@@ -232,7 +203,7 @@ common=$(git rev-parse --path-format=absolute --git-common-dir) || exit 1
 mins=$1
 shift
 n=0 kib=0
-for f in "$common/loom-logs"/batch-* "$common/loom-logs"/check-* "$common/loom-logs"/deploy-*; do
+for f in "$common/loom-chat-logs"/batch-* "$common/loom-chat-logs"/check-* "$common/loom-chat-logs"/deploy-*; do
   [ -f "$f" ] || continue
   name=${f##*/}
   for open in "$@"; do

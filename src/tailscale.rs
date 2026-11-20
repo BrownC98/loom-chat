@@ -12,6 +12,7 @@ const INSTALLED: &[&str] = &[
     "/mnt/c/Program Files/Tailscale/tailscale.exe",
 ];
 
+const HTTPS_PORT: u16 = 8443;
 const SERVE_TIMEOUT: Duration = Duration::from_secs(20);
 const CONSENT_PREFIX: &str = "https://login.tailscale.com/";
 
@@ -37,20 +38,23 @@ impl Tailscale {
         if status["BackendState"] != "Running" || host.is_empty() {
             return Tailnet::Stopped;
         }
+        let host = format!("{host}:{HTTPS_PORT}");
         let serving = self
             .json(&["serve", "status", "--json"])
             .await
-            .is_ok_and(|serve| proxies_to(&serve, port));
-        Tailnet::Ready {
-            host: host.to_owned(),
-            serving,
-        }
+            .is_ok_and(|serve| proxies_to(&serve, &host, port));
+        Tailnet::Ready { host, serving }
     }
 
     pub async fn serve(&self, port: u16) -> Result<Served, String> {
         let mut cmd = self.command();
         let mut child = cmd
-            .args(["serve", "--bg", &port.to_string()])
+            .args([
+                "serve",
+                "--bg",
+                &format!("--https={HTTPS_PORT}"),
+                &port.to_string(),
+            ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -119,18 +123,13 @@ impl Tailscale {
     }
 }
 
-fn proxies_to(serve: &serde_json::Value, port: u16) -> bool {
+fn proxies_to(serve: &serde_json::Value, host: &str, port: u16) -> bool {
     let targets = [
         format!("http://127.0.0.1:{port}"),
         format!("http://localhost:{port}"),
         port.to_string(),
     ];
-    serve["Web"]
-        .as_object()
-        .into_iter()
-        .flat_map(|web| web.values())
-        .filter_map(|site| site["Handlers"].as_object())
-        .flat_map(|handlers| handlers.values())
-        .filter_map(|handler| handler["Proxy"].as_str())
-        .any(|proxy| targets.iter().any(|t| proxy.trim_end_matches('/') == t))
+    serve["Web"][host]["Handlers"]["/"]["Proxy"]
+        .as_str()
+        .is_some_and(|proxy| targets.iter().any(|t| proxy.trim_end_matches('/') == t))
 }

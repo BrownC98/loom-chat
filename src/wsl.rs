@@ -264,15 +264,18 @@ fn caller() -> Option<WslPath> {
     std::env::current_dir().ok().and_then(|dir| of(&dir))
 }
 
-pub async fn end_hosts(distro: &Distro, home: &str) -> Result<(), String> {
-    let script = r#"home=$1
+pub async fn end_hosts(distro: &Distro, data: &str) -> Result<(), String> {
+    let script = r#"endpoint_prefix=$1
 for d in /proc/[0-9]*; do
   pid=${d#/proc/}
   [ "$(tr '\0' '\n' <"$d/cmdline" 2>/dev/null | sed -n 2p)" = pty-host ] || continue
-  tr '\0' '\n' <"$d/environ" 2>/dev/null | grep -qxF "HOME=$home" && echo "$pid"
+  tr '\0' '\n' <"$d/environ" 2>/dev/null | while IFS= read -r env; do
+    case $env in "$endpoint_prefix"*.sock) echo "$pid"; break ;; esac
+  done
 done
 exit 0"#;
-    end_found(distro, sh(script, [home])).await
+    let endpoint = format!("{}={data}/run/", crate::tunnel::ENDPOINT_ENV);
+    end_found(distro, sh(script, [endpoint.as_str()])).await
 }
 
 pub async fn end_shells(distro: &Distro, token: &str, shells: &[Identity]) -> Result<(), String> {
@@ -854,7 +857,7 @@ impl Inside {
 
     pub fn run_dir(&self) -> String {
         match self.seen {
-            Seen::Unc(_) => format!("{}/.loom/run", self.home),
+            Seen::Unc(_) => format!("{}/{}/run", self.home, crate::db::UNIX_DATA_DIR),
             Seen::Ssh { .. } => format!("{}/{}/run", self.home, crate::ssh::REMOTE_DIR),
         }
     }

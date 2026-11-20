@@ -15,7 +15,7 @@ const SSH_FAILED: i32 = 255;
 const HOST_KEY_FAILED: &str = "Host key verification failed";
 const AUTH_FAILED: &str = "Permission denied";
 const NEED: &str = "need";
-pub const REMOTE_DIR: &str = ".loom/remote";
+pub const REMOTE_DIR: &str = ".loom-chat/remote";
 pub const LOGIN_PATH: &str = r#"sep=$(printf '\036')
 p=$("${SHELL:-/bin/sh}" -lic 'printf "\036%s\036" "$PATH"' </dev/null 2>/dev/null)
 case $p in *"$sep"*"$sep"*) p=${p#*"$sep"}; PATH=${p%%"$sep"*} ;; esac

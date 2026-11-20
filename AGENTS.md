@@ -35,19 +35,19 @@
 | 데스크톱 띄우기(시험) | ① `cd desktop && memcap -m 4608M cargo build`. ② 실행 파일을 빈 임시 폴더에 복사한다. 별도 `HOME`과 임시 git 저장소를 쓰고 `loom-desktop start --listen 127.0.0.1:<빈 포트>`로 데몬을 띄운다. ③ 같은 `HOME`으로 숨은 X 화면에서 창을 띄운다. `env -u WAYLAND_DISPLAY xvfb-run -a -s "-screen 0 1920x1080x24" <임시 폴더>/loom-desktop`. 화면 사진과 xdotool도 그 안에서 쓴다. `DISPLAY=:0`(WSLg)은 사람의 Windows 화면에 창을 연다(2026-11-18 사람 "누가 왜 자꾸 loom 창 띄우는거야?"). 시험 뒤 아래 데몬 거두기 명령을 실행한다 |
 | 화면 타입·순환 검사 | `npm --prefix web run check` |
 | 화면 빌드 | `npm --prefix web run build` |
-| 데몬 띄우기(시험) | `memcap -m 3G cargo build` 뒤 임시 git 저장소 폴더에서 `HOME=/tmp/<이름> <워크트리>/target/debug/loom serve --listen 127.0.0.1:<빈 포트>`. 다른 `HOME`이라 사람의 DB(`~/.loom`)를 건드리지 않는다. 데몬은 시작 폴더를 저장소로 등록하므로 이 저장소 폴더에서 띄우지 않는다(2026-10-23 실측: 이 저장소 폴더에서 띄운 시험 데몬에 사람의 loom 저장소가 들어갔다). `cargo run`은 쓰지 않는다(바꾼 `HOME`에서 rustup이 판을 찾지 못한다). 시험에는 위 Linux 실행 파일을 경로로 직접 부른다. WSL의 설치본 `~/loom/bin/loom`은 Windows 데몬을 부른다. 끝나면 `bash scripts/dev/stop-test-daemon.sh /tmp/<이름>`을 돌린다. 환경에 그 `HOME`이 있는 프로세스(데몬, pty-host, 훅)를 모두 끄고, 남으면 0이 아닌 코드로 끝난다. 보고에 그 출력을 넣는다. 근거: 시험 데몬의 pty-host가 워크트리를 지운 뒤 11시간 남았다(2026-10-25 사람 보고). Windows 시험 데몬의 `loom.exe`는 WSL에서 환경을 읽을 수 없어 이 스크립트가 찾지 못한다 |
+| 데몬 띄우기(시험) | `memcap -m 3G cargo build` 뒤 임시 git 저장소 폴더에서 `HOME=/tmp/<이름> <워크트리>/target/debug/loom serve --listen 127.0.0.1:<빈 포트>`. 다른 `HOME`이라 사람의 loom-chat 데이터(`~/.loom-chat`)를 건드리지 않는다. 데몬은 시작 폴더를 저장소로 등록하므로 이 저장소 폴더에서 띄우지 않는다(2026-10-23 실측: 이 저장소 폴더에서 띄운 시험 데몬에 사람의 loom 저장소가 들어갔다). `cargo run`은 쓰지 않는다(바꾼 `HOME`에서 rustup이 판을 찾지 못한다). 시험에는 위 Linux 실행 파일을 경로로 직접 부른다. WSL의 loom-chat 설치본 `~/loom-chat/bin/loom`은 Windows 데몬을 부른다. 끝나면 `bash scripts/dev/stop-test-daemon.sh /tmp/<이름>`을 돌린다. 환경에 그 `HOME`이 있는 프로세스(데몬, pty-host, 훅)를 모두 끄고, 남으면 0이 아닌 코드로 끝난다. 보고에 그 출력을 넣는다. 근거: 시험 데몬의 pty-host가 워크트리를 지운 뒤 11시간 남았다(2026-10-25 사람 보고). Windows 시험 데몬의 `loom.exe`는 WSL에서 환경을 읽을 수 없어 이 스크립트가 찾지 못한다 |
 
 - 데스크톱 빌드에 필요한 호스트 패키지(이 호스트에는 깔려 있다): `sudo apt-get install --no-install-recommends pkg-config libfontconfig-dev libfreetype-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb1-dev libx11-dev libwayland-dev libasound2-dev libvulkan-dev libssl-dev llvm`. `llvm`은 msvc 검사의 `llvm-rc`를 준다. gpui는 Zed git `rev 08cbb88`을 쓰므로 첫 `cargo fetch`가 약 0.5GB를 `~/.cargo/git`에 받는다.
 
 - Tauri 앱(`app/`)의 Linux 빌드에 필요한 호스트 패키지(이 호스트에는 깔려 있다): `sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev`. 옆에 둘 `loom` 파일 없이 빌드하려면 `cd app && TAURI_CONFIG='{"bundle":{"externalBin":[],"active":false}}' memcap -m 6G cargo build --release`다(2026-11-02 실측 2분 9초). 성능 측정처럼 WebView를 자동으로 다룰 때는 `webkit2gtk-driver`를 더 깔고 `TAURI_WEBVIEW_AUTOMATION=true`로 띄운다.
 
-- Windows 설치 파일(앱, msvc)은 GitHub Actions(`.github/workflows/release.yml`, 손으로 돌린다)만 만든다. 호스트는 mingw-w64로 `x86_64-pc-windows-gnu` 데몬만 빌드·검사·시험한다. 시험 데몬은 `APPDATA`·`LOCALAPPDATA`를 Windows 임시 폴더로 바꾸고(`WSLENV=APPDATA:LOCALAPPDATA`) 빈 포트에서 띄운다. 사람의 `%APPDATA%\loom`·`%LOCALAPPDATA%\loom`은 건드리지 않는다.
+- Windows 설치 파일(앱, msvc)은 GitHub Actions(`.github/workflows/release.yml`, 손으로 돌린다)만 만든다. 호스트는 mingw-w64로 `x86_64-pc-windows-gnu` 데몬만 빌드·검사·시험한다. 시험 데몬은 `APPDATA`·`LOCALAPPDATA`를 Windows 임시 폴더로 바꾸고(`WSLENV=APPDATA:LOCALAPPDATA`) 빈 포트에서 띄운다. 사람의 `%APPDATA%\loom-chat`·`%LOCALAPPDATA%\loom-chat`은 건드리지 않는다.
 
 - `release.yml`의 `desktop` 잡은 Windows x64 msvc `loom-desktop-windows-x64.zip`과 macOS arm64 `loom-desktop-macos-arm64.tar.gz`를 만든다. `loom-desktop` 하나에 창, 데몬, CLI, 웹 화면을 넣는다. `installer` 잡과 같은 `LOOM_VERSION`(`scripts/version.sh`)을 쓴다. macOS 압축에는 아이콘도 넣는다. `.github/workflows/desktop.yml`은 두 OS에서 검증용 실행 파일을 만든다.
 
 - Android 앱(APK, `android/`)도 서명본은 `release.yml`만 만든다. 호스트에서 빌드하려면 JDK 17, Android SDK(`ANDROID_HOME`), Gradle 9.7.1을 깔고 `memcap -m 8G gradle -p android lintDebug testDebugUnitTest assembleDebug`를 돌린다. 저장소에는 이 도구가 없다.
 
-- 사람의 DB(`~/.loom/loom.db`)를 볼 때는 데몬 API를 먼저 쓴다. 파일을 직접 읽으면 읽기 전용(`sqlite3.connect('file:<경로>?mode=ro', uri=True)`)으로만 연다. 쓰기 연결은 데몬의 쓰기를 막을 수 있다(docs/design/저장.md).
+- 사람의 loom-chat DB(`~/.loom-chat/loom.db`)를 볼 때는 데몬 API를 먼저 쓴다. 파일을 직접 읽으면 읽기 전용(`sqlite3.connect('file:<경로>?mode=ro', uri=True)`)으로만 연다. 쓰기 연결은 데몬의 쓰기를 막을 수 있다(docs/design/저장.md).
 
 - `skills/`는 loom이 노드에 넣는 내장 스킬의 원본이다. 사람의 `~/.agents/skills/{user-doc,raptor-3}`와 `ste-orwell/SKILL.md`가 main 체크아웃의 이 폴더를 가리킨다. loom 절차 스킬은 `skills/o-mode`다. 사람의 Orca 판 `~/.agents/skills/o-mode`와 이름이 같고, 실행 환경이 고른다. Claude에서는 `loom:o-mode`와 `orca:o-mode`로 갈린다(docs/design/에이전트-실행.md 「내장 스킬」). 스킬을 고칠 때도 워크트리에서 고치고 병합한다.
 

@@ -19,7 +19,7 @@ use crate::pake;
 const PORT_OFFSET: u16 = 10;
 const HANDSHAKE: Duration = Duration::from_secs(10);
 const BACKLOG: usize = 64;
-pub const FIND_PORT: u16 = 7430;
+pub const FIND_PORT: u16 = 7435;
 const FIND_MAX: usize = 2048;
 const CERT_FILE: &str = "phone-tls.crt";
 const KEY_FILE: &str = "phone-tls.key";
@@ -168,8 +168,8 @@ async fn answer_finds(socket: UdpSocket, devices: Arc<Devices>, open: Opened) {
     }
 }
 
-const FIREWALL_RULE: &str = "loom-phone";
-const FIREWALL_FIND_RULE: &str = "loom-phone-find";
+const FIREWALL_RULE: &str = "loom-chat-phone";
+const FIREWALL_FIND_RULE: &str = "loom-chat-phone-find";
 
 pub async fn allow_firewall(port: u16) -> std::io::Result<()> {
     if !cfg!(windows) {
@@ -185,9 +185,9 @@ pub async fn allow_firewall(port: u16) -> std::io::Result<()> {
          Get-NetFirewallApplicationFilter -Program {exe} -ErrorAction SilentlyContinue | Get-NetFirewallRule | \
          Where-Object {{ $_.Direction -eq 'Inbound' -and $_.Action -eq 'Block' }} | Remove-NetFirewallRule\n\
          Get-NetFirewallRule -Name {rule},{find_rule} -ErrorAction SilentlyContinue | Remove-NetFirewallRule\n\
-         New-NetFirewallRule -Name {rule} -DisplayName 'loom phone' -Direction Inbound -Action Allow -Profile Private \
+         New-NetFirewallRule -Name {rule} -DisplayName 'loom-chat phone' -Direction Inbound -Action Allow -Profile Private \
          -Protocol TCP -LocalPort {port} -Program {exe} -EdgeTraversalPolicy Block | Out-Null\n\
-         New-NetFirewallRule -Name {find_rule} -DisplayName 'loom phone find' -Direction Inbound -Action Allow -Profile Private \
+         New-NetFirewallRule -Name {find_rule} -DisplayName 'loom-chat phone find' -Direction Inbound -Action Allow -Profile Private \
          -Protocol UDP -LocalPort {FIND_PORT} -Program {exe} -EdgeTraversalPolicy Block | Out-Null"
     );
     let encoded: String = base64::engine::general_purpose::STANDARD.encode(

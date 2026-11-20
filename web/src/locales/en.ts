@@ -204,7 +204,7 @@ const en = {
     sshHome: 'Connect to the host to see the folders of that PC.',
     sshReached: '{{host}} · {{system}} · connected',
     connecting: 'Connecting…',
-    connectingHint: 'Connecting to {{host}}. If that PC has no loom of this release, loom puts one in ~/.loom/remote. This happens only once.',
+    connectingHint: 'Connecting to {{host}}. If that PC has no loom of this release, loom puts one in ~/.loom-chat/remote. This happens only once.',
     linux: 'Linux',
     mac: 'macOS',
     windowsWsl: 'Windows → WSL {{distro}}',

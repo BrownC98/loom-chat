@@ -112,6 +112,12 @@ impl Render for Shell {
                         .update(cx, |chat, cx| chat.alert_key(event, window, cx));
                 }
             }))
+            .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                if this.settings.is_none() && event.keystroke.key == "escape" {
+                    this.chat
+                        .update(cx, |chat, cx| chat.alert_key(event, window, cx));
+                }
+            }))
             .font_family(fonts::UI_FAMILY)
             .on_action(
                 cx.listener(|this, _: &OpenSettings, window, cx| this.open_settings(window, cx)),

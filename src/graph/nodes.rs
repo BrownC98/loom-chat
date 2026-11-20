@@ -110,7 +110,8 @@ impl Graph {
         let id = {
             let mut db = self.lock();
             let tx = db.transaction()?;
-            let name = root_name(&tx, place.repo.0, word, None)?;
+            let scratch = self.scratch_dir().to_string_lossy();
+            let name = root_name(&tx, place.repo.0, word, &scratch, None)?;
             let id = insert(&tx, &name, &agent, None, place)?;
             tx.execute(
                 "UPDATE nodes SET task = ?2, setup = ?3, default_name = 1 WHERE id = ?1",
@@ -920,6 +921,7 @@ impl Graph {
     }
 
     pub fn name_roots(&self, lead: &str, shell: &str) -> Result<(), Refusal> {
+        let scratch = self.scratch_dir().to_string_lossy();
         let roots = self
             .lock()
             .prepare(
@@ -933,7 +935,7 @@ impl Graph {
             .collect::<rusqlite::Result<Vec<(NodeId, u32, bool)>>>()?;
         for (id, repo, agent) in roots {
             let word = if agent { lead } else { shell };
-            let name = root_name(&self.lock(), repo, word, Some(id))?;
+            let name = root_name(&self.lock(), repo, word, &scratch, Some(id))?;
             match self.rename_with(id, &name, |_| Ok(0)) {
                 Ok(()) | Err(Refusal::NameTaken(_)) => {}
                 Err(e) => return Err(e),
@@ -1356,12 +1358,17 @@ fn root_name(
     db: &Connection,
     repo: u32,
     word: &str,
+    scratch: &str,
     me: Option<NodeId>,
 ) -> rusqlite::Result<String> {
     let path: String = db.query_row("SELECT path FROM repos WHERE id = ?1", [repo], |row| {
         row.get(0)
     })?;
-    let base = format!("{} {word}", super::folder_name(&path));
+    let base = if path == scratch {
+        word.to_owned()
+    } else {
+        format!("{} {word}", super::folder_name(&path))
+    };
     for number in 1.. {
         let name = match number {
             1 => base.clone(),

@@ -505,6 +505,9 @@ const ko: typeof en = {
   },
   room: {
     title: '채팅방',
+    find: '방 이름·구성원 찾기',
+    name: '방 이름',
+    findAgents: '에이전트 찾기',
     tab: '채팅방 · {{name}}',
     copyLink: '링크 복사',
     copied: '복사했습니다',
@@ -571,6 +574,8 @@ const ko: typeof en = {
   },
   statusBar: {
     label: '상태 줄',
+    agents: '에이전트 {{total}} · 일하는 중 {{working}}',
+    connectAccount: '계정 연결',
     loading: '불러오는 중…',
     summaryLoading: '불러오는 중',
     buttonLabel: '사용량: {{summary}}. 전체 사용량과 계정 전환 열기',
@@ -772,7 +777,7 @@ const ko: typeof en = {
     sampleYes: '예',
     sampleNo: '아니오',
     uiSize: '글자 크기',
-    uiSizeHint: '제목 줄, 사이드바, 알림, 상태 줄, 설정, 메뉴, 그래프 카드 머리의 글자와 단추 크기입니다. 모든 창에 바로 보입니다.',
+    uiSizeHint: '제목 줄, 사이드바, 알림, 상태 줄, 설정과 메뉴의 글자와 단추 크기입니다. 모든 창에 바로 보입니다.',
     uiSizeHint2: '터미널 글자는 터미널 › 글꼴 크기, 입력 창은 그래프 › 입력 창 크기로 바꿉니다.',
   },
   terminal: {

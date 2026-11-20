@@ -4,14 +4,17 @@ use api::graph::chat::{ChatEntry, ChatItem, ChatOrigin};
 use api::graph::waits::{InputField, Press, PressKeys};
 use api::ids::WaitId;
 use gpui::{
-    App, Context, Div, Entity, ParentElement, StatefulInteractiveElement, Styled, Subscription,
-    Task, Window,
+    App, Context, Div, Entity, ParentElement, Stateful, StatefulInteractiveElement, Styled,
+    Subscription, Task, Window,
 };
 
-use super::rows::{flow, meta};
+use super::rows::{action_button, flow, meta};
 use super::{Stream, tr};
 use crate::scale::px;
+use crate::strings::Str;
 use crate::views::field::{self, Field, FieldEvent};
+use crate::views::icons::Lucide;
+use crate::views::ui;
 use crate::views::widgets::btn;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -132,21 +135,27 @@ impl Stream {
         self.act_on_wait(item, action, cx);
     }
 
-    pub(super) fn message_actions(
+    fn editable_group(&self, item: &ChatItem, cx: &App) -> Option<u32> {
+        let ChatEntry::Message { message } = &item.entry else {
+            return None;
+        };
+        if item.cursor.id >= 0
+            && message.editable
+            && message.origin == ChatOrigin::Human
+            && self.data.read(cx).room().is_some_and(|room| !room.archived)
+        {
+            message.group
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn message_editor(
         &self,
         item: &Arc<ChatItem>,
         cx: &mut Context<Self>,
     ) -> Option<Div> {
-        let ChatEntry::Message { message } = &item.entry else {
-            return None;
-        };
-        let group = message.group?;
-        if !message.editable
-            || message.origin != ChatOrigin::Human
-            || self.data.read(cx).room().is_some_and(|room| room.archived)
-        {
-            return None;
-        }
+        let group = self.editable_group(item, cx)?;
         let key = Input::Edit(group);
         if self.busy.contains(&Target::Message(group)) {
             return Some(meta(tr(cx, "메시지를 바꾸는 중", "Updating message"), cx));
@@ -164,7 +173,7 @@ impl Stream {
                     )
                     .child(
                         btn::ghost("stream-cancel-edit", cx)
-                            .child(tr(cx, "취소", "Cancel"))
+                            .child(ui::say(cx, Str::CommonCancel))
                             .on_click(cx.listener(move |stream, _, _, cx| {
                                 stream.drafts.remove(&key);
                                 cx.notify();
@@ -172,25 +181,45 @@ impl Stream {
                     ),
             );
         }
+        None
+    }
+
+    pub(super) fn message_buttons(
+        &self,
+        item: &Arc<ChatItem>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<[Stateful<Div>; 2]> {
+        let group = self.editable_group(item, cx)?;
+        if self.busy.contains(&Target::Message(group))
+            || self.drafts.contains_key(&Input::Edit(group))
+        {
+            return None;
+        }
         let edit = item.clone();
         let withdraw = item.clone();
-        Some(
-            flow()
-                .child(
-                    btn::button("stream-edit", cx)
-                        .child(tr(cx, "고치기", "Edit"))
-                        .on_click(cx.listener(move |stream, _, window, cx| {
-                            stream.begin_edit(edit.clone(), group, window, cx)
-                        })),
-                )
-                .child(
-                    btn::button("stream-withdraw", cx)
-                        .child(tr(cx, "거두기", "Withdraw"))
-                        .on_click(cx.listener(move |stream, _, _, cx| {
-                            stream.change_message(withdraw.clone(), group, Change::Withdraw, cx)
-                        })),
-                ),
-        )
+        Some([
+            action_button(
+                "stream-edit",
+                Lucide::Pencil,
+                tr(cx, "고치기", "Edit"),
+                window,
+                cx,
+            )
+            .on_click(cx.listener(move |stream, _, window, cx| {
+                stream.begin_edit(edit.clone(), group, window, cx)
+            })),
+            action_button(
+                "stream-withdraw",
+                Lucide::Trash2,
+                tr(cx, "거두기", "Withdraw"),
+                window,
+                cx,
+            )
+            .on_click(cx.listener(move |stream, _, _, cx| {
+                stream.change_message(withdraw.clone(), group, Change::Withdraw, cx)
+            })),
+        ])
     }
 
     fn begin_edit(
@@ -203,7 +232,12 @@ impl Stream {
         let ChatEntry::Message { message } = &item.entry else {
             return;
         };
-        if self.busy.contains(&Target::Message(group)) {
+        if self.busy.contains(&Target::Message(group))
+            || self
+                .current(&item, cx)
+                .and_then(|current| self.editable_group(current, cx))
+                != Some(group)
+        {
             return;
         }
         let hint = tr(cx, "메시지 고치기", "Edit message");
@@ -228,7 +262,7 @@ impl Stream {
         self.data
             .read(cx)
             .items()
-            .get(self.rows.visible[index].item)
+            .get(self.rows.visible[index].item()?)
             .map(Arc::as_ref)
     }
 
@@ -253,16 +287,15 @@ impl Stream {
             });
         if !editable {
             self.drafts.remove(&Input::Edit(group));
-            self.result = Some((
-                tr(
+            self.show_result(
+                Err(tr(
                     cx,
                     "메시지가 바뀌었습니다. 새 상태를 확인해 주세요.",
                     "The message changed. Check its new state.",
                 )
-                .to_owned(),
-                true,
-            ));
-            cx.notify();
+                .to_owned()),
+                cx,
+            );
             return;
         }
         let (task, success) = match change {
@@ -304,16 +337,15 @@ impl Stream {
             .current(&item, cx)
             .is_some_and(|current| same_input(&item, current))
         {
-            self.result = Some((
-                tr(
+            self.show_result(
+                Err(tr(
                     cx,
                     "질문이 바뀌었습니다. 새 상태를 확인해 주세요.",
                     "The question changed. Check its new state.",
                 )
-                .to_owned(),
-                true,
-            ));
-            cx.notify();
+                .to_owned()),
+                cx,
+            );
             return;
         }
         let graph = self.data.read(cx).graph().clone();
@@ -356,7 +388,6 @@ impl Stream {
             graph.update(cx, |store, cx| store.set_busy(wait, true, cx));
         }
         self.busy.insert(target);
-        self.result = None;
         cx.notify();
         let room = self.room.clone();
         cx.spawn(async move |this, cx| {
@@ -367,13 +398,11 @@ impl Stream {
             let _ = this.update(cx, |stream, cx| {
                 stream.busy.remove(&target);
                 if stream.room == room {
-                    stream.result = Some(match result {
-                        Ok(()) => {
-                            stream.drafts.retain(|key, _| !key.belongs_to(target));
-                            (success.to_owned(), false)
-                        }
-                        Err(error) => (error, true),
+                    let result = result.map(|()| {
+                        stream.drafts.retain(|key, _| !key.belongs_to(target));
+                        success.to_owned()
                     });
+                    stream.show_result(result, cx);
                 }
                 stream.data.update(cx, super::ChatData::refresh);
                 cx.notify();

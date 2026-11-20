@@ -6,7 +6,9 @@ use gpui::{App, Div, Entity, IntoElement, ParentElement, RenderOnce, Styled, Win
 
 use crate::scale::px;
 use crate::store::Store;
+use crate::strings::Str;
 use crate::theme::Colors;
+use crate::views::ui;
 
 pub const HEIGHT: f32 = 22.0;
 
@@ -34,7 +36,14 @@ pub fn bar(store: &Entity<Store>, repo: Option<RepoId>, colors: &Colors, cx: &Ap
             .iter()
             .filter(|node| matches!(node.status, Status::Working { .. }))
             .count();
-        format!("에이전트 {} · 일하는 중 {working}", snapshot.nodes.len())
+        ui::say_with(
+            cx,
+            Str::StatusBarAgents,
+            &[
+                ("total", &snapshot.nodes.len().to_string()),
+                ("working", &working.to_string()),
+            ],
+        )
     });
     div()
         .h(px(HEIGHT))

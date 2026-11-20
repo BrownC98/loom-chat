@@ -92,6 +92,13 @@ pub fn boxed_label(label: Str, secret: bool, multiline: bool, cx: &mut App) -> E
     cx.new(|cx| Field::new(Hint::Label(label), secret, multiline, true, cx))
 }
 
+pub fn plain_label(label: Str, cx: &mut App) -> Entity<Field> {
+    cx.new(|cx| Field {
+        form: Form::Plain,
+        ..Field::new(Hint::Label(label), false, false, true, cx)
+    })
+}
+
 pub fn form(hint: &str, secret: bool, multiline: bool, kind: Form, cx: &mut App) -> Entity<Field> {
     let hint = Hint::Text(SharedString::from(hint.to_owned()));
     cx.new(|cx| {

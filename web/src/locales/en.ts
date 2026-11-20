@@ -503,6 +503,9 @@ const en = {
   },
   room: {
     title: 'Chat room',
+    find: 'Find rooms and members',
+    name: 'Room name',
+    findAgents: 'Find agents',
     tab: 'Chat room · {{name}}',
     copyLink: 'Copy link',
     copied: 'Copied',
@@ -569,6 +572,8 @@ const en = {
   },
   statusBar: {
     label: 'Status bar',
+    agents: 'Agents: {{total}} · Working: {{working}}',
+    connectAccount: 'Connect account',
     loading: 'Loading…',
     summaryLoading: 'loading',
     buttonLabel: 'Usage: {{summary}}. Open all usage and accounts',
@@ -770,7 +775,7 @@ const en = {
     sampleYes: 'Yes',
     sampleNo: 'No',
     uiSize: 'Text size',
-    uiSizeHint: 'The size of text and buttons in the title bar, sidebar, notifications, status bar, settings, menus and graph card heads. All windows show it at once.',
+    uiSizeHint: 'The size of text and buttons in the title bar, sidebar, notifications, status bar, settings and menus. All windows show it at once.',
     uiSizeHint2: 'Change terminal text in Terminal › Font size, and the input bar in Graph › Input bar size.',
   },
   terminal: {

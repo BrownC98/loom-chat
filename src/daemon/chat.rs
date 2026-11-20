@@ -276,6 +276,7 @@ fn read_transcript(
     let mut at_ms = 0;
     let mut previous_line = 0;
     let mut part = 0;
+    let mut activity_turn = None;
     loop {
         if Instant::now() >= deadline {
             return Err(TRANSCRIPT_TIMED_OUT);
@@ -332,6 +333,15 @@ fn read_transcript(
                 id: item.line as i64,
                 part,
             };
+            if matches!(
+                item.kind,
+                transcript::Kind::Status(
+                    transcript::Status::TurnStarted | transcript::Status::TurnEnded
+                )
+            ) {
+                activity_turn = Some(cursor.id);
+                continue;
+            }
             if before.is_some_and(|before| cursor >= before)
                 || (found.len() > limit
                     && found
@@ -346,10 +356,19 @@ fn read_transcript(
             {
                 continue;
             }
+            let Some(item) = transcript_item(item.kind) else {
+                continue;
+            };
+            let turn = if item.is_activity() {
+                activity_turn
+            } else {
+                None
+            };
             found.insert(
                 cursor,
                 ChatEntry::Transcript {
-                    item: transcript_item(item.kind),
+                    item,
+                    activity_turn: turn,
                 },
             );
             if found.len() > limit + 1 {
@@ -387,11 +406,21 @@ fn is_delivery(mut text: &str, deliveries: &[String]) -> bool {
     }
 }
 
-fn transcript_item(kind: transcript::Kind) -> ChatTranscriptItem {
-    use transcript::Kind;
-    match kind {
-        Kind::User(text) => ChatTranscriptItem::User { text },
-        Kind::Assistant(text) => ChatTranscriptItem::Assistant { text },
+fn transcript_item(kind: transcript::Kind) -> Option<ChatTranscriptItem> {
+    use transcript::{Kind, Status};
+    Some(match kind {
+        Kind::User(ref text) | Kind::Assistant(ref text) if text.trim().is_empty() => return None,
+        Kind::Thinking(None) | Kind::Status(Status::TurnStarted | Status::TurnEnded) => {
+            return None;
+        }
+        Kind::User(text) => ChatTranscriptItem::User {
+            blocks: crate::link_text::message_blocks(&text),
+            text,
+        },
+        Kind::Assistant(text) => ChatTranscriptItem::Assistant {
+            blocks: crate::link_text::message_blocks(&text),
+            text,
+        },
         Kind::ToolCall { id, name, summary } => ChatTranscriptItem::ToolCall { id, name, summary },
         Kind::ToolResult {
             id,
@@ -403,15 +432,11 @@ fn transcript_item(kind: transcript::Kind) -> ChatTranscriptItem {
             failed,
         },
         Kind::Thinking(summary) => ChatTranscriptItem::Thinking { summary },
-        Kind::Status(status) => ChatTranscriptItem::Status {
-            text: match status {
-                transcript::Status::TurnStarted => "턴을 시작했습니다.".into(),
-                transcript::Status::TurnEnded => "턴이 끝났습니다.".into(),
-                transcript::Status::TurnStopped => "턴이 멈췄습니다.".into(),
-                transcript::Status::Notice(text) => text,
-            },
+        Kind::Status(Status::TurnStopped) => ChatTranscriptItem::Status {
+            text: "턴이 멈췄습니다.".into(),
         },
-    }
+        Kind::Status(Status::Notice(text)) => ChatTranscriptItem::Status { text },
+    })
 }
 
 fn fallback(reason: &str) -> ChatTranscript {

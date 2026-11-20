@@ -357,7 +357,12 @@ impl App {
     ) -> std::io::Result<App> {
         let repos = Repos::new(database.clone());
         let graph = Arc::new(
-            Graph::open(database.clone(), profile::linked).map_err(std::io::Error::other)?,
+            Graph::open(
+                database.clone(),
+                profile::linked,
+                db_path.with_file_name("scratch"),
+            )
+            .map_err(std::io::Error::other)?,
         );
         let pty_dir = db_path.with_file_name("pty");
         let exe = std::env::current_exe()?;

@@ -2,7 +2,7 @@ pub use crate::views::ui::{
     GAP, PAD, SMALL, TEXT, ago, button, clock, colors, day_and_time, open_url, say, say_with,
 };
 
-use gpui::{App, Div, ParentElement, Styled, div};
+use gpui::{App, Div, FontWeight, ParentElement, Styled, div};
 
 use crate::scale::px;
 use crate::views::prose::prose;
@@ -13,8 +13,7 @@ pub fn note(text: String, error: bool, cx: &App) -> Div {
     if error {
         base.text_size(px(SMALL))
             .text_color(c.err)
-            .font_family(crate::fonts::TERMINAL_FAMILY)
-            .child(prose(text))
+            .child(crate::fonts::latin_mono(&text, c.err, FontWeight::NORMAL))
     } else {
         base.text_size(px(TEXT))
             .text_color(c.ink_3)

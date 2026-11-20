@@ -4,52 +4,84 @@ mod rooms;
 mod side;
 mod stream;
 
-use api::graph::chat::{ChatMessage, ChatOrigin, ChatRoom, ChatRoomKind, ChatTranscript};
+use api::graph::chat::{ChatRoom, ChatRoomKind, ChatTranscript};
 use api::graph::{Place, ProcessState, Status};
 use api::ids::{NodeId, RepoId};
+use api::repos::RepoView;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, AppContext, ClipboardItem, Context, Div, Entity, FocusHandle, FontWeight, IntoElement,
-    KeyDownEvent, ParentElement, Pixels, Point, Render, StatefulInteractiveElement, Styled,
-    Subscription, Window, div,
+    App, AppContext, ClipboardItem, Context, Div, Entity, FocusHandle, FontWeight,
+    InteractiveElement, IntoElement, KeyDownEvent, MouseButton, ParentElement, Pixels, Point,
+    Render, StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
 use crate::link::LinkState;
 use crate::scale::px;
 use crate::store::{OpenAgent, Store};
-use crate::strings::Lang;
+use crate::strings::{Lang, Str};
 
 use super::compose;
 use super::icons::{Lucide, icon};
 use super::status;
 use super::status::pop::{StatusEvent, StatusView};
-use super::ui::{self, SMALL, TEXT};
+use super::tooltip::tip;
+use super::ui::{self, SMALL, TEXT, say};
 use super::widgets::btn;
 use super::workspace::pop;
 use composer::Composer;
 use data::ChatData;
-use rooms::Rooms;
-use side::{SessionTerminal, SideEvent, SideSlot, SideTab};
+use rooms::{Rooms, RoomsEvent};
+use side::{SideEvent, SideSlot, SideTab};
 use stream::{Quote, Stream, StreamEvent};
 
 const ROOMS_WIDTH: f32 = 270.0;
 const SIDE_WIDTH: f32 = 334.0;
 const RAIL_WIDTH: f32 = 60.0;
 const MIN_ROOM_WIDTH: f32 = 350.0;
-fn message_text(message: &ChatMessage) -> &str {
-    const OUTSIDE_INTRO: &str = "An agent outside loom that calls itself ";
-    const REPLY_INSTRUCTION: &str =
-        "\nReply in the room with loom answer <this message id> \"<reply>\".";
-    let text = &message.text;
-    if message.origin == ChatOrigin::Outside
-        && text.starts_with(OUTSIDE_INTRO)
-        && let Some((_, body)) = text.split_once('\n')
-        && let Some(body) = body.strip_suffix(REPLY_INSTRUCTION)
-    {
-        body
-    } else {
-        text
+const SIDE_OVERLAY_WIDTH: f32 = 1050.0;
+
+fn words<'a>(cx: &App, ko: &'a str, en: &'a str) -> &'a str {
+    match cx.global::<Lang>() {
+        Lang::Ko => ko,
+        Lang::En => en,
     }
+}
+
+fn room_title<'a>(
+    room: &'a ChatRoom,
+    repo: impl FnOnce(RepoId) -> Option<&'a RepoView>,
+    cx: &App,
+) -> &'a str {
+    if matches!(room.kind, ChatRoomKind::Pinned) {
+        return words(cx, "종합 채팅방", "All conversations");
+    }
+    let ChatRoomKind::Work { place } = &room.kind else {
+        return &room.name;
+    };
+    let Some(repo) = repo(place.repo) else {
+        return &room.name;
+    };
+    if !repo.git {
+        return &repo.name;
+    }
+    repo.worktrees
+        .iter()
+        .find(|work| work.path == place.worktree)
+        .and_then(|work| work.branch.as_deref())
+        .unwrap_or(&room.name)
+}
+
+fn keep_ime_focus(event: &gpui::MouseDownEvent, window: &mut Window, cx: &mut App) {
+    if event.button == MouseButton::Left && compose::busy(window, cx) {
+        window.prevent_default();
+    }
+}
+
+fn first_run(data: &ChatData, cx: &App) -> bool {
+    data.graph()
+        .read(cx)
+        .snapshot()
+        .is_some_and(|snapshot| snapshot.repos.is_empty() && snapshot.nodes.is_empty())
 }
 
 struct StatusOverlay {
@@ -66,7 +98,6 @@ pub(super) struct Chat {
     stream: Entity<Stream>,
     composer: Entity<Composer>,
     side: Entity<SideSlot>,
-    terminal: Entity<SessionTerminal>,
     status: Option<StatusOverlay>,
     focus_room: Option<String>,
 }
@@ -78,22 +109,26 @@ impl Chat {
         let stream = cx.new(|cx| Stream::new(data.clone(), cx));
         let composer = cx.new(|cx| Composer::new(data.clone(), cx));
         let side = cx.new(|cx| SideSlot::new(data.clone(), cx));
-        let terminal = cx.new(|cx| SessionTerminal::new(graph.clone(), cx));
-
-        cx.observe(&data, |this, _, cx| this.sync(cx)).detach();
+        cx.observe(&data, |_, _, cx| cx.notify()).detach();
         cx.observe(&graph, |_, _, cx| cx.notify()).detach();
-        cx.subscribe(&graph, |this, _, agent: &OpenAgent, cx| {
-            let room = format!("agent-{}", agent.0);
-            this.focus_room = Some(room.clone());
-            this.open_room(&room, cx);
+        cx.subscribe(&rooms, |this, _, event, cx| match event {
+            RoomsEvent::Select(room) => this.open_room(room, cx),
+            RoomsEvent::ScratchChanged => cx.notify(),
         })
         .detach();
-        cx.observe(&side, |this, _, cx| this.sync(cx)).detach();
+        cx.subscribe(&graph, |this, _, agent: &OpenAgent, cx| {
+            this.open_room(&format!("agent-{}", agent.0), cx);
+        })
+        .detach();
+        cx.observe(&side, |_, _, cx| cx.notify()).detach();
         cx.subscribe_in(&stream, window, |this, _, event, window, cx| match event {
             StreamEvent::FollowUp { node, wait } => this.composer.update(cx, |c, cx| {
                 c.follow_up(*node, *wait, window, cx);
             }),
             StreamEvent::OpenRoom(room) => this.open_room(room, cx),
+            StreamEvent::VisibleWaits(ids) => this.composer.update(cx, |composer, cx| {
+                composer.set_visible_waits(ids, cx);
+            }),
         })
         .detach();
         cx.subscribe_in(&stream, window, |this, _, quote: &Quote, window, cx| {
@@ -102,7 +137,6 @@ impl Chat {
         })
         .detach();
         cx.subscribe(&side, |this, _, event, cx| match event {
-            SideEvent::Close => this.toggle_side(cx),
             SideEvent::OpenRoom(room) => this.open_room(room, cx),
         })
         .detach();
@@ -114,7 +148,6 @@ impl Chat {
             stream,
             composer,
             side,
-            terminal,
             status: None,
             focus_room: None,
         }
@@ -174,7 +207,7 @@ impl Chat {
     }
 
     pub(super) fn open_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.status.is_none() {
+        if self.status.is_none() && !first_run(self.data.read(cx), cx) {
             self.composer
                 .update(cx, |composer, cx| composer.open_picker(window, cx));
         }
@@ -186,36 +219,17 @@ impl Chat {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.status.is_none() {
+        if self.status.is_none() && !first_run(self.data.read(cx), cx) {
             self.composer
                 .update(cx, |composer, cx| composer.alert_key(event, window, cx));
         }
     }
 
     fn open_room(&mut self, room: &str, cx: &mut Context<Self>) {
+        self.focus_room = Some(room.to_owned());
         self.data
             .update(cx, |data, cx| data.select(room.to_owned(), cx));
-    }
-
-    fn sync(&mut self, cx: &mut Context<Self>) {
-        let node = self.fallback(cx).map(|(node, _)| node);
-        self.terminal.update(cx, |view, cx| view.set_node(node, cx));
         cx.notify();
-    }
-
-    fn fallback<'a>(&'a self, cx: &'a App) -> Option<(NodeId, &'a str)> {
-        if self.side.read(cx).tab() == Some(SideTab::Terminal) {
-            return None;
-        }
-        let data = self.data.read(cx);
-        let room = data.room().filter(|room| !room.archived)?;
-        let ChatRoomKind::Agent { node } = room.kind else {
-            return None;
-        };
-        match data.transcript()? {
-            ChatTranscript::Fallback { reason } => Some((node, reason)),
-            ChatTranscript::Available => None,
-        }
     }
 
     fn toggle_side(&mut self, cx: &mut Context<Self>) {
@@ -239,12 +253,16 @@ impl Chat {
         else {
             return;
         };
-        cx.write_to_clipboard(ClipboardItem::new_string(format!("{base}{path}")));
+        cx.write_to_clipboard(ClipboardItem::new_string(format!(
+            "{}{path}",
+            base.trim_end_matches('/')
+        )));
     }
 
     fn header(&self, room: &ChatRoom, cx: &mut Context<Self>) -> Div {
         let colors = ui::colors(cx);
         let data = self.data.read(cx);
+        let lang = *cx.global::<Lang>();
         let agent = match room.kind {
             ChatRoomKind::Agent { node } => self
                 .graph
@@ -253,19 +271,26 @@ impl Chat {
                 .and_then(|snapshot| snapshot.nodes.iter().find(|agent| agent.id == node)),
             _ => None,
         };
-        let workspace = self.place(room, cx).and_then(|place| {
-            let repo = self
-                .graph
+        let place = self.place(room, cx);
+        let repo = place.and_then(|place| {
+            self.graph
                 .read(cx)
                 .snapshot()?
                 .repos
                 .iter()
-                .find(|repo| repo.id == place.repo)?;
-            let branch = repo
-                .worktrees
-                .iter()
-                .find(|tree| tree.path == place.worktree)
-                .and_then(|tree| tree.branch.as_deref());
+                .find(|repo| repo.id == place.repo)
+        });
+        let title = room_title(room, |_| repo, cx).to_owned();
+        let workspace = place.zip(repo).and_then(|(place, repo)| {
+            let branch = match room.kind {
+                ChatRoomKind::Work { .. } if title == repo.name => return None,
+                ChatRoomKind::Work { .. } => None,
+                _ => repo
+                    .worktrees
+                    .iter()
+                    .find(|tree| tree.path == place.worktree)
+                    .and_then(|tree| tree.branch.as_deref()),
+            };
             Some(match branch {
                 Some(branch) => format!("{} › {branch}", repo.name),
                 None => repo.name.clone(),
@@ -273,8 +298,10 @@ impl Chat {
         });
         let state = agent.map(|agent| {
             let node = agent.id;
-            let label = status::chip(&agent.status, Lang::Ko)
-                .map_or_else(|| "내 답을 기다리는 중".to_owned(), |chip| chip.text);
+            let label = status::chip(&agent.status, lang).map_or_else(
+                || words(cx, "내 답을 기다리는 중", "Waiting for your reply").to_owned(),
+                |chip| chip.text,
+            );
             btn::ghost("chat-agent-status", cx)
                 .child(label)
                 .on_click(
@@ -297,25 +324,23 @@ impl Chat {
                         .filter(|agent| matches!(agent.status, Status::Working { .. }))
                         .count()
                 });
-                format!(
-                    "모든 작업공간 · 작업공간 {workspaces} · 에이전트 {} · 일하는 중 {working}",
-                    room.members.len()
-                )
+                let agents = room.members.len();
+                match lang {
+                    Lang::Ko => {
+                        format!("작업공간 {workspaces} · 에이전트 {agents} · 일하는 중 {working}")
+                    }
+                    Lang::En => {
+                        format!("Workspaces: {workspaces} · Agents: {agents} · Working: {working}")
+                    }
+                }
             }
             ChatRoomKind::Agent { .. } => {
                 if room.archived {
-                    "끝난 에이전트".to_owned()
+                    words(cx, "끝난 에이전트", "Archived agent").to_owned()
                 } else {
-                    let harness = agent
+                    agent
                         .and_then(|agent| agent.agent.as_ref())
-                        .map(|agent| agent.0.as_str());
-                    let transcript =
-                        matches!(data.transcript(), Some(ChatTranscript::Fallback { .. }));
-                    [harness, transcript.then_some("터미널 본문")]
-                        .into_iter()
-                        .flatten()
-                        .collect::<Vec<_>>()
-                        .join(" · ")
+                        .map_or_else(String::new, |agent| agent.0.clone())
                 }
             }
             _ => {
@@ -328,7 +353,11 @@ impl Chat {
                         })
                         .count()
                 });
-                format!("구성원 {} · 일하는 중 {}", room.members.len(), working)
+                let members = room.members.len();
+                match lang {
+                    Lang::Ko => format!("구성원 {members} · 일하는 중 {working}"),
+                    Lang::En => format!("Members: {members} · Working: {working}"),
+                }
             }
         };
         let agent_actions = match room.kind {
@@ -361,7 +390,7 @@ impl Chat {
                             .text_size(px(17.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .truncate()
-                            .child(room.name.clone()),
+                            .child(title),
                     )
                     .child(
                         div()
@@ -371,7 +400,9 @@ impl Chat {
                             .text_size(px(SMALL))
                             .text_color(colors.ink_2)
                             .children(state)
-                            .child(div().truncate().child(facts))
+                            .when(!facts.is_empty(), |row| {
+                                row.child(div().truncate().child(facts))
+                            })
                             .children(workspace.map(|label| div().truncate().child(label))),
                     ),
             )
@@ -379,7 +410,7 @@ impl Chat {
             .when(!room.archived, |row| {
                 row.child(
                     btn::button("chat-copy-outside", cx)
-                        .child("외부 주소 복사")
+                        .child(words(cx, "외부 주소 복사", "Copy outside address"))
                         .on_click(cx.listener(|this, _, _, cx| this.copy_address(cx))),
                 )
             })
@@ -388,9 +419,9 @@ impl Chat {
                     .aria_expanded(side_open)
                     .child(icon(Lucide::PanelRightOpen, px(14.0), colors.ink_2))
                     .child(if side_open {
-                        "옆 칸 닫기"
+                        words(cx, "옆 칸 닫기", "Close side panel")
                     } else {
-                        "옆 칸"
+                        words(cx, "옆 칸", "Side panel")
                     })
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_side(cx))),
             )
@@ -408,7 +439,7 @@ impl Chat {
         let colors = ui::colors(cx);
         let relaunch = agent.relaunch.is_some().then(|| {
             btn::button("chat-relaunch", cx)
-                .child("다시 띄우기")
+                .child(say(cx, Str::NodeRelaunch))
                 .on_click(cx.listener(move |this, _, _, cx| {
                     super::cardlink::run(
                         &this.graph,
@@ -437,7 +468,11 @@ impl Chat {
                 .bg(colors.panel)
                 .text_size(px(TEXT))
                 .text_color(colors.ink_2)
-                .child("에이전트가 꺼져 있습니다.")
+                .child(words(
+                    cx,
+                    "에이전트가 꺼져 있습니다.",
+                    "The agent has stopped.",
+                ))
                 .children(relaunch),
         )
     }
@@ -447,10 +482,19 @@ impl Chat {
         let data = self.data.read(cx);
         let screen = div().flex().flex_col().flex_1().min_w_0().min_h_0();
         let room = data.room().cloned();
+        let first = first_run(data, cx);
         let connection = match self.graph.read(cx).connection() {
             LinkState::Connected => None,
-            LinkState::Reconnecting => Some("데몬에 다시 연결합니다."),
-            LinkState::Lost => Some("데몬과 연결이 끊겼습니다."),
+            LinkState::Reconnecting => Some(words(
+                cx,
+                "데몬에 다시 연결합니다.",
+                "Reconnecting to the daemon…",
+            )),
+            LinkState::Lost => Some(words(
+                cx,
+                "데몬과 연결이 끊겼습니다.",
+                "Connection to the daemon lost.",
+            )),
         };
         let fault = data.error().or(connection).map(|error| {
             div()
@@ -465,12 +509,17 @@ impl Chat {
                 .child(div().flex_1().child(error.to_owned()))
                 .child(
                     btn::button("chat-reconnect", cx)
-                        .child("다시 읽기")
+                        .child(say(cx, Str::StatusBarRefresh))
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.data.update(cx, |data, cx| data.refresh(cx));
                         })),
                 )
         });
+        if first {
+            let header = room.as_ref().map(|room| self.header(room, cx));
+            let welcome = self.rooms.update(cx, |rooms, cx| rooms.welcome(cx));
+            return screen.children(header).children(fault).child(welcome);
+        }
         let Some(room) = room else {
             return screen.children(fault).child(
                 div()
@@ -481,11 +530,19 @@ impl Chat {
                     .text_size(px(TEXT))
                     .text_color(colors.ink_2)
                     .child(if data.loading() {
-                        "방을 읽는 중입니다."
+                        words(cx, "방을 읽는 중입니다.", "Loading room…")
                     } else {
-                        "방 목록에서 대화를 고릅니다."
+                        words(
+                            cx,
+                            "방 목록에서 대화를 고릅니다.",
+                            "Select a conversation from the room list.",
+                        )
                     }),
             );
+        };
+        let fallback = match data.transcript() {
+            Some(ChatTranscript::Fallback { reason }) if !room.archived => Some(reason.clone()),
+            _ => None,
         };
         screen
             .child(self.header(&room, cx))
@@ -500,24 +557,42 @@ impl Chat {
                         .bg(colors.panel)
                         .text_color(colors.ink_2)
                         .text_size(px(TEXT))
-                        .child("끝난 방입니다. 대화 기록을 읽을 수 있습니다."),
+                        .child(words(
+                            cx,
+                            "끝난 방입니다. 대화 기록을 읽을 수 있습니다.",
+                            "This room is archived. You can read its history.",
+                        )),
                 )
             })
-            .map(|screen| match self.fallback(cx) {
-                Some((_, reason)) => screen
+            .children(fallback.map(|reason| {
+                div()
+                    .id("chat-transcript-fallback")
+                    .flex_none()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(8.0))
+                    .px(px(16.0))
+                    .py(px(6.0))
+                    .bg(colors.panel)
+                    .text_size(px(SMALL))
+                    .text_color(colors.ink_2)
+                    .tooltip(tip(reason))
+                    .child(words(
+                        cx,
+                        "세션 기록을 읽을 수 없습니다.",
+                        "The session transcript is unavailable.",
+                    ))
                     .child(
-                        div()
-                            .px(px(16.0))
-                            .py(px(8.0))
+                        btn::ghost("chat-fallback-terminal", cx)
                             .flex_none()
-                            .bg(colors.panel)
-                            .text_size(px(SMALL))
-                            .text_color(colors.ink_2)
-                            .child(format!("{reason} 터미널에서 직접 입력할 수 있습니다.")),
+                            .child(words(cx, "터미널 열기", "Open terminal"))
+                            .on_click(
+                                cx.listener(|this, _, _, cx| this.set_side(SideTab::Terminal, cx)),
+                            ),
                     )
-                    .child(div().flex_1().min_h_0().child(self.terminal.clone())),
-                None => screen.child(self.stream.clone()),
-            })
+            }))
+            .child(self.stream.clone())
             .child(self.composer.clone())
     }
 
@@ -538,8 +613,12 @@ impl Chat {
                 let label = tab.label(cx);
                 btn::ghost(("chat-side-rail", i), cx)
                     .aria_label(label)
+                    .flex_col()
                     .justify_center()
+                    .gap(px(2.0))
                     .px(px(0.0))
+                    .py(px(6.0))
+                    .text_size(px(11.0))
                     .child(icon(tab.icon(), px(15.0), colors.ink_2))
                     .child(label)
                     .on_click(cx.listener(move |this, _, _, cx| this.set_side(tab, cx)))
@@ -551,15 +630,17 @@ impl Render for Chat {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(wanted) = &self.focus_room {
             let data = self.data.read(cx);
-            if data.selected() != Some(wanted.as_str()) {
+            if first_run(data, cx) || data.selected() != Some(wanted.as_str()) {
                 self.focus_room = None;
-            } else if data.room().is_some() {
-                if compose::busy(window, cx) {
+            } else if let Some(room) = data.room() {
+                if !room.archived && compose::busy(window, cx) {
                     compose::retry(window, cx);
                 } else {
                     self.focus_room = None;
-                    self.composer
-                        .update(cx, |composer, cx| composer.focus(window, cx));
+                    if !room.archived {
+                        self.composer
+                            .update(cx, |composer, cx| composer.focus(window, cx));
+                    }
                 }
             }
         }
@@ -568,7 +649,8 @@ impl Render for Chat {
         let side_width = px(SIDE_WIDTH).min(width * 0.34);
         let has_room = self.data.read(cx).room().is_some();
         let side_open = self.side.read(cx).tab().is_some();
-        let reserve = if side_open {
+        let narrow = width < px(SIDE_OVERLAY_WIDTH);
+        let reserve = if side_open && !narrow {
             side_width
         } else {
             px(RAIL_WIDTH)
@@ -577,6 +659,7 @@ impl Render for Chat {
             .min(width * 0.29)
             .min((width - reserve - px(MIN_ROOM_WIDTH)).max(width * 0.21));
         div()
+            .relative()
             .size_full()
             .flex()
             .child(
@@ -592,14 +675,18 @@ impl Render for Chat {
             .child(self.conversation(cx))
             .when(side_open, |view| {
                 view.child(
-                    div()
-                        .flex_none()
-                        .w(side_width)
-                        .h_full()
-                        .border_l_1()
-                        .border_color(colors.line)
-                        .bg(colors.panel)
-                        .child(self.side.clone()),
+                    div().flex_none().w(reserve).h_full().child(
+                        div()
+                            .w(side_width)
+                            .h_full()
+                            .border_l_1()
+                            .border_color(colors.line)
+                            .bg(colors.panel)
+                            .when(narrow, |slot| {
+                                slot.absolute().top_0().right_0().shadow_lg().occlude()
+                            })
+                            .child(self.side.clone()),
+                    ),
                 )
             })
             .when(!side_open && has_room, |view| {

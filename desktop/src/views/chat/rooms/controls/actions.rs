@@ -10,15 +10,15 @@ use gpui::{
 use crate::link;
 use crate::problem::Failure;
 use crate::scale::px;
-use crate::strings::Str;
+use crate::strings::{Lang, Str};
 use crate::views::cardlink;
 use crate::views::field::{self, Field, FieldEvent};
 use crate::views::icons::Lucide;
-use crate::views::ui::colors;
+use crate::views::ui::{colors, say};
 use crate::views::widgets::btn;
 
 use super::{
-    Index, Overlay, Panel, Rename, Rooms, below, calls, note, option, tool, work_in, work_label,
+    Index, Overlay, Panel, Rename, Rooms, below, calls, note, option, words, work_in, work_label,
 };
 
 impl Rooms {
@@ -30,10 +30,10 @@ impl Rooms {
                 .is_some_and(|s| s.nodes.iter().any(|live| live.id == node)),
             |slot| {
                 slot.child(
-                    tool(
+                    self.tool(
                         ("chat-agent-menu", node.0),
                         Lucide::Ellipsis,
-                        "에이전트 메뉴",
+                        words(cx, "에이전트 메뉴", "Agent menu"),
                         cx,
                     )
                     .on_key_down(cx.listener(move |this, event, window, cx| {
@@ -58,11 +58,16 @@ impl Rooms {
     ) -> Div {
         let label = work_label(repo, tree);
         let work = place.clone();
-        let add = tool("chat-work-add", Lucide::Plus, "새 에이전트", cx).on_click(cx.listener(
-            move |this, event: &ClickEvent, window, cx| {
+        let add = self
+            .tool(
+                "chat-work-add",
+                Lucide::Plus,
+                words(cx, "새 에이전트", "New agent"),
+                cx,
+            )
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.open_agent(work.clone(), label.clone(), below(event), window, cx);
-            },
-        ));
+            }));
         let work = place.clone();
         div()
             .flex()
@@ -71,11 +76,17 @@ impl Rooms {
             .child(add)
             .when(repo.git && !tree.original, |tools| {
                 tools.child(
-                    tool("chat-work-menu", Lucide::Ellipsis, "워크트리 메뉴", cx).on_click(
-                        cx.listener(move |this, event: &ClickEvent, window, cx| {
+                    self.tool(
+                        "chat-work-menu",
+                        Lucide::Ellipsis,
+                        words(cx, "워크트리 메뉴", "Worktree menu"),
+                        cx,
+                    )
+                    .on_click(cx.listener(
+                        move |this, event: &ClickEvent, window, cx| {
                             this.open_panel(Panel::Work(work.clone()), below(event), window, cx);
-                        }),
-                    ),
+                        },
+                    )),
                 )
             })
     }
@@ -186,7 +197,7 @@ impl Rooms {
         }
         let name = field.read(cx).text().trim().to_owned();
         if name.is_empty() {
-            self.action_error = Some("이름을 써 주세요.".to_owned());
+            self.action_error = Some(words(cx, "이름을 써 주세요.", "Enter a name.").to_owned());
             cx.notify();
             return;
         }
@@ -261,7 +272,14 @@ impl Rooms {
         cx: &Context<Self>,
     ) -> Div {
         let Some(node) = index.node(id) else {
-            return note("이 에이전트는 방을 나갔습니다.", cx);
+            return note(
+                words(
+                    cx,
+                    "이 에이전트는 방을 나갔습니다.",
+                    "This agent has left the room.",
+                ),
+                cx,
+            );
         };
         let marked = node.bookmark.is_some();
         let relaunch = node.relaunch;
@@ -271,19 +289,32 @@ impl Rooms {
             .flex_col()
             .gap(px(2.0))
             .child(
-                option("chat-agent-rename", Lucide::Pencil, "이름 바꾸기 (F2)", cx).on_click(
+                option(
+                    "chat-agent-rename",
+                    Lucide::Pencil,
+                    words(cx, "이름 바꾸기 (F2)", "Rename (F2)"),
+                    cx,
+                )
+                .on_click(
                     cx.listener(move |this, _, window, cx| this.rename_agent(id, at, window, cx)),
                 ),
             )
             .children(relaunch.map(|offer| {
-                let row = option("chat-agent-relaunch", Lucide::RotateCw, "다시 띄우기", cx);
+                let row = option(
+                    "chat-agent-relaunch",
+                    Lucide::RotateCw,
+                    say(cx, Str::NodeRelaunch),
+                    cx,
+                );
                 if offer == RelaunchOffer::Ready {
                     row.on_click(cx.listener(move |this, _, window, cx| {
                         this.close_overlay(window, cx);
                         this.apply(move |base| cardlink::relaunch(base, id.0), cx);
                     }))
                 } else {
-                    btn::inert(row).opacity(0.6).child("대기 중")
+                    btn::inert(row)
+                        .opacity(0.6)
+                        .child(words(cx, "대기 중", "Pending"))
                 }
             }))
             .child(
@@ -291,9 +322,9 @@ impl Rooms {
                     "chat-agent-bookmark",
                     Lucide::Bookmark,
                     if marked {
-                        "북마크 해제"
+                        say(cx, Str::BookmarkRemove)
                     } else {
-                        "북마크"
+                        say(cx, Str::BookmarkAdd)
                     },
                     cx,
                 )
@@ -303,48 +334,74 @@ impl Rooms {
                 })),
             )
             .child(
-                option("chat-agent-parent", Lucide::CornerLeftUp, "부모 바꾸기", cx).on_click(
-                    cx.listener(move |this, _, window, cx| {
-                        this.open_panel(Panel::Parent(id), at, window, cx);
-                    }),
-                ),
+                option(
+                    "chat-agent-parent",
+                    Lucide::CornerLeftUp,
+                    words(cx, "부모 바꾸기", "Change parent"),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_panel(Panel::Parent(id), at, window, cx);
+                })),
             )
             .child(
-                option("chat-agent-remove", Lucide::Trash2, "노드 제거", cx)
-                    .text_color(c.err)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.close_overlay(window, cx);
-                        this.apply(move |base| cardlink::remove_node(base, id.0), cx);
-                    })),
+                option(
+                    "chat-agent-remove",
+                    Lucide::Trash2,
+                    say(cx, Str::NodeRemove),
+                    cx,
+                )
+                .text_color(c.err)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.close_overlay(window, cx);
+                    this.apply(move |base| cardlink::remove_node(base, id.0), cx);
+                })),
             )
     }
 
     pub(super) fn parent_menu(&self, index: &Index<'_>, id: NodeId, cx: &Context<Self>) -> Div {
         let Some(node) = index.node(id) else {
-            return note("이 에이전트는 방을 나갔습니다.", cx);
+            return note(
+                words(
+                    cx,
+                    "이 에이전트는 방을 나갔습니다.",
+                    "This agent has left the room.",
+                ),
+                cx,
+            );
         };
         let current = node.parent;
         let parent_name = current
             .and_then(|id| index.node(id))
-            .map_or("없음", |node| node.name.as_str());
+            .map_or(say(cx, Str::FindNone), |node| node.name.as_str());
         div()
             .flex()
             .flex_col()
             .gap(px(2.0))
-            .child(note(format!("현재 부모 · {parent_name}"), cx))
+            .child(note(
+                match cx.global::<Lang>() {
+                    Lang::Ko => format!("현재 부모 · {parent_name}"),
+                    Lang::En => format!("Current parent · {parent_name}"),
+                },
+                cx,
+            ))
             .when(current.is_some(), |body| {
                 body.child(
-                    option("chat-agent-detach", Lucide::Minus, "부모 없음", cx).on_click(
-                        cx.listener(move |this, _, window, cx| {
-                            this.close_overlay(window, cx);
-                            this.apply(
-                                move |base| {
-                                    link::post::<()>(base, &format!("/api/nodes/{id}/detach"), None)
-                                },
-                                cx,
-                            );
-                        }),
-                    ),
+                    option(
+                        "chat-agent-detach",
+                        Lucide::Minus,
+                        say(cx, Str::EventsNoParent),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.close_overlay(window, cx);
+                        this.apply(
+                            move |base| {
+                                link::post::<()>(base, &format!("/api/nodes/{id}/detach"), None)
+                            },
+                            cx,
+                        );
+                    })),
                 )
             })
             .children(
@@ -391,18 +448,27 @@ impl Rooms {
             .flex_col()
             .gap(px(2.0))
             .child(
-                option("chat-worktree-rename", Lucide::Pencil, "이름 바꾸기", cx).on_click(
-                    cx.listener(move |this, _, window, cx| {
-                        this.rename_work(work.clone(), at, window, cx)
-                    }),
-                ),
+                option(
+                    "chat-worktree-rename",
+                    Lucide::Pencil,
+                    say(cx, Str::RenameAction),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.rename_work(work.clone(), at, window, cx)
+                })),
             )
             .child(
-                option("chat-worktree-delete", Lucide::Trash2, "워크트리 삭제", cx)
-                    .text_color(c.err)
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.open_delete_worktree(delete.clone(), at, window, cx)
-                    })),
+                option(
+                    "chat-worktree-delete",
+                    Lucide::Trash2,
+                    say(cx, Str::DeleteWorktreeAction),
+                    cx,
+                )
+                .text_color(c.err)
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.open_delete_worktree(delete.clone(), at, window, cx)
+                })),
             )
     }
 
@@ -412,7 +478,7 @@ impl Rooms {
         saving: bool,
         cx: &Context<Self>,
     ) -> Div {
-        let save = btn::button("chat-name-save", cx).child("저장");
+        let save = btn::button("chat-name-save", cx).child(say(cx, Str::SettingsRolesSave));
         div()
             .flex()
             .flex_col()
@@ -423,9 +489,13 @@ impl Rooms {
                     .flex()
                     .justify_end()
                     .gap(px(4.0))
-                    .child(btn::ghost("chat-name-cancel", cx).child("취소").on_click(
-                        cx.listener(|this, _, window, cx| this.close_overlay(window, cx)),
-                    ))
+                    .child(
+                        btn::ghost("chat-name-cancel", cx)
+                            .child(say(cx, Str::CommonCancel))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_overlay(window, cx)),
+                            ),
+                    )
                     .child(if saving {
                         btn::inert(save).opacity(0.6)
                     } else {

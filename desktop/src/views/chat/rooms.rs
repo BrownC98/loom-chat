@@ -6,32 +6,40 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use api::graph::Status;
-use api::graph::chat::{ChatEntry, ChatRoom, ChatRoomKind};
+use api::graph::chat::{ChatRoom, ChatRoomKind};
 use api::ids::RepoId;
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    App, AppContext, ClickEvent, Context, Div, ElementId, Entity, FocusHandle, FontWeight,
+    App, AppContext, Context, Div, ElementId, Entity, EventEmitter, FocusHandle, FontWeight,
     InteractiveElement, IntoElement, KeyDownEvent, ParentElement, Render, Rgba, Role, Stateful,
     StatefulInteractiveElement, Styled, UniformListScrollHandle, Window, div, uniform_list,
 };
 
 use crate::scale::px;
-use crate::strings::Lang;
+use crate::strings::{Lang, Str};
 use crate::views::field::{self, Field, FieldEvent};
 use crate::views::icons::{Lucide, icon};
+use crate::views::prose::prose;
 use crate::views::scrollbar::Bar;
 use crate::views::status;
-use crate::views::ui::{clock, colors};
+use crate::views::ui::{clock, colors, say, say_with};
 use crate::views::widgets::btn;
 
-use super::data::ChatData;
-use controls::{Overlay, tool};
+use super::{data::ChatData, first_run, keep_ime_focus, room_title, words};
+use controls::Overlay;
 use create::CreateRoom;
 use list::{Filter, Index, Row};
 
 const ROW_HEIGHT: f32 = 48.0;
 const SMALL: f32 = 12.0;
 const MAX_GUIDES: usize = 6;
+
+pub(super) enum RoomsEvent {
+    Select(String),
+    ScratchChanged,
+}
+
+impl EventEmitter<RoomsEvent> for Rooms {}
 
 pub struct Rooms {
     data: Entity<ChatData>,
@@ -54,7 +62,7 @@ pub struct Rooms {
 
 impl Rooms {
     pub fn new(data: Entity<ChatData>, cx: &mut Context<Self>) -> Self {
-        let search = field::boxed("방 이름·구성원 찾기", false, false, cx);
+        let search = field::boxed_label(Str::RoomFind, false, false, cx);
         search.update(cx, |field, cx| field.set_inset(20.0, 0.0, cx));
         cx.subscribe(&search, |_, _, event: &FieldEvent, cx| {
             if matches!(event, FieldEvent::Changed) {
@@ -153,7 +161,7 @@ impl Rooms {
                 .whitespace_nowrap()
                 .cursor_pointer()
                 .hover(move |style| style.bg(c.surface_hover))
-                .child(filter.label())
+                .child(filter.label(cx))
                 .child(
                     div()
                         .font_weight(FontWeight::SEMIBOLD)
@@ -179,13 +187,13 @@ impl Rooms {
                     .mt(px(5.0))
                     .text_size(px(SMALL))
                     .text_color(c.ink_2)
-                    .child("묶기")
+                    .child(words(cx, "묶기", "Group"))
                     .child(
                         btn::ghost("room-grouping", cx)
                             .child(if self.flat {
-                                "묶지 않음"
+                                words(cx, "묶지 않음", "None")
                             } else {
-                                "작업별"
+                                words(cx, "작업별", "By work")
                             })
                             .child(icon(Lucide::ChevronsUpDown, px(12.0), c.ink_2))
                             .on_click(cx.listener(|this, _, _, cx| {
@@ -212,7 +220,7 @@ impl Rooms {
                 .cursor_pointer()
                 .hover(move |style| style.bg(c.surface_hover))
                 .child(chevron(!self.custom_folded, c.ink_2))
-                .child("내가 만든 방")
+                .child(words(cx, "내가 만든 방", "Custom rooms"))
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.custom_folded = !this.custom_folded;
                     cx.notify();
@@ -238,33 +246,44 @@ impl Rooms {
             .items_center()
             .gap(px(5.0))
             .child(icon(glyph, px(14.0), ink))
-            .child(name(&room.name))
+            .child(name(room_title(room, |_| None, cx)))
             .children(room.last_activity.map(|time| stamp(time, cx)));
-        let details = if pinned {
-            Some(format!("모든 작업공간 · 에이전트 {}", room.members.len()))
-        } else {
-            selected.then(|| last_line(self.data.read(cx))).flatten()
-        };
+        let details = room.last_preview.clone().or_else(|| {
+            pinned.then(|| {
+                let workspaces = say(cx, Str::GraphScopeAll);
+                let agents = room.members.len();
+                match cx.global::<Lang>() {
+                    Lang::Ko => format!("{workspaces} · 에이전트 {agents}"),
+                    Lang::En => format!("{workspaces} · Agents: {agents}"),
+                }
+            })
+        });
         let mut sub = subtitle(cx)
             .pl(px(18.0))
             .children(details.map(|text| div().flex_1().min_w_0().truncate().child(text)));
         if room.questions > 0 {
             sub = sub.child(badge(
                 if pinned {
-                    format!("질문 {}", room.questions)
+                    format!("{} {}", say(cx, Str::EventsTypeAsk), room.questions)
                 } else {
-                    "내 차례".to_owned()
+                    words(cx, "내 차례", "My turn").to_owned()
                 },
                 c.warn,
                 c.warn_ink,
             ));
         }
         if pinned && room.done > 0 {
-            sub = sub.child(badge(format!("완료 {}", room.done), c.ok, c.accent_ink));
+            sub = sub.child(badge(
+                say_with(cx, Str::TreeDone, &[("n", &room.done.to_string())]),
+                c.ok,
+                c.accent_ink,
+            ));
         }
         if !pinned {
             sub = sub
-                .when(room.archived, |sub| sub.child("끝남"))
+                .when(room.archived, |sub| {
+                    sub.child(words(cx, "끝남", "Archived"))
+                })
                 .when(room.unread > 0, |sub| {
                     sub.child(badge(room.unread.to_string(), c.notice, c.notice_ink))
                 });
@@ -309,26 +328,27 @@ impl Rooms {
         };
         let id = room.id.clone();
         let gesture = if folded {
-            "하위 방 펴기"
+            words(cx, "하위 방 펴기", "Expand rooms")
         } else {
-            "하위 방 접기"
+            words(cx, "하위 방 접기", "Collapse rooms")
         };
-        let toggle = tool(
-            "chat-work-fold",
-            if folded {
-                Lucide::ChevronRight
-            } else {
-                Lucide::ChevronDown
-            },
-            gesture,
-            cx,
-        )
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if !this.folded.remove(&id) {
-                this.folded.insert(id.clone());
-            }
-            cx.notify();
-        }));
+        let toggle = self
+            .tool(
+                "chat-work-fold",
+                if folded {
+                    Lucide::ChevronRight
+                } else {
+                    Lucide::ChevronDown
+                },
+                gesture,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !this.folded.remove(&id) {
+                    this.folded.insert(id.clone());
+                }
+                cx.notify();
+            }));
         let urgent = room.questions > 0
             || room.members.iter().any(|&id| {
                 index
@@ -352,10 +372,13 @@ impl Rooms {
         } else {
             c.ink_3
         };
-        let label = index.work_title(room);
-        let detail = match repo {
-            Some(repo) if repo.git => format!("{} · {}명", repo.name, room.members.len()),
-            _ => format!("구성원 {}명", room.members.len()),
+        let label = room_title(room, |_| repo, cx);
+        let members = room.members.len();
+        let detail = match (cx.global::<Lang>(), repo.filter(|repo| repo.git)) {
+            (Lang::Ko, Some(repo)) => format!("{} · {members}명", repo.name),
+            (Lang::En, Some(repo)) => format!("{} · Members: {members}", repo.name),
+            (Lang::Ko, None) => format!("구성원 {members}명"),
+            (Lang::En, None) => format!("Members: {members}"),
         };
         let head = div()
             .flex()
@@ -366,12 +389,25 @@ impl Rooms {
             .child(name(label))
             .children(room.last_activity.map(|time| stamp(time, cx)));
         let info = subtitle(cx)
-            .child(div().min_w_0().truncate().child(detail))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(room.last_preview.clone().unwrap_or(detail)),
+            )
             .when(urgent, |row| {
-                row.child(badge("내 차례".to_owned(), c.warn, c.warn_ink))
+                row.child(badge(
+                    words(cx, "내 차례", "My turn").to_owned(),
+                    c.warn,
+                    c.warn_ink,
+                ))
             })
             .when(!urgent && problem, |row| {
-                row.child(badge("문제".to_owned(), c.err, c.err_ink))
+                row.child(badge(
+                    words(cx, "문제", "Problem").to_owned(),
+                    c.err,
+                    c.err_ink,
+                ))
             });
         div().h_full().child(
             div()
@@ -410,7 +446,10 @@ impl Rooms {
         let (label, tone) = if room.questions > 0
             || live.is_some_and(|node| matches!(node.status, Status::Human))
         {
-            ("내 답을 기다림".to_owned(), c.warn)
+            (
+                words(cx, "내 답을 기다림", "Waiting for your reply").to_owned(),
+                c.warn,
+            )
         } else if let Some(chip) = live.and_then(|node| status::chip(&node.status, lang)) {
             let color = match chip.tone {
                 status::Tone::Problem => c.err,
@@ -420,16 +459,16 @@ impl Rooms {
             };
             (chip.text, color)
         } else {
-            ("끝남".to_owned(), c.ink_3)
+            (words(cx, "끝남", "Archived").to_owned(), c.ink_3)
         };
         let role = live.map(|node| {
             node.role.as_deref().unwrap_or_else(|| {
                 if node.agent.is_none() {
-                    "셸"
+                    say(cx, Str::NewNodeShell)
                 } else if node.parent.is_some() {
-                    "하위 에이전트"
+                    words(cx, "하위 에이전트", "Child agent")
                 } else {
-                    "상위 에이전트"
+                    words(cx, "상위 에이전트", "Root agent")
                 }
             })
         });
@@ -447,10 +486,16 @@ impl Rooms {
                 row.child(icon(Lucide::Bookmark, px(11.0), c.ink_2))
             })
             .children(time.map(|time| stamp(time, cx)));
-        let info = subtitle(cx).child(div().truncate().child(match role {
-            Some(role) => format!("{role} · {label}"),
-            None => label,
-        }));
+        let info = if let Some(preview) = &room.last_preview {
+            subtitle(cx)
+                .child(div().flex_1().min_w_0().truncate().child(preview.clone()))
+                .child(div().max_w(gpui::relative(0.45)).truncate().child(label))
+        } else {
+            subtitle(cx).child(div().truncate().child(match role {
+                Some(role) => format!("{role} · {label}"),
+                None => label,
+            }))
+        };
         let select = self.select_button(room, cx).child(first).child(info);
         div().h_full().child(
             div()
@@ -489,9 +534,8 @@ impl Rooms {
             .rounded(px(5.0))
             .cursor_pointer()
             .hover(move |row| row.bg(c.surface_hover))
-            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.data.update(cx, |data, cx| data.select(id.clone(), cx));
-            }))
+            .capture_any_mouse_down(keep_ime_focus)
+            .on_click(cx.listener(move |_, _, _, cx| cx.emit(RoomsEvent::Select(id.clone()))))
     }
 
     fn room_list(&self, rows: Vec<Row>, selection: Option<String>, cx: &Context<Self>) -> Div {
@@ -522,23 +566,32 @@ impl Rooms {
                                     .filter(|repo| this.workspace.is_none_or(|id| repo.id == id))
                                     .any(|repo| !repo.git)
                                 {
-                                    "작업공간 방"
+                                    words(cx, "작업공간 방", "Workspace rooms")
                                 } else {
-                                    "워크트리 방"
+                                    words(cx, "워크트리 방", "Worktree rooms")
                                 };
                                 Some(heading(label, cx))
                             }
-                            Row::Unassigned => Some(heading("작업공간 없는 방", cx)),
+                            Row::Unassigned => Some(heading(
+                                words(cx, "작업공간 없는 방", "Rooms without a workspace"),
+                                cx,
+                            )),
                             Row::Hidden(count) => Some(
                                 div()
                                     .flex()
                                     .items_center()
                                     .justify_between()
                                     .gap(px(3.0))
-                                    .child(note(format!("다른 방 {count}개는 숨겼습니다"), cx))
+                                    .child(note(
+                                        match cx.global::<Lang>() {
+                                            Lang::Ko => format!("다른 방 {count}개는 숨겼습니다"),
+                                            Lang::En => format!("Other rooms hidden: {count}"),
+                                        },
+                                        cx,
+                                    ))
                                     .child(
                                         btn::ghost("restore-room-list", cx)
-                                            .child("전체 보기")
+                                            .child(words(cx, "전체 보기", "Show all"))
                                             .on_click(
                                                 cx.listener(|this, _, _, cx| this.restore(cx)),
                                             ),
@@ -592,7 +645,7 @@ impl Render for Rooms {
         let controls = self.controls(&index, cx);
         let list = self.room_list(rows, selection, cx);
         let overlay = self.overlay(&index, window, cx);
-        let zero_workspaces = connected && index.repos.is_empty();
+        let first = first_run(data, cx);
         div()
             .relative()
             .flex()
@@ -616,7 +669,7 @@ impl Render for Rooms {
                     .pt(px(8.0))
                     .pb(px(6.0))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("방 목록")
+                    .child(words(cx, "방 목록", "Rooms"))
                     .child(self.new_control(cx)),
             )
             .child(
@@ -652,7 +705,7 @@ impl Render for Rooms {
                             .child(error.to_owned())
                             .child(
                                 btn::button("retry-chat-rooms", cx)
-                                    .child("다시 불러오기")
+                                    .child(say(cx, Str::StatusBarRefresh))
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.data.update(cx, |data, cx| data.refresh(cx));
                                     })),
@@ -670,21 +723,44 @@ impl Render for Rooms {
                                     .child(error.clone())
                             }),
                     )
-                    .when(loading && pinned.is_none(), |body| {
-                        body.child(note("방 목록을 불러옵니다.", cx).mx(px(8.0)).flex_none())
+                    .when(!first && loading && pinned.is_none(), |body| {
+                        body.child(
+                            note(words(cx, "방 목록을 불러옵니다.", "Loading rooms…"), cx)
+                                .mx(px(8.0))
+                                .flex_none(),
+                        )
                     })
-                    .when(zero_workspaces, |body| body.child(self.empty_workspace(cx)))
-                    .when(
-                        !zero_workspaces && !loading && pinned.is_some() && empty,
-                        |body| {
-                            let label = if hidden == 0 {
-                                "아직 다른 방이 없습니다."
-                            } else {
-                                "조건에 맞는 방이 없습니다."
-                            };
-                            body.child(note(label, cx).mx(px(8.0)).flex_none())
-                        },
-                    )
+                    .when(first, |body| {
+                        body.child(
+                            div()
+                                .mx(px(12.0))
+                                .my(px(8.0))
+                                .flex_none()
+                                .text_size(px(SMALL))
+                                .text_color(c.ink_2)
+                                .child(prose(words(
+                                    cx,
+                                    "에이전트를 띄우면 방이 여기에 보입니다.",
+                                    "Start an agent to see its room here.",
+                                ))),
+                        )
+                    })
+                    .when(!first && !loading && pinned.is_some() && empty, |body| {
+                        let label = if hidden == 0 {
+                            words(
+                                cx,
+                                "아직 다른 방이 없습니다.",
+                                "There are no other rooms yet.",
+                            )
+                        } else {
+                            words(
+                                cx,
+                                "조건에 맞는 방이 없습니다.",
+                                "No rooms match the current filters.",
+                            )
+                        };
+                        body.child(note(label, cx).mx(px(8.0)).flex_none())
+                    })
                     .child(list),
             )
             .children(
@@ -736,7 +812,7 @@ fn guides(depth: usize, cx: &App) -> Div {
         .children((0..depth).map(|level| {
             div().w(px(10.0)).border_l_1().border_color(line).when_else(
                 level + 1 == depth,
-                |guide| guide.h(px(18.0)).border_b_1(),
+                |guide| guide.h(px(ROW_HEIGHT / 2.0)).border_b_1(),
                 |guide| guide.h_full(),
             )
         }))
@@ -753,18 +829,6 @@ fn heading(title: &'static str, cx: &App) -> Div {
         .text_size(px(SMALL))
         .text_color(colors(cx).ink_2)
         .child(title)
-}
-
-fn last_line(data: &ChatData) -> Option<String> {
-    data.items().iter().rev().find_map(|item| {
-        let (name, text) = match &item.entry {
-            ChatEntry::Message { message } => (&message.from.name, super::message_text(message)),
-            ChatEntry::Wait { node, wait, .. } => (&node.name, wait.summary.as_str()),
-            _ => return None,
-        };
-        let first_line = text.lines().find(|line| !line.trim().is_empty())?;
-        Some(format!("{name}: {first_line}"))
-    })
 }
 
 fn chevron(open: bool, ink: Rgba) -> gpui::Svg {

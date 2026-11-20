@@ -18,6 +18,7 @@ use super::{
     Graph, REACHABLE, doc_talk, folder_name, from_json, hosts, mailbox, optional_json, status,
     to_json, waits,
 };
+use crate::link_text::message_blocks;
 use crate::process_tree::Identity;
 use crate::protocol::{Delivery, HUMAN, LOOM, MessageId, Session};
 
@@ -26,6 +27,7 @@ const OUTSIDE_SUFFIX: &str = " (outside agent)";
 const NOTICE_KINDS: &str = "('batch', 'accountSwitched', 'noAccountLeft', 'relaunched', 'endpointFailed', 'created', 'removed', 'tidied')";
 const EVENT_NODE: &str = "(CASE WHEN json_valid(entry) THEN entry ->> '$.node.id' END)";
 const ROOM_COLUMNS: &str = "SELECT id, name, archived FROM chat_rooms";
+const PREVIEW_CHARS: usize = 100;
 
 struct Room {
     id: String,
@@ -744,13 +746,45 @@ fn editable(db: &Connection, group: u32) -> rusqlite::Result<Option<bool>> {
 
 fn room_view(db: &Connection, key: &hmac::Key, room: Room) -> Result<ChatRoom, Refusal> {
     let sql = timeline_sql(&room, Audience::Human);
-    let (at, unread, questions, done) = db.query_row(
+    let (at, unread, questions, done, last_preview) = db.query_row(
         &format!(
-            "{sql} SELECT max(at), coalesce(sum(unread), 0),
-            coalesce(sum(question), 0), coalesce(sum(done), 0) FROM timeline"
+            "{sql}, latest AS (
+                SELECT source, id FROM timeline WHERE source IN (0, 1)
+                ORDER BY at DESC, source DESC, id DESC LIMIT 1
+            ), totals AS (
+                SELECT max(at), coalesce(sum(unread), 0), coalesce(sum(question), 0),
+                    coalesce(sum(done), 0) FROM timeline
+            )
+            SELECT totals.*, coalesce(m.body, t.text),
+                coalesce(m.sender_node_id IS NULL AND m.sender_name LIKE '%{OUTSIDE_SUFFIX}', 0)
+            FROM totals LEFT JOIN latest ON 1
+            LEFT JOIN messages m ON latest.source = 0 AND m.id = latest.id
+            LEFT JOIN doc_talk t ON latest.source = 1 AND t.id = latest.id"
         ),
         params![room.id, timeline_scope(&room)],
-        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        |row| {
+            let text = row.get_ref(4)?.as_str_or_null()?;
+            let outside = row.get::<_, bool>(5)?;
+            let preview = text.and_then(|text| {
+                let text = if outside {
+                    ChatOrigin::Outside.visible_text(text)
+                } else {
+                    text
+                };
+                let mut chars = text
+                    .split_whitespace()
+                    .enumerate()
+                    .flat_map(|(index, word)| {
+                        (index > 0).then_some(' ').into_iter().chain(word.chars())
+                    });
+                let mut preview: String = chars.by_ref().take(PREVIEW_CHARS).collect();
+                if chars.next().is_some() {
+                    preview.push('…');
+                }
+                (!preview.is_empty()).then_some(preview)
+            });
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, preview))
+        },
     )?;
     let token = URL_SAFE_NO_PAD.encode(hmac::sign(key, room.id.as_bytes()).as_ref());
     Ok(ChatRoom {
@@ -764,6 +798,7 @@ fn room_view(db: &Connection, key: &hmac::Key, room: Room) -> Result<ChatRoom, R
         questions,
         done,
         last_activity: at,
+        last_preview,
     })
 }
 
@@ -966,12 +1001,15 @@ fn read_message(db: &Connection, room: &str, id: i64) -> rusqlite::Result<ChatMe
                 Some(MessageKind::Answer { question: Question::Message { id } }) => Some(id),
                 _ => None,
             };
+            let text: String = row.get(4)?;
+            let blocks = message_blocks(origin.visible_text(&text));
             Ok(ChatMessage {
                 id: row.get(0)?,
                 group: row.get(1)?,
                 origin,
                 from,
-                text: row.get(4)?,
+                text,
+                blocks,
                 mode: Some(from_json(row, 5)?),
                 what,
                 reply_to,
@@ -1077,6 +1115,8 @@ fn read_talk(db: &Connection, id: i64) -> rusqlite::Result<ChatMessage> {
                 ),
                 _ => (ChatOrigin::Agent, row.get(2)?),
             };
+            let text: String = row.get(4)?;
+            let blocks = message_blocks(&text);
             Ok(ChatMessage {
                 id: row.get(0)?,
                 group: None,
@@ -1085,7 +1125,8 @@ fn read_talk(db: &Connection, id: i64) -> rusqlite::Result<ChatMessage> {
                     name,
                 },
                 origin,
-                text: row.get(4)?,
+                text,
+                blocks,
                 mode: None,
                 what: None,
                 reply_to: row.get(5)?,

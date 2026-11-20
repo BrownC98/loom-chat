@@ -1,12 +1,16 @@
 use gpui::{
-    Bounds, Div, InteractiveElement, IntoElement, MouseButton, ParentElement, Rgba, Styled, Window,
-    canvas, div, fill, point, size,
+    App, Bounds, Div, FocusHandle, InteractiveElement, IntoElement, MouseButton, ParentElement,
+    Rgba, StatefulInteractiveElement, Styled, Window, canvas, div, fill, point, size,
 };
 
+use super::{OpenSettings, ToggleSidebar};
 use crate::platform;
 use crate::scale::px;
-use crate::strings::Lang;
-use crate::theme::Colors;
+use crate::strings::{Lang, Str};
+use crate::views::icons::{Lucide, icon};
+use crate::views::tooltip::tip;
+use crate::views::ui::{colors, say};
+use crate::views::widgets::btn;
 
 pub const HEIGHT: f32 = 36.0;
 const MARK: f32 = 16.0;
@@ -43,16 +47,30 @@ fn mark(color: Rgba) -> impl IntoElement {
     .h(px(MARK))
 }
 
-pub fn bar(window: &Window, colors: &Colors, lang: Lang) -> Div {
+pub fn bar(window: &Window, sidebar: &FocusHandle, expanded: bool, cx: &App) -> Div {
+    let c = colors(cx);
+    let lang = *cx.global::<Lang>();
+    let sidebar_icon = if expanded {
+        Lucide::PanelLeftClose
+    } else {
+        Lucide::PanelLeftOpen
+    };
+    let sidebar_label = match (lang, expanded) {
+        (Lang::Ko, true) => "방 목록 접기",
+        (Lang::Ko, false) => "방 목록 펴기",
+        (Lang::En, true) => "Collapse rooms",
+        (Lang::En, false) => "Expand rooms",
+    };
+    let settings = say(cx, Str::SettingsTitle);
     div()
         .h(px(HEIGHT))
         .flex_none()
         .flex()
         .items_center()
         .pl(platform::leading_gap())
-        .bg(colors.panel)
+        .bg(c.panel)
         .border_b_1()
-        .border_color(colors.line)
+        .border_color(c.line)
         .child(drag(
             div()
                 .h_full()
@@ -61,12 +79,34 @@ pub fn bar(window: &Window, colors: &Colors, lang: Lang) -> Div {
                 .ml(px(MARK_BEFORE))
                 .mr(px(MARK_AFTER))
                 .gap(px(6.0))
-                .child(mark(colors.ink_2))
-                .text_color(colors.ink)
+                .child(mark(c.ink_2))
+                .text_color(c.ink)
                 .child(crate::frame::NAME),
         ))
+        .child(
+            btn::ghost("title-sidebar", cx)
+                .track_focus(sidebar)
+                .aria_label(sidebar_label)
+                .aria_expanded(expanded)
+                .tooltip(tip(sidebar_label.to_owned()))
+                .size(px(28.0))
+                .p_0()
+                .justify_center()
+                .child(icon(sidebar_icon, px(16.0), c.ink_2))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(ToggleSidebar), cx)),
+        )
         .child(drag(div().flex_1().h_full()))
-        .children(platform::captions(window, colors, lang))
+        .child(
+            btn::ghost("title-settings", cx)
+                .aria_label(settings)
+                .tooltip(tip(settings.to_owned()))
+                .size(px(28.0))
+                .p_0()
+                .justify_center()
+                .child(icon(Lucide::Settings, px(16.0), c.ink_2))
+                .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
+        )
+        .children(platform::captions(window, &c, lang))
 }
 
 fn drag(area: Div) -> Div {

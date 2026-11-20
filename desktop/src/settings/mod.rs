@@ -78,6 +78,10 @@ pub fn want_accounts(cx: &mut App) {
     cx.set_global(Wanted(nav::Tab::Accounts));
 }
 
+pub fn want_agents(cx: &mut App) {
+    cx.set_global(Wanted(nav::Tab::Agents));
+}
+
 fn take_wanted(cx: &mut App) -> Option<nav::Tab> {
     cx.has_global::<Wanted>()
         .then(|| cx.remove_global::<Wanted>().0)

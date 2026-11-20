@@ -17,7 +17,7 @@ use crate::strings::{Lang, Str};
 use crate::theme::Theme;
 use crate::{fonts, link};
 
-gpui::actions!(loom, [OpenSettings]);
+gpui::actions!(loom, [OpenSettings, ToggleSidebar]);
 
 pub struct Shell {
     store: Entity<Store>,
@@ -77,8 +77,14 @@ impl Render for Shell {
         }
         let theme = cx.global::<Theme>();
         let lang = *cx.global::<Lang>();
-        let title = title::bar(window, &theme.colors, lang);
-        let status = status::bar(&self.store, self.chat.read(cx).repo(cx), &theme.colors, cx);
+        let chat = self.chat.read(cx);
+        let title = title::bar(
+            window,
+            chat.sidebar_focus(),
+            chat.sidebar_visible(window),
+            cx,
+        );
+        let status = status::bar(&self.store, chat.repo(cx), &theme.colors, cx);
         let store = self.store.read(cx);
         if store.base().is_some() {
             self.dismissed_startup_notice = None;
@@ -157,7 +163,7 @@ impl Render for Shell {
                 if stroke.key == "escape" {
                     if this
                         .chat
-                        .update(cx, |chat, cx| chat.close_narrow_side(window, cx))
+                        .update(cx, |chat, cx| chat.close_narrow_panel(window, cx))
                     {
                         cx.stop_propagation();
                     } else {
@@ -178,6 +184,12 @@ impl Render for Shell {
             .on_action(
                 cx.listener(|this, _: &OpenSettings, window, cx| this.open_settings(window, cx)),
             )
+            .on_action(cx.listener(|this, _: &ToggleSidebar, window, cx| {
+                if this.settings.is_none() {
+                    this.chat
+                        .update(cx, |chat, cx| chat.toggle_sidebar(window, cx));
+                }
+            }))
             .child(title)
             .child(div().relative().flex_1().min_h_0().child(self.chat.clone()))
             .children(notice)

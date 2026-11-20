@@ -748,7 +748,7 @@ fn wait_content(
                     &wait.wait.blocks,
                     &wait.wait.text,
                     wait.wait.doc.as_ref(),
-                    entry::tone_of(wait.tone, &c),
+                    blocks::Style::new(c, entry::tone_of(wait.tone, &c)),
                     ui::TEXT * z,
                     window,
                     cx,

@@ -420,7 +420,19 @@ impl Render for Usage {
                     .map(IntoElement::into_any_element),
             );
         }
-        if needs_login || summary.is_empty() {
+        let store = self.store.read(cx);
+        if store.no_tools()
+            && store
+                .snapshot()
+                .is_some_and(|snapshot| snapshot.nodes.is_empty())
+        {
+            summary.clear();
+            let label = match cx.global::<Lang>() {
+                Lang::Ko => "설치된 AI 도구 없음",
+                Lang::En => "No AI tools installed",
+            };
+            summary.push(text(label).into_any_element());
+        } else if needs_login || summary.is_empty() {
             if !summary.is_empty() {
                 summary.push(separator(&c).into_any_element());
             }

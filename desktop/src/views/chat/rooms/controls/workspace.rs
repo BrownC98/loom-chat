@@ -1,29 +1,33 @@
+mod welcome;
+
 use api::graph::chat::ChatRoomKind;
 use api::graph::{Place, Status};
 use api::ids::RepoId;
-use api::repos::RepoView;
+use api::repos::{PlaceView, RepoView};
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    ClickEvent, Context, Div, ElementId, FontWeight, InteractiveElement, ParentElement, Pixels,
-    Point, Stateful, StatefulInteractiveElement, Styled, Window, div,
+    App, AppContext, ClickEvent, Context, Div, ElementId, Entity, FontWeight, InteractiveElement,
+    ParentElement, Pixels, Point, Stateful, StatefulInteractiveElement, Styled, Task, WeakEntity,
+    Window, div,
 };
 
 use crate::link;
 use crate::scale::px;
+use crate::store::Store;
 use crate::strings::{Lang, Str};
 use crate::views::cardlink;
 use crate::views::icons::{Lucide, icon};
-use crate::views::prose::prose;
-use crate::views::shell::OpenSettings;
 use crate::views::tooltip::tip;
-use crate::views::ui::{SMALL, TEXT, colors, say};
+use crate::views::ui::{SMALL, colors, say};
 use crate::views::widgets::btn;
+use crate::views::workspace::{AddRepo, AddRepoEvent};
+use welcome::{Slot, Welcome};
 
 use super::{
     Index, Overlay, Panel, Removal, Rooms, below, calls, chevron, option, place_of, words, work_in,
     work_label,
 };
-use crate::views::chat::rooms::{RoomsEvent, badge};
+use crate::views::chat::rooms::badge;
 
 impl Rooms {
     pub(in crate::views::chat::rooms) fn workspace_controls(
@@ -49,8 +53,16 @@ impl Rooms {
                     .min_w_0()
                     .justify_start()
                     .aria_label(say(cx, Str::TreeRepos))
+                    .h(px(30.0))
                     .child(icon(Lucide::Folder, px(14.0), c.ink_2))
-                    .child(div().flex_1().min_w_0().truncate().child(title.to_owned()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title.to_owned()),
+                    )
                     .child(chevron(
                         matches!(
                             self.overlay,
@@ -65,25 +77,15 @@ impl Rooms {
                         this.open_panel(Panel::Workspace, below(event), window, cx);
                     })),
             )
-            .child(
-                self.tool(
-                    "chat-settings",
-                    Lucide::Settings,
-                    if cfg!(target_os = "macos") {
-                        words(cx, "설정 (⌘+,)", "Settings (⌘+,)")
-                    } else {
-                        words(cx, "설정 (Ctrl+,)", "Settings (Ctrl+,)")
-                    },
-                    cx,
-                )
-                .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx)),
-            )
     }
 
     pub(in crate::views::chat::rooms) fn new_control(&self, cx: &Context<Self>) -> Stateful<Div> {
         let c = colors(cx);
         btn::button("new-chat", cx)
             .track_focus(&self.new_room)
+            .h(px(26.0))
+            .px(px(8.0))
+            .text_size(px(SMALL))
             .child(icon(Lucide::Plus, px(13.0), c.ink))
             .child(words(cx, "새로 만들기", "New"))
             .child(icon(Lucide::ChevronDown, px(12.0), c.ink_2))
@@ -92,110 +94,46 @@ impl Rooms {
             }))
     }
 
-    pub(in crate::views::chat) fn welcome(&self, cx: &Context<Self>) -> Div {
-        let c = colors(cx);
-        let scratch = self.scratch_button(
-            btn::filled("chat-start-scratch", c.accent, c.accent_ink, cx).child(icon(
-                Lucide::MessageCircle,
-                px(15.0),
-                c.accent_ink,
-            )),
-            cx,
-        );
-        let folder = btn::button("chat-welcome-folder", cx)
-            .child(icon(Lucide::Folder, px(15.0), c.ink))
-            .child(words(cx, "작업공간 폴더 열기", "Open workspace folder"))
-            .on_click(cx.listener(|this, event: &ClickEvent, window, cx| {
-                this.open_add_workspace(below(event), window, cx);
-            }));
-        let title = words(
-            cx,
-            "첫 에이전트와 대화를 시작합니다",
-            "Start a chat with your first agent",
-        );
-        let intro = words(
-            cx,
-            "에이전트는 맡긴 일을 하는 AI입니다. 저장소(코드 폴더)가 없어도 바로 말을 걸 수 있습니다.",
-            "An agent is an AI that does the work you give it. You can chat without a repository, which is a folder for code.",
-        );
-        let choices = [
-            (
-                scratch,
-                words(
-                    cx,
-                    "빈 작업 폴더를 만들고 에이전트 하나를 띄웁니다.",
-                    "Create an empty work folder and start an agent.",
-                ),
-            ),
-            (
-                folder,
-                words(
-                    cx,
-                    "코드가 있는 폴더를 고릅니다. 에이전트가 그 폴더 안에서 일합니다.",
-                    "Choose a folder with code. The agent works in that folder.",
-                ),
-            ),
-        ]
-        .into_iter()
-        .map(|(button, detail)| {
-            div()
-                .flex()
-                .flex_col()
-                .items_start()
-                .gap(px(6.0))
-                .child(
-                    button
-                        .h(px(34.0))
-                        .px(px(14.0))
-                        .rounded(px(8.0))
-                        .text_size(px(TEXT)),
-                )
-                .child(div().text_size(px(SMALL)).child(prose(detail)))
-        });
+    pub(in crate::views::chat) fn welcome(&mut self, cx: &mut Context<Self>) -> Div {
         div()
             .flex()
             .flex_1()
             .min_h_0()
-            .items_center()
-            .justify_center()
-            .p(px(24.0))
-            .child(
-                div()
-                    .id("chat-welcome")
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .max_w(px(470.0))
-                    .gap(px(20.0))
-                    .text_color(c.ink_2)
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(6.0))
-                            .child(
-                                div()
-                                    .text_size(px(18.0))
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .text_color(c.ink)
-                                    .child(prose(title)),
-                            )
-                            .child(div().text_size(px(TEXT)).child(prose(intro))),
-                    )
-                    .children(choices)
-                    .child(
-                        div()
-                            .border_t_1()
-                            .border_color(c.line)
-                            .pt(px(14.0))
-                            .text_size(px(SMALL))
-                            .child(prose(words(
-                                cx,
-                                "다음부터는 왼쪽 위 [새로 만들기]에서 같은 일을 합니다.",
-                                "Use New in the top left to start another agent or open a folder.",
-                            ))),
-                    ),
-            )
+            .child(Slot::new(self.store(cx), cx.weak_entity()))
+    }
+
+    fn pick_welcome_folder(
+        &mut self,
+        welcome: WeakEntity<Welcome>,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let store = self.store(cx);
+        let hosts = store
+            .read(cx)
+            .snapshot()
+            .into_iter()
+            .flat_map(|s| &s.repos)
+            .filter_map(|repo| match &repo.place {
+                PlaceView::Ssh { host } => Some(host.clone()),
+                _ => None,
+            })
+            .collect();
+        let previous = window.focused(cx);
+        let view = cx.new(|cx| AddRepo::new(store, hosts, at, window, cx));
+        let closed = cx.subscribe_in(
+            &view,
+            window,
+            move |this, _, event: &AddRepoEvent, window, cx| {
+                this.close_overlay(window, cx);
+                if let AddRepoEvent::Added(repo) = event {
+                    let repo = repo.clone();
+                    let _ = welcome.update(cx, |welcome, cx| welcome.set_folder(repo, window, cx));
+                }
+            },
+        );
+        self.show_dialog(view.into(), None, previous, closed, cx);
     }
 
     fn scratch_button(&self, button: Stateful<Div>, cx: &Context<Self>) -> Stateful<Div> {
@@ -224,17 +162,13 @@ impl Rooms {
         self.action_error = None;
         self.starting_scratch = true;
         cx.notify();
-        cx.emit(RoomsEvent::ScratchChanged);
         let from_picker = self.overlay.is_some();
         let store = self.store(cx);
-        let task = store.read(cx).call(cx, |base| {
-            link::post::<RepoView>(base, "/api/repos/scratch", None)
-        });
+        let task = scratch(&store, cx);
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.starting_scratch = false;
-                cx.emit(RoomsEvent::ScratchChanged);
                 if result.is_ok() {
                     this.store(cx).update(cx, |store, cx| store.reload(cx));
                 }
@@ -258,7 +192,6 @@ impl Rooms {
                     Ok(_) => {}
                     Err(error) => {
                         this.action_error = Some(error);
-                        cx.notify();
                     }
                 }
             });
@@ -653,4 +586,10 @@ impl Rooms {
                 }),
         )
     }
+}
+
+pub(super) fn scratch(store: &Entity<Store>, cx: &App) -> Task<Result<RepoView, String>> {
+    store.read(cx).call(cx, |base| {
+        link::post::<RepoView>(base, "/api/repos/scratch", None)
+    })
 }

@@ -10,7 +10,7 @@ use crate::strings::Str;
 use crate::theme::Colors;
 use crate::views::ui;
 
-pub const HEIGHT: f32 = 22.0;
+pub const HEIGHT: f32 = 28.0;
 
 #[derive(IntoElement)]
 struct Usage(Entity<Store>, Option<RepoId>);

@@ -29,7 +29,11 @@ use crate::views::widgets::btn;
 const MESSAGE_GROUP: &str = "stream-message";
 const SENDER_WINDOW_MS: i64 = 3 * 60 * 1000;
 const BUBBLE_WIDTH: f32 = 760.0;
-const HUMAN_BUBBLE_SHARE: f32 = 0.72;
+const BUBBLE_SHARE: f32 = 0.74;
+const BUBBLE_ROUND: f32 = 10.0;
+const BUBBLE_NOTCH: f32 = 3.0;
+const MESSAGE_GAP: f32 = 3.0;
+const AVATAR: f32 = 20.0;
 
 pub(super) fn hidden(item: &ChatItem) -> bool {
     match &item.entry {
@@ -163,8 +167,8 @@ impl Stream {
             .id(key)
             .group(MESSAGE_GROUP)
             .w_full()
-            .px(px(14.0))
-            .py(px(if grouped { 2.0 } else { 6.0 }))
+            .px(px(20.0))
+            .py(px(if grouped { 2.0 } else { 7.0 }))
             .children(date.map(|day| {
                 div()
                     .w_full()
@@ -271,6 +275,7 @@ impl Stream {
             ChatRoomKind::Agent { node } => Some(node),
             _ => None,
         });
+        let lane = sender(item, room).map_or(Lane::Loom, |sender| Lane::of(&sender));
         let fold = (message.origin == ChatOrigin::Agent
             && !message.receipts.is_empty()
             && message
@@ -284,15 +289,14 @@ impl Stream {
                 )
             }))
         .then(|| self.is_expanded(item.cursor, cx));
-        let recipient = room
-            .filter(|room| {
-                agent.is_none()
-                    && fold.is_none()
-                    && message.room.as_ref() == Some(&room.id)
-                    && !matches!(room.kind, ChatRoomKind::Pinned)
-            })
-            .map(|room| room.name.clone())
-            .or_else(|| {
+        let room_wide = room.is_some_and(|room| {
+            agent.is_none()
+                && fold.is_none()
+                && message.room.as_ref() == Some(&room.id)
+                && !matches!(room.kind, ChatRoomKind::Pinned)
+        });
+        let recipient = (!room_wide)
+            .then(|| {
                 let recipients: Vec<_> = message
                     .receipts
                     .iter()
@@ -300,7 +304,8 @@ impl Stream {
                     .map(|receipt| receipt.to.name.as_str())
                     .collect();
                 (!recipients.is_empty()).then(|| recipients.join(", "))
-            });
+            })
+            .flatten();
         let source = self.message_source(message.room.as_deref(), node, cx);
         let author = match recipient.as_deref() {
             Some(recipient) => format!("{display} → {recipient}"),
@@ -324,15 +329,10 @@ impl Stream {
                 self.expand_button(item.cursor, div().min_w_0().truncate().child(author), cx)
                     .into_any_element(),
             )
-        } else if grouped {
+        } else if grouped || mine {
             recipient.map(|recipient| meta(format!("→ {recipient}"), cx).into_any_element())
         } else {
-            Some(
-                div()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(prose(author))
-                    .into_any_element(),
-            )
+            Some(author_line(lane, display, author, cx).into_any_element())
         };
         let kind = message
             .what
@@ -348,7 +348,7 @@ impl Stream {
             || mode.is_some()
             || source.is_some()
             || message.reply_to.is_some();
-        let receipts = self.receipts(message, agent, item.cursor, cx);
+        let receipts = self.receipts(message, agent, cx);
         let header = show_header.then(|| {
             flow()
                 .children(author)
@@ -358,26 +358,23 @@ impl Stream {
                 )
                 .children(mode.map(|mode| badge(ui::say(cx, mode), c.ink_2, cx)))
                 .children(kind.map(|kind| badge(kind, c.ink_2, cx)))
-                .children(
-                    (receipts.is_none() || agent.is_none()).then(|| timestamp(item.cursor, cx)),
-                )
                 .children(message.reply_to.map(|id| meta(format!("#{id}"), cx)))
                 .children(source)
         });
+        let footer = (!grouped || receipts.is_some()).then(|| footer(item.cursor, receipts, cx));
         let body = self.bubble(
             item,
             text,
             message.blocks.as_deref().unwrap_or_default(),
-            (header.is_none() && receipts.is_none()).then(|| hover_time(item.cursor, mine, cx)),
+            footer.is_none().then(|| hover_time(item.cursor, mine, cx)),
             window,
             cx,
         );
         let editor = self.message_editor(item, cx);
-        column()
-            .when(mine, |column| column.items_end())
+        message_column(mine)
             .children(header)
             .child(body)
-            .children(receipts)
+            .children(footer)
             .children(editor)
     }
 
@@ -385,9 +382,8 @@ impl Stream {
         &self,
         message: &ChatMessage,
         agent: Option<NodeId>,
-        cursor: ChatCursor,
         cx: &mut Context<Self>,
-    ) -> Option<Div> {
+    ) -> Option<Stateful<Div>> {
         if message.receipts.is_empty() && !message.outside_read {
             return None;
         }
@@ -465,16 +461,7 @@ impl Stream {
                             }))
                     }),
             );
-        Some(
-            div()
-                .flex()
-                .min_w_0()
-                .max_w_full()
-                .items_center()
-                .gap(px(6.0))
-                .child(caption)
-                .children(agent.map(|_| timestamp(cursor, cx))),
-        )
+        Some(caption)
     }
 
     fn transcript(
@@ -490,15 +477,15 @@ impl Stream {
             ChatTranscriptItem::User { text, blocks }
             | ChatTranscriptItem::Assistant { text, blocks } => {
                 let mine = matches!(item, ChatTranscriptItem::User { .. });
-                let name = if mine {
-                    tr(cx, "나", "Me").to_owned()
-                } else {
-                    self.data
-                        .read(cx)
-                        .room()
+                let room = self.data.read(cx).room();
+                let lane = sender(row, room).map_or(Lane::Loom, |sender| Lane::of(&sender));
+                let header = (!grouped && !mine).then(|| {
+                    let name = room
                         .map(|room| room.name.clone())
-                        .unwrap_or_else(|| tr(cx, "에이전트", "Agent").to_owned())
-                };
+                        .unwrap_or_else(|| tr(cx, "에이전트", "Agent").to_owned());
+                    author_line(lane, &name, name.clone(), cx)
+                });
+                let footer = (!grouped).then(|| footer(cursor, None, cx));
                 let body = self.bubble(
                     row,
                     text,
@@ -507,14 +494,10 @@ impl Stream {
                     window,
                     cx,
                 );
-                column()
-                    .when(mine, |column| column.items_end())
-                    .children((!grouped).then(|| {
-                        flow()
-                            .child(div().font_weight(FontWeight::SEMIBOLD).child(name))
-                            .child(timestamp(cursor, cx))
-                    }))
+                message_column(mine)
+                    .children(header)
                     .child(body)
+                    .children(footer)
             }
             ChatTranscriptItem::Status { text } => {
                 let text = if text == "턴이 멈췄습니다." {
@@ -668,6 +651,93 @@ pub(super) fn timestamp(cursor: ChatCursor, cx: &App) -> Div {
         .children((cursor.at_ms > 0).then(|| ui::clock(cursor.at_ms.div_euclid(1000), "%H:%M")))
 }
 
+#[derive(Clone, Copy)]
+enum Lane {
+    Loom,
+    Agent(u32),
+    Outside(u32),
+}
+
+impl Lane {
+    fn of(sender: &Sender) -> Self {
+        let seed = |name: &str| {
+            name.bytes().fold(0u32, |seed, byte| {
+                seed.wrapping_mul(31).wrapping_add(byte.into())
+            })
+        };
+        match sender {
+            Sender::Node(node) => Lane::Agent(node.0),
+            Sender::NamedAgent(name) => Lane::Agent(seed(name)),
+            Sender::Outside(name) => Lane::Outside(seed(name)),
+            Sender::Human | Sender::Loom => Lane::Loom,
+        }
+    }
+
+    fn color(self, cx: &App) -> Rgba {
+        let c = ui::colors(cx);
+        let lanes = [c.lane_1, c.lane_2, c.lane_3, c.lane_4, c.lane_5];
+        match self {
+            Lane::Loom => c.ink_3,
+            Lane::Agent(seed) | Lane::Outside(seed) => lanes[seed as usize % lanes.len()],
+        }
+    }
+}
+
+fn avatar(lane: Lane, name: &str, cx: &App) -> Div {
+    let c = ui::colors(cx);
+    let initial = name
+        .chars()
+        .find(|ch| ch.is_alphanumeric())
+        .map(|ch| ch.to_uppercase().collect::<String>())
+        .unwrap_or_default();
+    div()
+        .flex_none()
+        .flex()
+        .items_center()
+        .justify_center()
+        .size(px(AVATAR))
+        .map(|el| match lane {
+            Lane::Outside(_) => el.rounded_full(),
+            _ => el.rounded(px(6.0)),
+        })
+        .bg(mix(lane.color(cx), 0.8, c.ink))
+        .text_color(c.bg)
+        .text_size(px(11.0))
+        .font_weight(FontWeight::BOLD)
+        .child(initial)
+}
+
+fn author_line(lane: Lane, name: &str, label: String, cx: &App) -> Div {
+    let c = ui::colors(cx);
+    div()
+        .flex()
+        .items_center()
+        .min_w_0()
+        .gap(px(6.0))
+        .text_size(px(ui::SMALL))
+        .text_color(c.ink)
+        .font_weight(FontWeight::SEMIBOLD)
+        .child(avatar(lane, name, cx))
+        .child(div().min_w_0().child(prose(label)))
+}
+
+fn footer(cursor: ChatCursor, receipts: Option<Stateful<Div>>, cx: &App) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .min_w_0()
+        .max_w_full()
+        .gap(px(6.0))
+        .child(timestamp(cursor, cx))
+        .children(receipts)
+}
+
+fn message_column(mine: bool) -> Div {
+    column()
+        .gap(px(MESSAGE_GAP))
+        .when(mine, |column| column.items_end())
+}
+
 fn hover_time(cursor: ChatCursor, mine: bool, cx: &App) -> Div {
     timestamp(cursor, cx)
         .absolute()
@@ -746,15 +816,16 @@ impl Stream {
         let body = div()
             .min_w_0()
             .max_w(px(BUBBLE_WIDTH))
-            .rounded(px(8.0))
+            .rounded(px(BUBBLE_ROUND))
+            .when(mine, |body| body.rounded_tr(px(BUBBLE_NOTCH)))
+            .when(!mine, |body| body.rounded_tl(px(BUBBLE_NOTCH)))
             .bg(if mine {
                 mix(c.accent, 0.10, c.surface)
             } else {
                 c.surface
             })
             .text_color(c.ink)
-            .when(!mine, |body| body.w_full())
-            .when(!mine, |body| body.border_1().border_color(c.line))
+            .when(!mine, |body| body.border_1().border_color(c.line_strong))
             .px(px(11.0))
             .py(px(7.0))
             .child(blocks::render_selectable(
@@ -771,8 +842,7 @@ impl Stream {
         let body = div()
             .flex()
             .min_w_0()
-            .when(mine, |body| body.max_w(relative(HUMAN_BUBBLE_SHARE)))
-            .when(!mine, |body| body.flex_1().max_w(px(BUBBLE_WIDTH)))
+            .max_w(relative(BUBBLE_SHARE))
             .child(body);
         let row = div().flex().items_start().w_full().min_w_0().gap(px(6.0));
         if mine {

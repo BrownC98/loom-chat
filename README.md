@@ -99,7 +99,7 @@ At a Windows command prompt, a direct call to `loom-desktop.exe` can return befo
 
 **Update.** Open Settings › About and click **Check for updates**, then **Update**. When `loom-desktop` runs the daemon, the update replaces that executable and restarts the daemon. Quit the window and open it again to use the new version.
 
-**WSL.** The Windows install line downloads the separate Linux CLI for WSL nodes. For a manual install, put the same release's `loom-web-linux-x64` next to `loom-desktop.exe` as `loom-linux`. Run the WSL install line to point the `~/loom/bin/loom` wrapper to the executable that the Windows installer selects.
+**WSL.** The Windows installer uses `loom-linux` from `loom-desktop-windows-x64.zip`. It downloads the file separately if the ZIP lacks it. For a manual install, keep `loom-linux` next to `loom-desktop.exe`. If an older ZIP lacks it, download `loom-web-linux-x64` from the same release and save it there as `loom-linux`. Run the WSL install line to point the `~/loom/bin/loom` wrapper to the executable that the Windows installer selects.
 
 **Limits.** The release has loom desktop only for Windows x64 and macOS Apple Silicon. On Linux, use the browser version. Releases before v0.1.2825 do not have it; for those, the install lines install the browser version (Windows) or only the app (macOS).
 

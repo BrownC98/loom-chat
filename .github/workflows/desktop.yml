@@ -7,9 +7,11 @@ on:
       - 'api/**'
       - 'app/icons/icon.ico'
       - 'fixtures/layout/**'
+      - 'skills/**'
       - 'src/**'
       - 'web/**'
       - 'Cargo.toml'
+      - 'Cargo.lock'
       - 'build.rs'
       - '.cargo/config.toml'
       - '.nvmrc'
@@ -26,7 +28,36 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  LOOM_RELEASES: https://github.com/BrownC98/loom-chat/releases
+
 jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: 화면 빌드
+        run: bash scripts/worktree/setup.sh
+      - uses: Swatinem/rust-cache@v2.9.2
+      - name: Linux loom 빌드
+        run: |
+          sudo apt-get install -y --no-install-recommends musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          LOOM_VERSION="$(sh scripts/version.sh)" cargo build --release --target x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/loom "$RUNNER_TEMP/loom-linux"
+      - uses: actions/upload-artifact@v7.0.2
+        with:
+          name: loom-linux
+          path: ${{ runner.temp }}/loom-linux
+          if-no-files-found: error
+
   build:
     strategy:
       matrix:
@@ -40,7 +71,6 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/desktop/target
-      LOOM_RELEASES: https://github.com/BrownC98/loom-chat/releases
     defaults:
       run:
         shell: bash

@@ -1,4 +1,4 @@
-use api::profile::Provider;
+use api::profile::{Profile, Provider};
 use api::settings::accounts::{AccountView, LoginTarget, PlaceUsage};
 use api::settings::usage::Limits;
 use gpui::{
@@ -73,14 +73,18 @@ impl Usage {
             .line_height(relative(1.5))
             .text_color(c.ink)
             .child(self.heading(c, cx));
-        let error = self.error.clone().or_else(|| {
-            let store = self.store.read(cx);
-            store
-                .base()
-                .is_none()
-                .then(|| store.notice().map(|notice| notice.text.clone()))
-                .flatten()
-        });
+        let error = self
+            .error
+            .clone()
+            .or_else(|| self.catalog_error.clone())
+            .or_else(|| {
+                let store = self.store.read(cx);
+                store
+                    .base()
+                    .is_none()
+                    .then(|| store.notice().map(|notice| notice.text.clone()))
+                    .flatten()
+            });
         if let Some(error) = error {
             body = body.child(
                 div()
@@ -103,14 +107,15 @@ impl Usage {
                     ),
             );
         } else if self.accounts.is_none() && self.cursor.is_none() {
-            let status = if self.loading {
+            let status = if self.pending > 0 {
                 Str::StatusBarLoading
             } else {
                 Str::StatusBarUnavailable
             };
             body = body.child(div().text_color(c.ink_2).child(say(cx, status)));
         }
-        if self.accounts.is_some() && !self.no_agents() {
+        let no_agents = self.no_agents(cx);
+        if self.accounts.is_some() && !no_agents {
             for provider in PROVIDERS {
                 body = body.child(self.section(provider, distro, c, cx));
             }
@@ -120,7 +125,7 @@ impl Usage {
             .iter()
             .flatten()
             .find(|entry| entry.distro.as_deref() == distro);
-        if let Some(entry) = cursor.filter(|_| !self.no_agents()) {
+        if let Some(entry) = cursor.filter(|_| !no_agents) {
             body = body.child(self.cursor_section(entry, c, cx));
         }
         body = body.child(self.foot(distro, c, cx));
@@ -390,11 +395,21 @@ impl Usage {
                     .child(name_cell(name).text_color(c.ink_2)),
             )
             .child(self.windows(&entry.usage.limits, c, cx));
-        if login::needed(&entry.usage.limits) {
+        let label = self
+            .store
+            .read(cx)
+            .agent_catalog()
+            .into_iter()
+            .flatten()
+            .find(|agent| agent.profile == Profile::Cursor)
+            .map(|agent| agent.label.clone());
+        if login::needed(&entry.usage.limits)
+            && let Some(label) = label
+        {
             let distro = entry.distro.clone();
             section = section.child(div().flex().child(Self::login_button(
                 "usage-login-cursor",
-                move |cx| login::Request::cursor(distro.as_deref(), cx),
+                move |cx| login::Request::cursor(distro.as_deref(), &label, cx),
                 cx,
             )));
         }
@@ -402,7 +417,7 @@ impl Usage {
     }
 
     fn foot(&self, _: Option<&str>, c: &Colors, cx: &mut Context<Self>) -> Div {
-        let install = self.no_agents();
+        let install = self.no_agents(cx);
         let read = usage::oldest_read(
             self.accounts.as_deref().unwrap_or_default(),
             self.cursor.as_deref().unwrap_or_default(),

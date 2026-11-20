@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, Context, Entity, EventEmitter, FontWeight, InteractiveElement, IntoElement,
@@ -10,7 +12,7 @@ use api::graph::{NewNode, Place};
 use api::ids::AgentId;
 use api::profile::{AgentView, Profile, Provider};
 use api::repos::PlaceView;
-use api::settings::accounts::{AccountView, LoginTarget, PlaceUsage};
+use api::settings::accounts::{AccountView, PlaceUsage};
 use api::start::{ModelChoice, Start};
 
 use crate::fonts;
@@ -23,7 +25,6 @@ use crate::theme::Theme;
 use crate::views::field::{self, Field, FieldEvent, Form};
 use crate::views::icons::{Lucide, agent_mark, icon};
 use crate::views::scrollbar::Bar;
-use crate::views::tooltip::tip;
 use crate::views::ui::{button, open_url};
 use crate::views::usage::{self, ACCOUNTS};
 use crate::views::worktree::Closed;
@@ -43,7 +44,7 @@ pub struct NewNodeView {
     branch: String,
     at: PlaceView,
     recent: Option<AgentId>,
-    agents: Option<Vec<AgentView>>,
+    agents: Option<Arc<Vec<AgentView>>>,
     accounts: Option<Vec<AccountView>>,
     cursor: Option<Vec<PlaceUsage>>,
     load_accounts: Option<Task<()>>,
@@ -282,7 +283,16 @@ impl NewNodeView {
             .and_then(|a| selectable.iter().position(|c| self.key(c) == self.key(&a)));
         let start = at.map_or(if step > 0 { -1 } else { 0 }, |i| i as isize);
         let next = selectable[(start + step).rem_euclid(selectable.len() as isize) as usize];
-        self.picked = Some(self.key(next));
+        self.pick(self.key(next), cx);
+    }
+
+    fn pick(&mut self, agent: Option<AgentId>, cx: &mut Context<Self>) {
+        if self.busy || self.login_dialog.is_some() {
+            return;
+        }
+        self.picked = Some(agent);
+        self.error = None;
+        self.sign_in = None;
         self.reveal = true;
         cx.notify();
     }
@@ -355,22 +365,7 @@ impl NewNodeView {
             return None;
         }
         let agent = self.agents.as_ref()?.iter().find(|agent| &agent.id == id)?;
-        if agent.profile == Profile::Cursor {
-            return Some(login::Request::cursor(distro, cx));
-        }
-        let provider = agent.provider?;
-        let chosen = self
-            .store
-            .read(cx)
-            .settings()
-            .account(provider, distro)
-            .cloned();
-        let target = chosen.map_or(LoginTarget::System, LoginTarget::Account);
-        let name = self.account(provider, distro, cx).map_or_else(
-            || agent.label.clone(),
-            |account| usage::account_name(account, cx),
-        );
-        Some(login::Request::account(provider, distro, target, &name, cx))
+        (agent.profile == Profile::Cursor).then(|| login::Request::cursor(distro, &agent.label, cx))
     }
 
     fn open_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -549,6 +544,7 @@ impl Render for NewNodeView {
                 };
                 let picked = key.clone();
                 let installed = choice.installed;
+                let must_select = installed && !selected && row_agent.is_some_and(bypass);
                 let homepage = row_agent.map(|agent| agent.homepage.clone());
                 let label = self.label(choice, lang);
                 let ink = if choice.installed {
@@ -572,14 +568,13 @@ impl Render for NewNodeView {
                             row.cursor_pointer()
                                 .hover(move |style| style.bg(colors.surface_hover))
                         })
-                        .when(installed && row_agent.is_some_and(bypass), |row| {
-                            row.tooltip(tip(Str::NewNodeBypass.text(lang).to_owned()))
-                        })
                         .when(selected, |row| row.bg(colors.accent_wash))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                if installed {
+                                if must_select {
+                                    this.pick(picked.clone(), cx);
+                                } else if installed {
                                     this.launch(picked.clone(), cx);
                                 } else if let Some(url) = homepage.as_deref().filter(|_| !blocked)
                                     && open_url(url).is_err()

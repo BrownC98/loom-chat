@@ -31,8 +31,6 @@ use api::profile::{AgentView, Profile, Provider, VersionMismatch};
 use api::repos::RepoProblem;
 use api::settings::SettingsView;
 
-const CURSOR_COMMAND: &str = "cursor-agent";
-
 pub struct Logins {
     host: NodeHost<LoginId>,
     states: Mutex<HashMap<LoginId, LoginState>>,
@@ -271,11 +269,9 @@ async fn login_single(
     Path(profile): Path<Profile>,
     Query(at): Query<At>,
 ) -> Result<Json<LoginId>, Problem> {
-    if profile != Profile::Cursor {
-        return Err(Problem::NoLogin);
-    }
+    let (label, command) = profile::single_login_cli(profile).ok_or(Problem::NoLogin)?;
     let site = app.site_of(at.distro.as_deref()).await?;
-    let cmd = site.login_installed("Cursor", CURSOR_COMMAND)?;
+    let cmd = site.login_installed(label, command)?;
     start_login(app, &cmd, || {}).map(Json)
 }
 
@@ -411,10 +407,7 @@ impl App {
                 let distro = self
                     .host(Host::Distro(at.distro.clone()))
                     .map_err(LaunchError::Wsl)?;
-                let commands: Vec<_> = profile::with_accounts()
-                    .map(|a| a.cli.command)
-                    .chain([CURSOR_COMMAND])
-                    .collect();
+                let commands: Vec<_> = profile::login_commands().collect();
                 let inside = wsl::inside(&at, distro, &commands, &self.shim, &[]);
                 Site::wsl(inside.await.map_err(LaunchError::Wsl)?)
             }

@@ -51,6 +51,8 @@ use crate::profile::HookEntry;
 use api::graph::messages::Kind;
 use api::start::ModelChoice;
 
+pub use db::data_dir as desktop_data_dir;
+
 #[derive(clap::Args)]
 struct RoleRun {
     /// 띄울 에이전트. 빼면 이 역할은 띄우지 않는다(사람이 띄운다).

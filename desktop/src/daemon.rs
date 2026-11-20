@@ -1,6 +1,7 @@
-use std::io::{BufRead, Read};
+use std::fs::OpenOptions;
+use std::io::{BufRead, Read, Write};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Mutex, mpsc};
 use std::time::{Duration, Instant};
 
 use crate::strings::Lang;
@@ -9,6 +10,28 @@ const READY_PREFIX: &str = "loom: ";
 const START_LIMIT: Duration = Duration::from_secs(30);
 const VERSION_LIMIT: Duration = Duration::from_secs(5);
 const REAP_POLL: Duration = Duration::from_millis(200);
+const LOG_LIMIT: u64 = 1024 * 1024;
+
+pub(crate) fn diagnostic(operation: &str, error: impl std::fmt::Display) {
+    static LOG: Mutex<()> = Mutex::new(());
+    let Ok(_guard) = LOG.lock() else { return };
+    let write = || -> std::io::Result<()> {
+        let data = loom::desktop_data_dir()?;
+        std::fs::create_dir_all(&data)?;
+        let path = data.join("desktop.log");
+        if path.metadata().is_ok_and(|file| file.len() >= LOG_LIMIT) {
+            std::fs::File::create(&path)?;
+        }
+        let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+        let operation = operation.split('?').next().unwrap_or_default();
+        writeln!(
+            file,
+            "{} {operation}: {error}",
+            chrono::Local::now().format("%F %T")
+        )
+    };
+    let _ = write();
+}
 
 fn command(arg: &str) -> std::io::Result<Command> {
     let mut command = Command::new(std::env::current_exe()?);
@@ -47,8 +70,12 @@ pub enum StartError {
 impl StartError {
     pub fn text(self, lang: Lang) -> &'static str {
         match (self, lang) {
-            (Self::Launch, Lang::Ko) => "데몬을 실행할 수 없습니다. 앱을 다시 시작해 주세요.",
-            (Self::Launch, Lang::En) => "Could not launch the daemon. Restart the app.",
+            (Self::Launch, Lang::Ko) => {
+                "데몬을 실행할 수 없습니다. 데이터 폴더의 desktop.log를 확인해 주세요."
+            }
+            (Self::Launch, Lang::En) => {
+                "Could not launch the daemon. Check desktop.log in the data folder."
+            }
             (Self::NoReply, Lang::Ko) => "데몬이 제시간에 응답하지 않았습니다. 다시 시도해 주세요.",
             (Self::NoReply, Lang::En) => "The daemon did not respond in time. Try again.",
             (Self::NotReady, Lang::Ko) => {
@@ -62,8 +89,14 @@ impl StartError {
 }
 
 pub fn start() -> Result<String, StartError> {
-    let mut command = command("start").map_err(|_| StartError::Launch)?;
-    let mut child = command.spawn().map_err(|_| StartError::Launch)?;
+    let mut command = command("start").map_err(|error| {
+        diagnostic("find daemon executable", error);
+        StartError::Launch
+    })?;
+    let mut child = command.spawn().map_err(|error| {
+        diagnostic("spawn daemon executable", error);
+        StartError::Launch
+    })?;
     let Some(stdout) = child.stdout.take() else {
         let _ = child.kill();
         let _ = child.wait();
@@ -77,7 +110,10 @@ pub fn start() -> Result<String, StartError> {
         let _ = sent.send(read.map(|_| line));
     });
     let line = match received.recv_timeout(START_LIMIT) {
-        Ok(read) => read.map_err(|_| StartError::NotReady),
+        Ok(read) => read.map_err(|error| {
+            diagnostic("read daemon output", error);
+            StartError::NotReady
+        }),
         Err(_) => Err(StartError::NoReply),
     };
     let base = line.and_then(|line| {

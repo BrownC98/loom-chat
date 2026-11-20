@@ -60,11 +60,11 @@ impl Request {
         }
     }
 
-    pub fn cursor(distro: Option<&str>, cx: &App) -> Self {
+    pub fn cursor(distro: Option<&str>, label: &str, cx: &App) -> Self {
         Self {
             path: format!("{CURSOR_USAGE}/login{}", link::query(&[("distro", distro)])),
             body: None,
-            title: say_with(cx, Str::AccountsSystemLoginTitle, &[("provider", "Cursor")]),
+            title: say_with(cx, Str::AccountsSystemLoginTitle, &[("provider", label)]),
             fresh: false,
         }
     }
@@ -87,13 +87,13 @@ pub enum Finished {
 }
 
 enum Stage {
-    Starting,
+    Starting(Option<LoginId>),
     Open {
         id: LoginId,
         terminal: Entity<TerminalView>,
         error: Option<String>,
     },
-    Failed(String),
+    Failed(Option<LoginId>, String),
     Closed,
 }
 
@@ -101,7 +101,8 @@ impl Stage {
     fn id(&self) -> Option<LoginId> {
         match self {
             Self::Open { id, .. } => Some(*id),
-            _ => None,
+            Self::Starting(id) | Self::Failed(id, _) => *id,
+            Self::Closed => None,
         }
     }
 }
@@ -116,8 +117,11 @@ pub struct Dialog {
 
 impl EventEmitter<Finished> for Dialog {}
 
-fn remove(base: &str, id: LoginId) {
-    let _ = link::delete(base, &format!("/api/logins/{id}"));
+fn remove(base: &str, id: LoginId) -> Result<(), Failure> {
+    match link::delete(base, &format!("/api/logins/{id}")) {
+        Err(Failure::Refused { status: 404, .. }) => Ok(()),
+        result => result,
+    }
 }
 
 impl Dialog {
@@ -126,7 +130,7 @@ impl Dialog {
             let mut dialog = Self {
                 base,
                 request,
-                stage: Stage::Starting,
+                stage: Stage::Starting(None),
                 focus: cx.focus_handle(),
                 restore: window.focused(cx),
             };
@@ -143,14 +147,16 @@ impl Dialog {
     fn remove_open(&self, cx: &App) {
         if let Some(id) = self.stage.id() {
             let base = self.base.clone();
-            cx.background_spawn(async move { remove(&base, id) })
-                .detach();
+            cx.background_spawn(async move {
+                let _ = remove(&base, id);
+            })
+            .detach();
         }
     }
 
     fn start(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let prev = self.stage.id();
-        self.stage = Stage::Starting;
+        self.stage = Stage::Starting(prev);
         window.focus(&self.focus, cx);
         let (base, path, body) = (
             self.base.clone(),
@@ -162,15 +168,15 @@ impl Dialog {
             let started = cx
                 .background_spawn(async move {
                     if let Some(id) = prev {
-                        remove(&read_base, id);
+                        remove(&read_base, id).map_err(|error| (Some(id), error))?;
                     }
-                    link::post::<LoginId>(&read_base, &path, body)
+                    link::post::<LoginId>(&read_base, &path, body).map_err(|error| (None, error))
                 })
                 .await;
             let started_id = started.as_ref().ok().copied();
             let accepted = this
                 .update_in(cx, |dialog, window, cx| {
-                    if !matches!(dialog.stage, Stage::Starting) {
+                    if !matches!(dialog.stage, Stage::Starting(_)) {
                         return false;
                     }
                     match started {
@@ -184,8 +190,8 @@ impl Dialog {
                             };
                             dialog.watch(id, window, cx);
                         }
-                        Err(error) => {
-                            dialog.stage = Stage::Failed(error.text(*cx.global::<Lang>()))
+                        Err((id, error)) => {
+                            dialog.stage = Stage::Failed(id, error.text(*cx.global::<Lang>()))
                         }
                     }
                     cx.notify();
@@ -193,7 +199,7 @@ impl Dialog {
                 })
                 .unwrap_or(false);
             if !accepted && let Some(id) = started_id {
-                cx.background_spawn(async move { remove(&base, id) }).await;
+                let _ = cx.background_spawn(async move { remove(&base, id) }).await;
             }
         })
         .detach();
@@ -270,11 +276,11 @@ impl Render for Dialog {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (view, error) = match &self.stage {
             Stage::Closed => return div().into_any_element(),
-            Stage::Starting => (None, None),
+            Stage::Starting(_) => (None, None),
             Stage::Open {
                 terminal, error, ..
             } => (Some(terminal.clone()), error.clone()),
-            Stage::Failed(error) => (None, Some(error.clone())),
+            Stage::Failed(_, error) => (None, Some(error.clone())),
         };
         let c = colors(cx);
         let close = small("login-close", cx)
@@ -300,7 +306,14 @@ impl Render for Dialog {
                 .child(
                     small("login-retry", cx)
                         .child(say(cx, Str::UpdateRetry))
-                        .on_click(cx.listener(|dialog, _, window, cx| dialog.start(window, cx))),
+                        .on_click(cx.listener(|dialog, _, window, cx| {
+                            if matches!(
+                                dialog.stage,
+                                Stage::Open { error: Some(_), .. } | Stage::Failed(..)
+                            ) {
+                                dialog.start(window, cx);
+                            }
+                        })),
                 ),
             None => div().text_color(c.ink_3).child(say(
                 cx,

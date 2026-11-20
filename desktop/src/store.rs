@@ -30,6 +30,8 @@ pub struct Store {
     watch: Option<link::Watch>,
     repo_watch: Option<Task<()>>,
     snapshot: Option<Snapshot>,
+    agents: Option<Arc<Vec<AgentView>>>,
+    agents_at: u64,
     nodes_at: u64,
     repos_at: u64,
     settings: SettingsView,
@@ -47,11 +49,14 @@ pub struct Notice {
 
 pub struct BusyChanged;
 
+pub struct AgentsScanned;
+
 pub struct OpenAgent(pub NodeId);
 
 impl EventEmitter<GraphEvent> for Store {}
 impl EventEmitter<LinkState> for Store {}
 impl EventEmitter<BusyChanged> for Store {}
+impl EventEmitter<AgentsScanned> for Store {}
 impl EventEmitter<OpenAgent> for Store {}
 
 fn newer(at: &mut u64, order: u64) -> bool {
@@ -103,6 +108,8 @@ impl Store {
             watch: None,
             repo_watch: None,
             snapshot: None,
+            agents: None,
+            agents_at: 0,
             nodes_at: 0,
             repos_at: 0,
             settings,
@@ -437,8 +444,30 @@ impl Store {
         })
     }
 
-    pub fn agents(&self, cx: &mut Context<Self>) -> Task<Result<Vec<AgentView>, String>> {
-        self.call(cx, |base| link::read(base, "/api/agents"))
+    pub fn agent_catalog(&self) -> Option<&[AgentView]> {
+        self.agents.as_ref().map(|agents| agents.as_slice())
+    }
+
+    pub fn agents(&self, cx: &mut Context<Self>) -> Task<Result<Arc<Vec<AgentView>>, String>> {
+        let order = link::order();
+        let scan = self.call(cx, |base| {
+            link::read_within::<Vec<AgentView>>(base, "/api/agents", link::SLOW_LIMIT).map(Arc::new)
+        });
+        cx.spawn(async move |this, cx| {
+            let mut result = scan.await;
+            if let Ok(agents) = &mut result {
+                let _ = this.update(cx, |store, cx| {
+                    if newer(&mut store.agents_at, order) {
+                        store.agents = Some(agents.clone());
+                        cx.emit(AgentsScanned);
+                        cx.notify();
+                    } else if let Some(current) = &store.agents {
+                        *agents = current.clone();
+                    }
+                });
+            }
+            result
+        })
     }
 
     pub fn create_node(

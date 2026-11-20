@@ -355,7 +355,13 @@ impl TerminalView {
             }
             Event::Removed => self.gone = true,
             Event::Closed => {
-                self.ended = Some(Str::ComposerOffline.text(*cx.global::<Lang>()).to_owned());
+                self.ended = Some(
+                    match cx.global::<Lang>() {
+                        Lang::Ko => "터미널에 연결할 수 없습니다.",
+                        Lang::En => "Could not connect to the terminal.",
+                    }
+                    .to_owned(),
+                );
             }
         }
         self.changed(cx);

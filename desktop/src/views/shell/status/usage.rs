@@ -5,7 +5,7 @@ use std::sync::Arc;
 use api::graph::GraphEvent;
 use api::graph::events::{Entry, SwitchCause};
 use api::ids::{AccountId, RepoId};
-use api::profile::{AgentView, Profile, Provider};
+use api::profile::{Profile, Provider};
 use api::repos::PlaceView;
 use api::settings::accounts::{AccountView, PlaceUsage};
 use api::settings::usage::Limits;
@@ -15,12 +15,13 @@ use gpui::{
     InteractiveElement, IntoElement, ParentElement, Pixels, Render, SharedString, Stateful,
     StatefulInteractiveElement, Styled, Window, canvas, div,
 };
+use serde::de::DeserializeOwned;
 
 use crate::fonts;
 use crate::link::{self, LinkState, VERSION};
 use crate::scale::px;
 use crate::settings::{keep_focus, login, modal, settings_patch, want_about};
-use crate::store::Store;
+use crate::store::{AgentsScanned, Store};
 use crate::strings::{Lang, Str};
 use crate::theme::{Colors, Theme};
 use crate::views::dock::ui::{say, say_with};
@@ -41,9 +42,10 @@ pub struct Usage {
     pub(super) repo: Option<RepoId>,
     accounts: Option<Vec<AccountView>>,
     cursor: Option<Vec<PlaceUsage>>,
-    agents: Option<Vec<AgentView>>,
     error: Option<String>,
-    loading: bool,
+    catalog_error: Option<String>,
+    scanning: bool,
+    pending: u8,
     ticket: u64,
     open: bool,
     expanded: Option<Provider>,
@@ -60,24 +62,35 @@ impl Usage {
         cx.observe(&store, |_, _, cx| cx.notify()).detach();
         cx.observe_global::<AccountsChanged>(|this, cx| this.refresh(cx))
             .detach();
+        cx.subscribe(&store, |this, _, _: &AgentsScanned, cx| {
+            this.catalog_error = None;
+            this.refresh(cx);
+        })
+        .detach();
         cx.subscribe(&store, |this, _, event: &GraphEvent, cx| {
             this.feed(event, cx)
         })
         .detach();
         cx.subscribe(&store, |this, _, state: &LinkState, cx| {
-            if *state == LinkState::Connected && (this.accounts.is_none() || this.error.is_some()) {
-                this.refresh(cx);
+            if *state == LinkState::Connected {
+                if this.store.read(cx).agent_catalog().is_none() {
+                    this.scan(cx);
+                }
+                if this.accounts.is_none() || this.error.is_some() {
+                    this.refresh(cx);
+                }
             }
         })
         .detach();
-        let usage = Self {
+        let mut usage = Self {
             store,
             repo: None,
             accounts: None,
             cursor: None,
-            agents: None,
             error: None,
-            loading: false,
+            catalog_error: None,
+            scanning: false,
+            pending: 0,
             ticket: 0,
             open: false,
             expanded: None,
@@ -88,6 +101,7 @@ impl Usage {
             restore: None,
             anchor: Rc::default(),
         };
+        usage.scan(cx);
         cx.spawn(async move |this, cx| {
             loop {
                 if this.update(cx, |this, cx| this.refresh(cx)).is_err() {
@@ -105,70 +119,95 @@ impl Usage {
     }
 
     fn refresh(&mut self, cx: &mut Context<Self>) {
-        let Some(base) = self.base(cx) else {
+        if self.store.read(cx).base().is_none() {
             return;
-        };
+        }
         self.ticket += 1;
-        let ticket = self.ticket;
-        self.loading = true;
+        self.pending = 2;
         self.error = None;
-        let accounts_base = base.clone();
-        let cursor_base = base.clone();
-        let accounts = cx.background_spawn(async move { link::read(&accounts_base, ACCOUNTS) });
-        let cursor =
-            cx.background_spawn(async move { link::read(&cursor_base, login::CURSOR_USAGE) });
-        let agents = cx.background_spawn(async move { link::read(&base, "/api/agents") });
+        self.read(ACCOUNTS, |this, value| this.accounts = Some(value), cx);
+        self.read(
+            login::CURSOR_USAGE,
+            |this, value| this.cursor = Some(value),
+            cx,
+        );
         cx.notify();
+    }
+
+    fn read<T: DeserializeOwned + Send + 'static>(
+        &self,
+        path: &'static str,
+        keep: fn(&mut Self, T),
+        cx: &mut Context<Self>,
+    ) {
+        let task = self
+            .store
+            .read(cx)
+            .call(cx, move |base| link::read(base, path));
+        let ticket = self.ticket;
         cx.spawn(async move |this, cx| {
-            let (accounts, cursor, agents) = (accounts.await, cursor.await, agents.await);
+            let result = task.await;
             let _ = this.update(cx, |this, cx| {
                 if this.ticket != ticket {
                     return;
                 }
-                let mut errors = Vec::new();
-                let lang = *cx.global::<Lang>();
-                match accounts {
-                    Ok(accounts) => this.accounts = Some(accounts),
-                    Err(error) => errors.push(error.text(lang)),
+                this.pending -= 1;
+                match result {
+                    Ok(value) => keep(this, value),
+                    Err(error) => {
+                        this.error.get_or_insert(error);
+                    }
                 }
-                match cursor {
-                    Ok(cursor) => this.cursor = Some(cursor),
-                    Err(error) => errors.push(error.text(lang)),
-                }
-                match agents {
-                    Ok(agents) => this.agents = Some(agents),
-                    Err(error) => errors.push(error.text(lang)),
-                }
-                this.loading = false;
-                errors.sort_unstable();
-                errors.dedup();
-                this.error = (!errors.is_empty()).then(|| errors.join("\n"));
                 cx.notify();
             });
         })
         .detach();
     }
 
-    fn no_agents(&self) -> bool {
-        self.agents.as_ref().is_some_and(|agents| {
+    fn scan(&mut self, cx: &mut Context<Self>) {
+        if self.scanning || self.store.read(cx).base().is_none() {
+            return;
+        }
+        self.scanning = true;
+        self.catalog_error = None;
+        let scan = self.store.update(cx, |store, cx| store.agents(cx));
+        cx.spawn(async move |this, cx| {
+            let result = scan.await;
+            let _ = this.update(cx, |this, cx| {
+                this.catalog_error = result.err();
+                this.scanning = false;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn no_agents(&self, cx: &App) -> bool {
+        self.store.read(cx).agent_catalog().is_some_and(|agents| {
             agents
                 .iter()
                 .all(|agent| agent.places.iter().all(|at| at.path.is_none()))
         })
     }
 
-    fn installed(&self, profile: Profile, distro: Option<&str>) -> bool {
-        self.agents.iter().flatten().any(|agent| {
-            agent.profile == profile
-                && agent.places.iter().any(|at| {
-                    at.path.is_some()
-                        && match &at.place {
-                            PlaceView::Pc => distro.is_none(),
-                            PlaceView::Wsl { distro: name } => distro == Some(name.as_str()),
-                            PlaceView::Ssh { .. } => false,
-                        }
-                })
-        })
+    fn installed(&self, profile: Profile, distro: Option<&str>, cx: &App) -> bool {
+        self.store
+            .read(cx)
+            .agent_catalog()
+            .into_iter()
+            .flatten()
+            .any(|agent| {
+                agent.profile == profile
+                    && agent.places.iter().any(|at| {
+                        at.path.is_some()
+                            && match &at.place {
+                                PlaceView::Pc => distro.is_none(),
+                                PlaceView::Wsl { distro: name } => distro == Some(name.as_str()),
+                                PlaceView::Ssh { .. } => false,
+                            }
+                    })
+            })
     }
 
     fn feed(&mut self, event: &GraphEvent, cx: &mut Context<Self>) {
@@ -186,8 +225,11 @@ impl Usage {
             self.close(window, cx);
             return;
         }
-        if !self.loading {
+        if self.pending == 0 {
             self.refresh(cx);
+        }
+        if self.store.read(cx).agent_catalog().is_none() {
+            self.scan(cx);
         }
         self.restore = window.focused(cx);
         window.focus(&self.focus, cx);
@@ -198,8 +240,11 @@ impl Usage {
     fn retry(&mut self, cx: &mut Context<Self>) {
         if self.base(cx).is_none() {
             self.store.update(cx, |store, cx| store.reload(cx));
-        } else if !self.loading {
-            self.refresh(cx);
+        } else {
+            if self.pending == 0 {
+                self.refresh(cx);
+            }
+            self.scan(cx);
         }
     }
 
@@ -491,7 +536,7 @@ impl Render for Usage {
         let mut needs_login = false;
         for (profile, mark, name, limits) in signed.chain(cursor) {
             if login::needed(limits) || usage::cli_missing(limits) {
-                needs_login |= login::needed(limits) && self.installed(profile, place);
+                needs_login |= login::needed(limits) && self.installed(profile, place, cx);
                 continue;
             }
             if !summary.is_empty() {
@@ -504,14 +549,15 @@ impl Render for Usage {
                     .map(IntoElement::into_any_element),
             );
         }
-        let label = if self.no_agents() {
+        let no_agents = self.no_agents(cx);
+        let label = if no_agents {
             Some(install_label(cx))
         } else if needs_login {
             Some(say(cx, Str::StatusBarConnectAccount))
         } else if summary.is_empty() {
             Some(say(
                 cx,
-                if self.loading {
+                if self.pending > 0 || self.scanning {
                     Str::StatusBarLoading
                 } else {
                     Str::StatusBarUnavailable
@@ -520,7 +566,7 @@ impl Render for Usage {
         } else {
             None
         };
-        if self.no_agents() {
+        if no_agents {
             summary.clear();
         }
         if let Some(label) = label {
@@ -555,7 +601,7 @@ impl Render for Usage {
         if open {
             button = button.bg(c.accent_wash).text_color(c.ink);
         }
-        if self.loading {
+        if self.pending > 0 {
             button = button.opacity(0.7);
         }
 
@@ -568,7 +614,7 @@ impl Render for Usage {
             .items_center()
             .justify_center()
             .rounded(px(6.0))
-            .when(self.loading, |style| style.opacity(0.5))
+            .when(self.pending > 0, |style| style.opacity(0.5))
             .hover(move |style| style.bg(c.surface_hover))
             .tooltip(tip(say(cx, Str::StatusBarRefresh).to_owned()))
             .on_click(cx.listener(|this, _, _, cx| this.retry(cx)))

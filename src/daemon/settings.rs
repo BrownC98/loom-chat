@@ -34,17 +34,65 @@ use api::settings::SettingsView;
 
 pub struct Logins {
     host: NodeHost<LoginId>,
-    exits: Mutex<HashMap<LoginId, watch::Sender<Option<Exit>>>>,
+    sessions: Mutex<HashMap<LoginId, LoginProcess>>,
     next: AtomicU32,
+}
+
+#[derive(PartialEq, Eq)]
+struct LoginKey {
+    command: &'static str,
+    distro: Option<String>,
+    account: Option<AccountId>,
+}
+
+impl LoginKey {
+    fn new(site: &Site, command: &'static str, account: Option<&AccountId>) -> Self {
+        Self {
+            command,
+            distro: site.distro().map(str::to_owned),
+            account: account.map(|id| AccountId(id.0.to_ascii_lowercase())),
+        }
+    }
+}
+
+struct LoginProcess {
+    key: LoginKey,
+    exit: watch::Sender<Option<Exit>>,
+}
+
+fn login_stopped(exit: Option<Exit>) -> bool {
+    matches!(exit, Some(Exit::Command(_) | Exit::Setup(_)))
 }
 
 impl Logins {
     pub fn new(dir: std::path::PathBuf) -> Self {
         Self {
             host: NodeHost::new(dir),
-            exits: Mutex::default(),
+            sessions: Mutex::default(),
             next: AtomicU32::default(),
         }
+    }
+
+    fn reserve(&self, key: LoginKey) -> Result<(LoginId, watch::Sender<Option<Exit>>), Problem> {
+        let mut sessions = self.sessions.lock().unwrap();
+        if sessions
+            .values()
+            .any(|process| process.key == key && !login_stopped(*process.exit.borrow()))
+        {
+            return Err(internal(
+                "Wait for the previous login for this account to stop, then try again.",
+            ));
+        }
+        let id = LoginId(self.next.fetch_add(1, Ordering::Relaxed));
+        let (exit, _) = watch::channel(None);
+        sessions.insert(
+            id,
+            LoginProcess {
+                key,
+                exit: exit.clone(),
+            },
+        );
+        Ok((id, exit))
     }
 }
 
@@ -252,17 +300,17 @@ async fn login(
     {
         return Err(internal("the account folder is gone"));
     }
-    let cmd = site.login(cli, id.as_ref());
+    let key = LoginKey::new(&site, cli.command, id.as_ref());
     let discard = {
         let site = site.clone();
+        let id = id.clone();
         move || {
             if created && let Some(id) = &id {
                 let _ = site.accounts().remove(cli, id);
             }
         }
     };
-    let cmd = cmd.inspect_err(|_| discard())?;
-    start_login(app, &cmd, discard).map(Json)
+    start_login(app, key, || site.login(cli, id.as_ref()), discard).map(Json)
 }
 
 async fn login_single(
@@ -272,22 +320,17 @@ async fn login_single(
 ) -> Result<Json<LoginId>, Problem> {
     let (label, command) = profile::single_login_cli(profile).ok_or(Problem::NoLogin)?;
     let site = app.site_of(at.distro.as_deref()).await?;
-    let cmd = site.login_installed(label, command)?;
-    start_login(app, &cmd, || {}).map(Json)
+    let key = LoginKey::new(&site, command, None);
+    start_login(app, key, || site.login_installed(label, command), || {}).map(Json)
 }
 
 fn start_login(
     app: Arc<App>,
-    cmd: &CommandBuilder,
+    key: LoginKey,
+    build: impl FnOnce() -> Result<CommandBuilder, LaunchError>,
     discard: impl Fn() + Clone + Send + 'static,
 ) -> Result<LoginId, Problem> {
-    let login = LoginId(app.logins.next.fetch_add(1, Ordering::Relaxed));
-    let (exit_state, _) = watch::channel(None);
-    app.logins
-        .exits
-        .lock()
-        .unwrap()
-        .insert(login, exit_state.clone());
+    let (login, exit_state) = app.logins.reserve(key).inspect_err(|_| discard())?;
     let on_exit = {
         let app = app.clone();
         let discard = discard.clone();
@@ -299,15 +342,19 @@ fn start_login(
             app.graph.publish_view_changed();
         }
     };
-    app.logins
-        .host
-        .spawn_while_linked(login, cmd, on_exit)
-        .map_err(|e| {
-            app.logins.exits.lock().unwrap().remove(&login);
+    build()
+        .map_err(Problem::from)
+        .and_then(|cmd| {
+            app.logins
+                .host
+                .spawn_while_linked(login, &cmd, on_exit)
+                .map_err(internal)
+        })
+        .map(|()| login)
+        .inspect_err(|_| {
             discard();
-            internal(e)
-        })?;
-    Ok(login)
+            app.logins.sessions.lock().unwrap().remove(&login);
+        })
 }
 
 async fn logout(
@@ -424,8 +471,12 @@ async fn login_state(
     State(app): State<Arc<App>>,
     Path(id): Path<u32>,
 ) -> Result<Json<LoginState>, Problem> {
-    let exits = app.logins.exits.lock().unwrap();
-    let exit = *exits.get(&LoginId(id)).ok_or(Problem::NoLogin)?.borrow();
+    let sessions = app.logins.sessions.lock().unwrap();
+    let exit = *sessions
+        .get(&LoginId(id))
+        .ok_or(Problem::NoLogin)?
+        .exit
+        .borrow();
     Ok(Json(match exit {
         None => LoginState::Running,
         Some(Exit::Command(0)) => LoginState::Succeeded,
@@ -440,11 +491,11 @@ async fn close_login(
     let id = LoginId(id);
     let exit = app
         .logins
-        .exits
+        .sessions
         .lock()
         .unwrap()
         .get(&id)
-        .map(watch::Sender::subscribe);
+        .map(|process| process.exit.subscribe());
     app.logins.host.kill(id);
     let Some(mut exit) = exit else {
         return Ok(Json(()));
@@ -453,11 +504,11 @@ async fn close_login(
         .await
         .ok()
         .and_then(Result::ok)
-        .is_some_and(|exit| matches!(*exit, Some(Exit::Command(_) | Exit::Setup(_))));
+        .is_some_and(|exit| login_stopped(*exit));
     if !confirmed {
         return Err(internal("could not confirm that the login process stopped"));
     }
-    app.logins.exits.lock().unwrap().remove(&id);
+    app.logins.sessions.lock().unwrap().remove(&id);
     Ok(Json(()))
 }
 

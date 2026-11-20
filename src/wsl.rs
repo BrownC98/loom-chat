@@ -906,10 +906,11 @@ fn interop_names<K: AsRef<str>, V>(env: &[(K, V)]) -> String {
         .join(":")
 }
 
+#[cfg(not(loom_embed_linux))]
 pub fn install_linux(dir: &Path, source: &Path) -> io::Result<Option<PathBuf>> {
     let name = match distro::linux_name(source) {
         Ok(name) => name,
-        Err(e) if e.kind() == io::ErrorKind::NotFound => return install_embedded_linux(dir),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
     };
     let len = std::fs::metadata(source)?.len();
@@ -921,7 +922,7 @@ pub fn install_linux(dir: &Path, source: &Path) -> io::Result<Option<PathBuf>> {
 }
 
 #[cfg(loom_embed_linux)]
-fn install_embedded_linux(dir: &Path) -> io::Result<Option<PathBuf>> {
+pub fn install_linux(dir: &Path, _: &Path) -> io::Result<Option<PathBuf>> {
     const NAME: &str = env!("LOOM_EMBED_LINUX_NAME");
     const LEN: u64 = match u64::from_str_radix(env!("LOOM_EMBED_LINUX_LEN"), 10) {
         Ok(len) => len,
@@ -934,11 +935,6 @@ fn install_embedded_linux(dir: &Path) -> io::Result<Option<PathBuf>> {
         Ok(())
     })
     .map(Some)
-}
-
-#[cfg(not(loom_embed_linux))]
-fn install_embedded_linux(_: &Path) -> io::Result<Option<PathBuf>> {
-    Ok(None)
 }
 
 fn install_linux_file(

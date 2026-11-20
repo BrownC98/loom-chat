@@ -229,7 +229,7 @@ jobs:
             iconutil -c icns "$iconset" -o "$dir/icon.icns"
             tar -czf "${{ matrix.asset }}" "$dir"
           else
-            7z a -tzip "${{ matrix.asset }}" "$dir"
+            (cd "$dir" && 7z a -tzip "../${{ matrix.asset }}" "${{ matrix.desktop }}")
           fi
           cp "desktop/target/release/${{ matrix.desktop }}" "$RUNNER_TEMP/${{ matrix.bare }}"
           gh release upload "$version" "${{ matrix.asset }}" "$RUNNER_TEMP/${{ matrix.bare }}" --clobber

@@ -77,7 +77,7 @@ loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom �
 | 운영체제 | Windows, macOS | Windows x64, macOS Apple Silicon | Windows, macOS, Linux |
 | 업데이트 | 화면의 업데이트 카드 | 설정 › 정보의 **업데이트** | 화면의 업데이트 카드 |
 
-**한 줄로 설치(권장).** 위 Windows·macOS 한 줄은 릴리스에 loom desktop이 있으면 그것을 설치합니다. Windows는 `%LOCALAPPDATA%\loom\bin\loom-desktop.exe`와 바탕 화면의 **loom** 아이콘, macOS는 응용 프로그램 폴더의 `loom-desktop.app`입니다.
+**한 줄로 설치(권장).** 위 Windows·macOS 한 줄은 릴리스에 loom desktop이 있으면 그것을 설치합니다. Windows는 `%LOCALAPPDATA%\loom\loom-desktop.exe`와 바탕 화면의 **loom** 아이콘, macOS는 응용 프로그램 폴더의 `loom-desktop.app`입니다.
 
 **손으로 설치:**
 
@@ -91,11 +91,11 @@ loom desktop(`loom-desktop`)은 웹뷰 대신 GPUI로 그린 네이티브 loom �
 
 **닫기와 끄기.** 창을 닫아도 데몬과 에이전트는 계속 돕니다. 데몬을 끄려면 데스크톱 실행 파일에 `stop`을 줍니다.
 
-- Windows(한 줄 설치): `& "$env:LOCALAPPDATA\loom\bin\loom-desktop.exe" stop | Out-Host`
+- Windows(한 줄 설치): `& "$env:LOCALAPPDATA\loom\loom-desktop.exe" stop | Out-Host`
 - macOS(한 줄 설치): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop`(또는 `~/Applications/…`)
 - 손으로 설치: `<폴더>/loom-desktop stop`
 
-Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전에 프롬프트가 돌아올 수 있습니다. 명령이 끝날 때까지 기다리고 종료 코드를 받으려면 PowerShell에서 `| Out-Host`를 붙입니다. 명령 프롬프트에서는 `start "" /wait "%LOCALAPPDATA%\loom\bin\loom-desktop.exe" stop`을 씁니다.
+Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전에 프롬프트가 돌아올 수 있습니다. 명령이 끝날 때까지 기다리고 종료 코드를 받으려면 PowerShell에서 `| Out-Host`를 붙입니다. 명령 프롬프트에서는 `start "" /wait "%LOCALAPPDATA%\loom\loom-desktop.exe" stop`을 씁니다.
 
 **업데이트.** 설정 › 정보에서 **업데이트 확인**, 이어서 **업데이트**를 누릅니다. `loom-desktop`이 데몬을 돌리면 그 실행 파일을 바꾸고 데몬을 다시 띄웁니다. 새 판의 창을 보려면 창 프로그램을 끝내고 다시 엽니다.
 

@@ -118,6 +118,13 @@ fn first_run(data: &ChatData, cx: &App) -> bool {
         .is_some_and(|snapshot| snapshot.nodes.is_empty())
 }
 
+fn show_welcome(data: &ChatData, cx: &App) -> bool {
+    first_run(data, cx)
+        && data
+            .room()
+            .is_none_or(|room| matches!(room.kind, ChatRoomKind::Pinned))
+}
+
 fn narrow(window: &Window) -> bool {
     window.viewport_size().width < px(OVERLAY_WIDTH)
 }
@@ -274,7 +281,7 @@ impl Chat {
     }
 
     pub(super) fn open_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.status.is_none() && !first_run(self.data.read(cx), cx) {
+        if self.status.is_none() && !show_welcome(self.data.read(cx), cx) {
             self.composer
                 .update(cx, |composer, cx| composer.open_picker(window, cx));
         }
@@ -286,7 +293,7 @@ impl Chat {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if self.status.is_none() && !first_run(self.data.read(cx), cx) {
+        if self.status.is_none() && !show_welcome(self.data.read(cx), cx) {
             self.composer
                 .update(cx, |composer, cx| composer.alert_key(event, window, cx));
         }
@@ -379,7 +386,7 @@ impl Chat {
                 self.rooms
                     .update(cx, |rooms, cx| rooms.new_agent(at, window, cx));
             }
-            "b" if self.data.read(cx).room().is_some() && !first_run(self.data.read(cx), cx) => {
+            "b" if self.data.read(cx).room().is_some() && !show_welcome(self.data.read(cx), cx) => {
                 if self.side.read(cx).tab().is_some() {
                     self.dismiss_side(window, cx);
                 } else {
@@ -697,7 +704,6 @@ impl Chat {
         let data = self.data.read(cx);
         let screen = div().flex().flex_col().flex_1().min_w_0().min_h_0();
         let room = data.room().cloned();
-        let first = first_run(data, cx);
         let connection = match self.graph.read(cx).connection() {
             LinkState::Connected => None,
             LinkState::Reconnecting => Some(words(
@@ -738,7 +744,7 @@ impl Chat {
                         })),
                 )
         });
-        if first {
+        if show_welcome(data, cx) {
             let welcome = self.rooms.update(cx, |rooms, cx| rooms.welcome(cx));
             return screen.children(fault).child(welcome);
         }
@@ -828,15 +834,15 @@ impl Render for Chat {
         if !narrow && matches!(self.sidebar, Sidebar::Overlay) {
             self.sidebar = Sidebar::Default;
         }
-        let first = first_run(self.data.read(cx), cx);
-        if first && self.side.read(cx).tab().is_some() {
+        let welcome = show_welcome(self.data.read(cx), cx);
+        if welcome && self.side.read(cx).tab().is_some() {
             self.side.update(cx, |side, cx| side.hide(cx));
         }
         if let Some(wanted) = &self.focus_room {
             let data = self.data.read(cx);
             if data.selected() != Some(wanted.as_str()) {
                 self.focus_room = None;
-            } else if !first && let Some(room) = data.room() {
+            } else if !welcome && let Some(room) = data.room() {
                 let focus = !room.archived;
                 if focus && compose::busy(window, cx) {
                     compose::retry(window, cx);

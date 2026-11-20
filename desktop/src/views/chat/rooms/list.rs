@@ -192,14 +192,20 @@ pub(super) enum Row {
 }
 
 impl Rooms {
-    pub(super) fn list_rows(&self, index: &Index<'_>, query: &str, cx: &App) -> (Vec<Row>, usize) {
+    pub(super) fn list_rows(
+        &self,
+        index: &Index<'_>,
+        filter: Filter,
+        query: &str,
+        cx: &App,
+    ) -> (Vec<Row>, usize) {
         let all = index.rooms.iter().enumerate().filter(|(_, room)| {
             !matches!(room.kind, ChatRoomKind::Pinned) && index.in_workspace(room, self.workspace)
         });
         let mut hidden = 0;
         let mut matches: Vec<_> = all
             .filter(|(_, room)| {
-                let visible = self.filter.shows(room, index) && index.matches(room, query, cx);
+                let visible = filter.shows(room, index) && index.matches(room, query, cx);
                 hidden += usize::from(!visible);
                 visible
             })

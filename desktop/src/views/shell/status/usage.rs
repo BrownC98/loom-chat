@@ -420,7 +420,12 @@ impl Render for Usage {
                     .map(IntoElement::into_any_element),
             );
         }
-        if self.store.read(cx).no_tools() {
+        let store = self.store.read(cx);
+        if store.no_tools()
+            && store
+                .snapshot()
+                .is_some_and(|snapshot| snapshot.nodes.is_empty())
+        {
             summary.clear();
             let label = match cx.global::<Lang>() {
                 Lang::Ko => "설치된 AI 도구 없음",

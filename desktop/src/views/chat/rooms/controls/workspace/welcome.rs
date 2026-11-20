@@ -11,6 +11,7 @@ use gpui::{
 };
 
 use crate::scale::px;
+use crate::settings::want_agents;
 use crate::store::Store;
 use crate::strings::{Lang, Str};
 use crate::views::chat::rooms::Rooms;
@@ -256,7 +257,6 @@ impl Welcome {
         );
         let input = div()
             .id("chat-welcome-message")
-            .track_focus(&field.handle().tab_stop(false))
             .role(Role::MultilineTextInput)
             .aria_label(placeholder)
             .aria_value(field.text().to_owned())
@@ -543,7 +543,10 @@ impl Welcome {
                     .child(div().flex_1())
                     .when(others > 0, |line| {
                         line.child(btn::ghost("chat-other-tools", cx).child(more).on_click(
-                            |_, window, cx| window.dispatch_action(Box::new(OpenSettings), cx),
+                            |_, window, cx| {
+                                want_agents(cx);
+                                window.dispatch_action(Box::new(OpenSettings), cx);
+                            },
                         ))
                     }),
             )

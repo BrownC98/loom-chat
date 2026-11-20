@@ -133,14 +133,7 @@ impl Render for Shell {
             .text_color(theme.colors.ink)
             .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                 let stroke = &event.keystroke;
-                if stroke.key == "escape"
-                    && this.settings.is_none()
-                    && this
-                        .chat
-                        .update(cx, |chat, cx| chat.close_narrow_panel(window, cx))
-                {
-                    cx.stop_propagation();
-                } else if stroke.modifiers.alt
+                if stroke.modifiers.alt
                     && !stroke.modifiers.secondary(cx)
                     && stroke.key.eq_ignore_ascii_case("l")
                     && this.settings.is_none()
@@ -168,8 +161,15 @@ impl Render for Shell {
                 }
                 let stroke = &event.keystroke;
                 if stroke.key == "escape" {
-                    this.chat
-                        .update(cx, |chat, cx| chat.alert_key(event, window, cx));
+                    if this
+                        .chat
+                        .update(cx, |chat, cx| chat.close_narrow_panel(window, cx))
+                    {
+                        cx.stop_propagation();
+                    } else {
+                        this.chat
+                            .update(cx, |chat, cx| chat.alert_key(event, window, cx));
+                    }
                 } else if stroke.modifiers.secondary(cx)
                     && !stroke.modifiers.alt
                     && !stroke.modifiers.shift

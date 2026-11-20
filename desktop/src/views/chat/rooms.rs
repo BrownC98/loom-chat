@@ -24,7 +24,7 @@ use crate::views::status;
 use crate::views::ui::{clock, colors, say, say_with};
 use crate::views::widgets::btn;
 
-use super::{data::ChatData, first_run, guides, keep_ime_focus, room_title, words};
+use super::{data::ChatData, first_run, guides, keep_ime_focus, room_title, show_welcome, words};
 use controls::Overlay;
 use create::CreateRoom;
 use list::{Filter, Index, Row};
@@ -638,8 +638,15 @@ impl Rooms {
             .iter()
             .find(|room| matches!(room.kind, ChatRoomKind::Pinned));
         self.reveal_selection(data.room(), &index);
-        let query = self.search.read(cx).text().trim().to_lowercase();
-        let (mut rows, hidden) = self.list_rows(&index, &query, cx);
+        let (filter, query) = if first {
+            (Filter::All, String::new())
+        } else {
+            (
+                self.filter,
+                self.search.read(cx).text().trim().to_lowercase(),
+            )
+        };
+        let (mut rows, hidden) = self.list_rows(&index, filter, &query, cx);
         let empty = rows.is_empty();
         if hidden > 0 {
             rows.push(Row::Hidden(hidden));
@@ -655,6 +662,16 @@ impl Rooms {
                 cx,
             )
         });
+        let welcome = pinned
+            .filter(|_| first && !show_welcome(data, cx))
+            .map(|room| {
+                let id = room.id.clone();
+                btn::ghost("chat-return-welcome", cx)
+                    .mx(px(12.0))
+                    .flex_none()
+                    .child(words(cx, "첫 대화로 돌아가기", "Back to the first chat"))
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(SelectRoom(id.clone()))))
+            });
         div()
             .relative()
             .flex()
@@ -717,6 +734,7 @@ impl Rooms {
                 )
             })
             .children(pin_row.map(|row| div().mx(px(8.0)).mt(px(8.0)).flex_none().child(row)))
+            .children(welcome)
             .when(!first && pinned.is_some(), |root| {
                 root.child(self.controls(&index, cx))
             })
@@ -746,7 +764,7 @@ impl Rooms {
                                 .flex_none(),
                         )
                     })
-                    .when(first, |body| {
+                    .when(first && empty, |body| {
                         let hint = if data.graph().read(cx).no_tools() {
                             words(
                                 cx,
@@ -786,7 +804,7 @@ impl Rooms {
                         };
                         body.child(note(label, cx).mx(px(8.0)).flex_none())
                     })
-                    .when(!first, |body| {
+                    .when(!first || !empty, |body| {
                         body.child(self.room_list(rows, selection, cx))
                     }),
             )

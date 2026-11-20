@@ -286,11 +286,22 @@ impl Stream {
     }
 
     fn rebuild(&mut self, keep_position: bool, cx: &App) {
+        let items = self.data.read(cx).items();
+        let new_send = items.last().is_some_and(|item| {
+            item.cursor.id < 0
+                && !self
+                    .rows
+                    .visible
+                    .iter()
+                    .any(|row| row.cursor == item.cursor)
+        });
+        if new_send {
+            self.filter = Filter::All;
+        }
         let top = self.list.logical_scroll_top();
-        let anchor = (keep_position && !self.at_bottom())
+        let anchor = (keep_position && !new_send && !self.at_bottom())
             .then(|| self.rows.visible.get(top.item_ix).map(|row| row.cursor))
             .flatten();
-        let items = self.data.read(cx).items();
         let next = Rows::new(items, self.filter);
         if let (Some(_), Some(last)) = (anchor, self.rows.visible.last()) {
             self.new_messages += next
@@ -341,6 +352,9 @@ impl Stream {
                     offset_in_item,
                 });
             }
+        }
+        if new_send {
+            self.list.scroll_to_end();
         }
         self.rows = next;
     }

@@ -1,12 +1,37 @@
 use serde_json::Value;
 
 use crate::strings::{Lang, Str};
+use api::graph::errors::{LaunchError, Problem};
 
 type Vars = Vec<(String, String)>;
 
 pub enum Failure {
     Refused { status: u16, body: String },
     Other(String),
+    Transport(Transport),
+}
+
+#[derive(Clone, Copy)]
+pub enum Transport {
+    Connection,
+    Timeout,
+    Request,
+    Response,
+}
+
+impl Transport {
+    pub fn text(self, lang: Lang) -> &'static str {
+        match (self, lang) {
+            (Self::Connection, Lang::Ko) => "데몬에 연결할 수 없습니다. 다시 연결해 주세요.",
+            (Self::Connection, Lang::En) => "Could not reach the daemon. Reconnect and try again.",
+            (Self::Timeout, Lang::Ko) => "데몬이 제시간에 응답하지 않았습니다.",
+            (Self::Timeout, Lang::En) => "The daemon did not respond in time.",
+            (Self::Request, Lang::Ko) => "요청을 데몬에 보낼 수 없습니다.",
+            (Self::Request, Lang::En) => "Could not send the request to the daemon.",
+            (Self::Response, Lang::Ko) => "데몬의 응답을 읽을 수 없습니다.",
+            (Self::Response, Lang::En) => "Could not read the daemon response.",
+        }
+    }
 }
 
 impl Failure {
@@ -16,6 +41,7 @@ impl Failure {
                 Str::ProblemStatus.with(lang, &[("status", &status.to_string())])
             }),
             Failure::Other(text) => text.clone(),
+            Failure::Transport(error) => error.text(lang).to_owned(),
         }
     }
     pub fn refusal(&self) -> Option<String> {
@@ -26,6 +52,16 @@ impl Failure {
         (problem.get("code")?.as_str()? == "refused")
             .then(|| problem.get("value").and_then(code).map(str::to_owned))
             .flatten()
+    }
+
+    pub fn launch_error(&self) -> Option<LaunchError> {
+        let Failure::Refused { body, .. } = self else {
+            return None;
+        };
+        match serde_json::from_str(body).ok()? {
+            Problem::Launch(launch) => Some(launch),
+            _ => None,
+        }
     }
 }
 

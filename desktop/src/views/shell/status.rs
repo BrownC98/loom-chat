@@ -60,5 +60,5 @@ pub fn bar(store: &Entity<Store>, repo: Option<RepoId>, colors: &Colors, cx: &Ap
         .child(Usage(store.clone(), repo))
         .child(div().flex_1())
         .children(counts.map(|count| div().child(count)))
-        .child(usage::version())
+        .child(usage::version(cx))
 }

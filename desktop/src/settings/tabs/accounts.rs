@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use api::ids::AccountId;
 use api::profile::Provider;
-use api::settings::accounts::AccountView;
+use api::settings::accounts::{AccountView, LoginTarget};
 use gpui::{
     AnyElement, App, AppContext as _, Div, Entity, FocusHandle, FontWeight, IntoElement,
     ParentElement, Stateful, StatefulInteractiveElement, Styled, Window, div,
@@ -18,14 +18,13 @@ use crate::settings::{Ctx, Section, Writer};
 use crate::strings::{Lang, Str};
 use crate::views::dock::ui::{SMALL, TEXT, colors, say, say_with};
 use crate::views::icons::{Lucide, icon};
-use crate::views::terminal::TerminalView;
 use crate::views::tooltip::tip;
 use crate::views::usage::{
     self, ACCOUNTS, PROVIDERS, REFRESH, Switching, account_name, active_index, provider_label, slug,
 };
 use parts::{Bound, Reload, Remote, Shared, badge, ghost_small, hint, row, rows, small};
 
-mod login;
+pub mod login;
 mod switch;
 
 const SYSTEM_DIR: [(Provider, &str); 2] = [
@@ -51,18 +50,11 @@ pub(super) enum Ask {
     },
 }
 
-pub(super) struct Login {
-    pub id: u32,
-    pub title: String,
-    pub fresh: bool,
-    pub failed: bool,
-}
-
 #[derive(Default)]
 pub(super) struct Local {
     pub ask: Option<Ask>,
     pub error: Option<String>,
-    pub login: Option<Login>,
+    pub login: Option<login::Request>,
     pub switching: Option<Switching>,
 }
 
@@ -71,7 +63,7 @@ pub struct State {
     accounts: Remote<Vec<AccountView>>,
     local: Shared<Local>,
     focus: Option<FocusHandle>,
-    terminal: Option<(u32, Entity<TerminalView>)>,
+    login: Option<Entity<login::Dialog>>,
 }
 
 #[derive(Clone)]
@@ -83,6 +75,15 @@ pub(super) struct Actor {
 }
 
 impl Actor {
+    fn open_login(&self, request: login::Request, cx: &mut App) {
+        if self.local.alive() {
+            self.local.change(cx, |local| {
+                local.error = None;
+                local.login = Some(request);
+            });
+        }
+    }
+
     pub fn run(
         &self,
         cx: &mut App,
@@ -132,7 +133,6 @@ pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App)
         reload,
         writer: ctx.writer.clone(),
     });
-    login::sync(state, &actor, window, cx);
 
     let mut places: Vec<Option<String>> = Vec::new();
     for account in all {
@@ -301,15 +301,9 @@ fn provider_body(
         add = inert(add).opacity(0.5).tooltip(tip(reason));
     } else {
         let (actor, distro) = (actor.clone(), distro.clone());
-        let title = say_with(cx, Str::AccountsAddTitle, &[("provider", label)]);
         add = add.on_click(move |_, _, cx| {
-            login::open(
-                &actor,
-                provider,
-                distro.clone(),
-                api::settings::accounts::LoginTarget::New,
-                title.clone(),
-                true,
+            actor.open_login(
+                login::Request::account(provider, distro.as_deref(), LoginTarget::New, "", cx),
                 cx,
             )
         });
@@ -348,7 +342,7 @@ fn account_row(
     let c = colors(cx);
     let limits = &account.usage.limits;
     let system = account.id.is_none();
-    let needs_login = matches!(limits, api::settings::usage::Limits::NeedsLogin);
+    let needs_login = login::needed(limits);
     let absent = usage::cli_missing(limits);
     let name = account_name(account, cx);
 
@@ -482,7 +476,6 @@ fn account_row(
         };
         button.child(section.text(say(cx, label), cx))
     };
-    let provider_text = provider_label(provider, cx);
     if !current && !needs_login && !absent {
         let (actor, distro, to, name) = (
             actor.clone(),
@@ -503,45 +496,25 @@ fn account_row(
             }),
         );
     }
-    if needs_login && let Some(account_id) = &account.id {
-        let (actor, distro, target) = (actor.clone(), distro.clone(), account_id.clone());
-        let title = say_with(cx, Str::AccountsReloginTitle, &[("name", &name)]);
-        actions = actions.child(button(Str::AccountsRelogin, false, cx).on_click(
-            move |_, _, cx| {
-                let target = api::settings::accounts::LoginTarget::Account(target.clone());
-                login::open(
-                    &actor,
-                    provider,
-                    distro.clone(),
-                    target,
-                    title.clone(),
-                    false,
-                    cx,
-                )
-            },
-        ));
-    }
-    if needs_login && system {
-        let (actor, distro) = (actor.clone(), distro.clone());
-        let title = say_with(
-            cx,
-            Str::AccountsSystemLoginTitle,
-            &[("provider", provider_text)],
+    if needs_login {
+        let (actor, distro, id, name) = (
+            actor.clone(),
+            distro.clone(),
+            account.id.clone(),
+            name.clone(),
         );
-        actions = actions.child(
-            button(Str::AccountsLogin, false, cx).on_click(move |_, _, cx| {
-                let target = api::settings::accounts::LoginTarget::System;
-                login::open(
-                    &actor,
-                    provider,
-                    distro.clone(),
-                    target,
-                    title.clone(),
-                    false,
-                    cx,
-                )
-            }),
-        );
+        let label = if system {
+            Str::AccountsLogin
+        } else {
+            Str::AccountsRelogin
+        };
+        actions = actions.child(button(label, false, cx).on_click(move |_, _, cx| {
+            let target = id.clone().map_or(LoginTarget::System, LoginTarget::Account);
+            actor.open_login(
+                login::Request::account(provider, distro.as_deref(), target, &name, cx),
+                cx,
+            )
+        }));
     }
     if system && !needs_login && !absent {
         let (local, distro, name) = (actor.local.clone(), distro.clone(), name.clone());
@@ -626,7 +599,25 @@ fn overlays(
         ));
     }
     shown.extend(switch::dialog(state, actor, focus, window, cx));
-    shown.extend(login::dialog(state, actor, window, cx));
+    if state
+        .login
+        .as_ref()
+        .is_some_and(|dialog| dialog.read(cx).is_closed())
+    {
+        state.login = None;
+    }
+    let mut request = None;
+    state.local.write(|local| request = local.login.take());
+    if let Some(request) = request {
+        let dialog = login::Dialog::open(actor.base.clone(), request, window, cx);
+        let actor = actor.clone();
+        cx.subscribe(&dialog, move |_, _: &login::Finished, cx| {
+            actor.reload.run(cx)
+        })
+        .detach();
+        state.login = Some(dialog);
+    }
+    shown.extend(state.login.clone().map(IntoElement::into_any_element));
     shown
 }
 

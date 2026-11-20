@@ -6,6 +6,7 @@ mod general;
 mod phone;
 mod terminal;
 
+pub use accounts::login;
 pub use agents::parts::{keep_focus, modal};
 
 use gpui::{App, Window};

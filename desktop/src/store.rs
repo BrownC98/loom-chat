@@ -15,19 +15,23 @@ use gpui::{
 };
 
 use crate::link::{self, Fresh, Graph, LinkState, Snapshot};
-use crate::problem::Failure;
-use crate::{scale, strings, theme};
+use crate::problem::{Failure, Transport};
+use crate::{daemon, scale, strings, theme};
 
 const PROMPT_CHANGED: &str = "promptChanged";
 const REPOS_EVERY: Duration = Duration::from_secs(5);
 
 pub struct Store {
     base: Option<String>,
-    status: String,
+    unavailable: String,
+    starting: bool,
+    window: gpui::AnyWindowHandle,
     connection: LinkState,
     watch: Option<link::Watch>,
     repo_watch: Option<Task<()>>,
     snapshot: Option<Snapshot>,
+    agents: Option<Arc<Vec<AgentView>>>,
+    agents_at: u64,
     nodes_at: u64,
     repos_at: u64,
     settings: SettingsView,
@@ -45,11 +49,14 @@ pub struct Notice {
 
 pub struct BusyChanged;
 
+pub struct AgentsScanned;
+
 pub struct OpenAgent(pub NodeId);
 
 impl EventEmitter<GraphEvent> for Store {}
 impl EventEmitter<LinkState> for Store {}
 impl EventEmitter<BusyChanged> for Store {}
+impl EventEmitter<AgentsScanned> for Store {}
 impl EventEmitter<OpenAgent> for Store {}
 
 fn newer(at: &mut u64, order: u64) -> bool {
@@ -86,48 +93,23 @@ fn apply_settings(settings: &SettingsView, cx: &mut App) {
 
 impl Store {
     pub fn new(
-        started: Result<String, String>,
+        started: Result<String, daemon::StartError>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let settings = SettingsView::default();
         apply_settings(&settings, cx);
-        let (base, status, failure, watch) = match started {
-            Ok(base) => {
-                let (graph, inbox) = async_channel::unbounded();
-                let (watch, failure) = match link::watch(&base, graph) {
-                    Ok(watch) => (Some(watch), None),
-                    Err(error) => (None, Some(error)),
-                };
-                let status = failure.clone().unwrap_or_else(|| base.clone());
-                cx.spawn_in(window, async move |this, cx| {
-                    while let Ok(event) = inbox.recv().await {
-                        if this
-                            .update_in(cx, |store, _, cx| store.apply(event, cx))
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                })
-                .detach();
-                (Some(base), status, failure, watch)
-            }
-            Err(error) => (None, error.clone(), Some(error), None),
-        };
-        let notice = failure.map(|text| Notice { text });
-        let connection = if watch.is_some() {
-            LinkState::Reconnecting
-        } else {
-            LinkState::Lost
-        };
         let mut store = Self {
-            base,
-            status,
-            connection,
-            watch,
+            base: None,
+            unavailable: String::new(),
+            starting: false,
+            window: window.window_handle(),
+            connection: LinkState::Lost,
+            watch: None,
             repo_watch: None,
             snapshot: None,
+            agents: None,
+            agents_at: 0,
             nodes_at: 0,
             repos_at: 0,
             settings,
@@ -135,16 +117,50 @@ impl Store {
             unsaved: VecDeque::new(),
             confirmed: SettingsView::default(),
             settings_from: 0,
-            notice,
+            notice: None,
             busy: HashSet::new(),
         };
-        if let Some(base) = store.base.clone() {
-            store.watch_repos(base, window.window_handle(), cx);
-        }
+        store.connect(started, cx);
         store
     }
 
-    fn watch_repos(&mut self, base: String, window: gpui::AnyWindowHandle, cx: &Context<Self>) {
+    fn connect(&mut self, started: Result<String, daemon::StartError>, cx: &mut Context<Self>) {
+        let lang = *cx.global::<strings::Lang>();
+        let (graph, inbox) = async_channel::unbounded();
+        let result = started
+            .map_err(|error| error.text(lang).to_owned())
+            .and_then(|base| {
+                link::watch(&base, graph)
+                    .map(|watch| (base, watch))
+                    .map_err(|error| error.text(lang).to_owned())
+            });
+        match result {
+            Ok((base, watch)) => {
+                self.base = Some(base.clone());
+                self.watch = Some(watch);
+                self.notice = None;
+                self.unavailable.clear();
+                self.connection = LinkState::Reconnecting;
+                cx.spawn(async move |this, cx| {
+                    while let Ok(event) = inbox.recv().await {
+                        if this.update(cx, |store, cx| store.apply(event, cx)).is_err() {
+                            break;
+                        }
+                    }
+                })
+                .detach();
+                self.watch_repos(base, cx);
+            }
+            Err(error) => {
+                self.connection = LinkState::Lost;
+                self.unavailable = error.clone();
+                self.notice = Some(Notice { text: error });
+            }
+        }
+    }
+
+    fn watch_repos(&mut self, base: String, cx: &Context<Self>) {
+        let window = self.window;
         self.repo_watch = Some(cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(REPOS_EVERY).await;
@@ -294,9 +310,24 @@ impl Store {
         cx.emit(OpenAgent(node));
     }
 
-    pub fn reload(&self, _: &mut Context<Self>) {
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
         if let Some(watch) = &self.watch {
             watch.reload();
+        } else if !self.starting {
+            self.starting = true;
+            self.connection = LinkState::Reconnecting;
+            cx.emit(self.connection);
+            cx.notify();
+            cx.spawn(async move |this, cx| {
+                let started = cx.background_spawn(async { daemon::start() }).await;
+                let _ = this.update(cx, |store, cx| {
+                    store.starting = false;
+                    store.connect(started, cx);
+                    cx.emit(store.connection);
+                    cx.notify();
+                });
+            })
+            .detach();
         }
     }
 
@@ -335,9 +366,14 @@ impl Store {
     }
 
     fn fail(&mut self, error: Failure, cx: &Context<Self>) {
-        let text = error.text(*cx.global::<strings::Lang>());
+        let lang = *cx.global::<strings::Lang>();
+        let text = error.text(lang);
         let text = if text.is_empty() {
-            "connection closed".to_owned()
+            match lang {
+                strings::Lang::Ko => "데몬과 연결이 끊겼습니다.",
+                strings::Lang::En => "The daemon connection closed.",
+            }
+            .to_owned()
         } else {
             text
         };
@@ -345,7 +381,6 @@ impl Store {
     }
 
     fn keep_settings(&mut self, order: u64, settings: SettingsView, cx: &mut Context<Self>) {
-        self.status = self.base.clone().unwrap_or_default();
         if self.unsaved.is_empty() && newer(&mut self.settings_from, order) {
             self.confirmed = settings.clone();
             self.take_settings(settings, cx);
@@ -368,9 +403,6 @@ impl Store {
             snapshot.repos = repos;
             used = true;
         }
-        if used {
-            self.status = self.base.clone().unwrap_or_default();
-        }
         used
     }
 
@@ -389,30 +421,61 @@ impl Store {
 }
 
 impl Store {
+    fn request<T: Send + 'static>(
+        &self,
+        cx: &App,
+        work: impl FnOnce(&str) -> Result<T, Failure> + Send + 'static,
+    ) -> Task<Result<T, Failure>> {
+        let Some(base) = self.base.clone() else {
+            return Task::ready(Err(Failure::Other(self.unavailable.clone())));
+        };
+        cx.background_spawn(async move { work(&base) })
+    }
+
     pub(crate) fn call<T: Send + 'static>(
         &self,
         cx: &App,
         work: impl FnOnce(&str) -> Result<T, Failure> + Send + 'static,
     ) -> Task<Result<T, String>> {
-        let Some(base) = self.base.clone() else {
-            return Task::ready(Err(self.status.clone()));
-        };
+        let done = self.request(cx, work);
         cx.spawn(async move |cx| {
-            let done = cx.background_spawn(async move { work(&base) }).await;
-            done.map_err(|failure| failure.text(cx.update(|app| *app.global::<strings::Lang>())))
+            done.await
+                .map_err(|failure| failure.text(cx.update(|app| *app.global::<strings::Lang>())))
         })
     }
 
-    pub fn agents(&self, cx: &mut Context<Self>) -> Task<Result<Vec<AgentView>, String>> {
-        self.call(cx, |base| link::read(base, "/api/agents"))
+    pub fn agent_catalog(&self) -> Option<&[AgentView]> {
+        self.agents.as_ref().map(|agents| agents.as_slice())
+    }
+
+    pub fn agents(&self, cx: &mut Context<Self>) -> Task<Result<Arc<Vec<AgentView>>, String>> {
+        let order = link::order();
+        let scan = self.call(cx, |base| {
+            link::read_within::<Vec<AgentView>>(base, "/api/agents", link::SLOW_LIMIT).map(Arc::new)
+        });
+        cx.spawn(async move |this, cx| {
+            let mut result = scan.await;
+            if let Ok(agents) = &mut result {
+                let _ = this.update(cx, |store, cx| {
+                    if newer(&mut store.agents_at, order) {
+                        store.agents = Some(agents.clone());
+                        cx.emit(AgentsScanned);
+                        cx.notify();
+                    } else if let Some(current) = &store.agents {
+                        *agents = current.clone();
+                    }
+                });
+            }
+            result
+        })
     }
 
     pub fn create_node(
         &self,
         body: NewNode,
         cx: &mut Context<Self>,
-    ) -> Task<Result<NodeId, String>> {
-        self.call(cx, move |base| {
+    ) -> Task<Result<NodeId, Failure>> {
+        self.request(cx, move |base| {
             link::post_within(
                 base,
                 "/api/nodes",
@@ -478,15 +541,13 @@ impl Store {
         keys: PressKeys,
         cx: &mut Context<Self>,
     ) -> Task<Result<(), String>> {
-        let Some(base) = self.base.clone() else {
-            return Task::ready(Err(self.status.clone()));
-        };
-        cx.spawn(async move |_, cx| {
+        let done = self.request(cx, move |base| {
             let path = format!("/api/waits/{}/keys", wait.0);
             let body = serde_json::to_string(&keys).ok();
-            let done = cx
-                .background_spawn(async move { link::post::<()>(&base, &path, body) })
-                .await;
+            link::post::<()>(base, &path, body)
+        });
+        cx.spawn(async move |_, cx| {
+            let done = done.await;
             let lang = cx.update(|app| *app.global::<strings::Lang>());
             done.map_err(|failure| match failure.refusal().as_deref() {
                 Some(PROMPT_CHANGED) => strings::Str::InboxScreenChanged.text(lang).to_owned(),
@@ -505,7 +566,7 @@ impl Store {
             let (mime, bytes) =
                 link::image(base, &format!("/api/waits/{}/images/{index}", wait.0))?;
             let format = ImageFormat::from_mime_type(&mime)
-                .ok_or_else(|| Failure::Other(format!("image type {mime}")))?;
+                .ok_or(Failure::Transport(Transport::Response))?;
             Ok(Arc::new(Image::from_bytes(format, bytes)))
         })
     }
@@ -523,7 +584,7 @@ impl Store {
     pub fn doc_url(&self, id: &str) -> Result<String, String> {
         match &self.base {
             Some(base) => Ok(format!("{base}/docs/{id}")),
-            None => Err(self.status.clone()),
+            None => Err(self.unavailable.clone()),
         }
     }
 }

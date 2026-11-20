@@ -8,7 +8,9 @@ use axum::response::{Html, Response};
 use axum::routing::{delete, get, post};
 use axum::{Extension, Json, Router};
 use futures_util::future::join_all;
+use portable_pty::CommandBuilder;
 use serde::Deserialize;
+use tokio::sync::watch;
 
 use api::settings::accounts::{AccountView, LoginId, LoginState, LoginTarget, PlaceUsage};
 
@@ -18,7 +20,7 @@ use super::ssh_hosts::{self, Reach};
 use super::{App, internal};
 use crate::accounts::Site;
 use crate::distro::Host;
-use crate::node_host::{Exit, NodeHost};
+use crate::node_host::{Exit, NodeHost, STOP_WAIT};
 use crate::place::{self, Machine};
 use crate::profile::{self, Accounted};
 use crate::settings::PatchProblem;
@@ -32,17 +34,76 @@ use api::settings::SettingsView;
 
 pub struct Logins {
     host: NodeHost<LoginId>,
-    states: Mutex<HashMap<LoginId, LoginState>>,
+    sessions: Mutex<HashMap<LoginId, LoginProcess>>,
     next: AtomicU32,
+}
+
+#[derive(PartialEq, Eq)]
+struct LoginKey {
+    command: &'static str,
+    distro: Option<String>,
+    account: Option<AccountId>,
+}
+
+impl LoginKey {
+    fn new(site: &Site, command: &'static str, account: Option<&AccountId>) -> Self {
+        Self {
+            command,
+            distro: site.distro().map(str::to_owned),
+            account: account.map(|id| AccountId(id.0.to_ascii_lowercase())),
+        }
+    }
+}
+
+struct LoginProcess {
+    key: LoginKey,
+    exit: watch::Sender<Option<Exit>>,
+}
+
+fn login_exit_problem(exit: Option<Exit>, command: &str) -> Option<Problem> {
+    match exit {
+        Some(Exit::Command(_) | Exit::Setup(_)) => None,
+        None => Some(internal(
+            "Wait for the previous login for this account to stop, then try again.",
+        )),
+        Some(Exit::Lost | Exit::Gone) => Some(login_recovery(command)),
+    }
+}
+
+fn login_recovery(command: &str) -> Problem {
+    internal(format!(
+        "Loom lost contact with the previous {command} login. Check that login process on its PC or WSL distribution. If it still runs, stop it. Confirm that it stopped before you restart the Loom daemon and try again."
+    ))
 }
 
 impl Logins {
     pub fn new(dir: std::path::PathBuf) -> Self {
         Self {
             host: NodeHost::new(dir),
-            states: Mutex::default(),
+            sessions: Mutex::default(),
             next: AtomicU32::default(),
         }
+    }
+
+    fn reserve(&self, key: LoginKey) -> Result<(LoginId, watch::Sender<Option<Exit>>), Problem> {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(problem) = sessions
+            .values()
+            .filter(|process| process.key == key)
+            .find_map(|process| login_exit_problem(*process.exit.borrow(), key.command))
+        {
+            return Err(problem);
+        }
+        let id = LoginId(self.next.fetch_add(1, Ordering::Relaxed));
+        let (exit, _) = watch::channel(None);
+        sessions.insert(
+            id,
+            LoginProcess {
+                key,
+                exit: exit.clone(),
+            },
+        );
+        Ok((id, exit))
     }
 }
 
@@ -54,6 +115,7 @@ pub fn routes() -> Router<Arc<App>> {
         .route("/api/settings/default", get(default_settings))
         .route("/api/accounts", get(accounts))
         .route("/api/usage/{profile}", get(place_usage))
+        .route("/api/usage/{profile}/login", post(login_single))
         .route("/api/accounts/{provider}", post(login))
         .route("/api/accounts/{provider}/logout", post(logout))
         .route("/api/accounts/{provider}/{id}", delete(remove_account))
@@ -249,46 +311,62 @@ async fn login(
     {
         return Err(internal("the account folder is gone"));
     }
-    let cmd = site.login(cli, id.as_ref())?;
+    let key = LoginKey::new(&site, cli.command, id.as_ref());
     let discard = {
         let site = site.clone();
+        let id = id.clone();
         move || {
             if created && let Some(id) = &id {
                 let _ = site.accounts().remove(cli, id);
             }
         }
     };
-    let login = LoginId(app.logins.next.fetch_add(1, Ordering::Relaxed));
-    app.logins
-        .states
-        .lock()
-        .unwrap()
-        .insert(login, LoginState::Running);
+    start_login(app, key, || site.login(cli, id.as_ref()), discard).map(Json)
+}
+
+async fn login_single(
+    State(app): State<Arc<App>>,
+    Path(profile): Path<Profile>,
+    Query(at): Query<At>,
+) -> Result<Json<LoginId>, Problem> {
+    let (label, command) = profile::single_login_cli(profile).ok_or(Problem::NoLogin)?;
+    let site = app.site_of(at.distro.as_deref()).await?;
+    let key = LoginKey::new(&site, command, None);
+    start_login(app, key, || site.login_installed(label, command), || {}).map(Json)
+}
+
+fn start_login(
+    app: Arc<App>,
+    key: LoginKey,
+    build: impl FnOnce() -> Result<CommandBuilder, LaunchError>,
+    discard: impl Fn() + Send + 'static,
+) -> Result<LoginId, Problem> {
+    let command = key.command;
+    let (login, exit_state) = app.logins.reserve(key).inspect_err(|_| discard())?;
+    let cmd = build().inspect_err(|_| {
+        discard();
+        app.logins.sessions.lock().unwrap().remove(&login);
+    })?;
     let on_exit = {
         let app = app.clone();
-        let discard = discard.clone();
+        let exit_state = exit_state.clone();
         move |exit| {
-            let state = if exit == Exit::Command(0) {
-                LoginState::Succeeded
-            } else {
+            if matches!(exit, Exit::Command(1..) | Exit::Setup(_)) {
                 discard();
-                LoginState::Failed
-            };
-            if let Some(slot) = app.logins.states.lock().unwrap().get_mut(&login) {
-                *slot = state;
             }
+            exit_state.send_replace(Some(exit));
             app.graph.publish_view_changed();
         }
     };
     app.logins
         .host
         .spawn_while_linked(login, &cmd, on_exit)
-        .map_err(|e| {
-            app.logins.states.lock().unwrap().remove(&login);
-            discard();
-            internal(e)
-        })?;
-    Ok(Json(login))
+        .map_err(|error| {
+            crate::log::logln!("loom: 로그인 PTY 시작을 확인하지 못했다: {error}");
+            exit_state.send_replace(Some(Exit::Lost));
+            login_recovery(command)
+        })
+        .map(|()| login)
 }
 
 async fn logout(
@@ -385,7 +463,7 @@ impl App {
                 let distro = self
                     .host(Host::Distro(at.distro.clone()))
                     .map_err(LaunchError::Wsl)?;
-                let commands: Vec<_> = profile::with_accounts().map(|a| a.cli.command).collect();
+                let commands: Vec<_> = profile::login_commands().collect();
                 let inside = wsl::inside(&at, distro, &commands, &self.shim, &[]);
                 Site::wsl(inside.await.map_err(LaunchError::Wsl)?)
             }
@@ -405,16 +483,45 @@ async fn login_state(
     State(app): State<Arc<App>>,
     Path(id): Path<u32>,
 ) -> Result<Json<LoginState>, Problem> {
-    let states = app.logins.states.lock().unwrap();
-    let state = states.get(&LoginId(id)).ok_or(Problem::NoLogin)?;
-    Ok(Json(*state))
+    let sessions = app.logins.sessions.lock().unwrap();
+    let exit = *sessions
+        .get(&LoginId(id))
+        .ok_or(Problem::NoLogin)?
+        .exit
+        .borrow();
+    Ok(Json(match exit {
+        None => LoginState::Running,
+        Some(Exit::Command(0)) => LoginState::Succeeded,
+        Some(_) => LoginState::Failed,
+    }))
 }
 
-async fn close_login(State(app): State<Arc<App>>, Path(id): Path<u32>) -> Json<()> {
+async fn close_login(
+    State(app): State<Arc<App>>,
+    Path(id): Path<u32>,
+) -> Result<Json<()>, Problem> {
     let id = LoginId(id);
+    let exit = app
+        .logins
+        .sessions
+        .lock()
+        .unwrap()
+        .get(&id)
+        .map(|process| (process.exit.subscribe(), process.key.command));
     app.logins.host.kill(id);
-    app.logins.states.lock().unwrap().remove(&id);
-    Json(())
+    let Some((mut exit, command)) = exit else {
+        return Ok(Json(()));
+    };
+    let exit = tokio::time::timeout(STOP_WAIT, exit.wait_for(Option::is_some))
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .and_then(|exit| *exit);
+    if let Some(problem) = login_exit_problem(exit, command) {
+        return Err(problem);
+    }
+    app.logins.sessions.lock().unwrap().remove(&id);
+    Ok(Json(()))
 }
 
 async fn login_pty(

@@ -1,17 +1,17 @@
-use api::profile::Provider;
-use api::settings::accounts::{AccountView, PlaceUsage};
+use api::profile::{Profile, Provider};
+use api::settings::accounts::{AccountView, LoginTarget, PlaceUsage};
 use api::settings::usage::Limits;
 use gpui::{
-    Anchor, AnyElement, App, Context, Div, FontWeight, InteractiveElement, IntoElement,
+    Anchor, AnyElement, App, Context, Div, ElementId, FontWeight, InteractiveElement, IntoElement,
     KeyDownEvent, MouseButton, ParentElement, StatefulInteractiveElement, Styled, Window, anchored,
     deferred, div, point, relative,
 };
 
-use super::{Usage, name_cell, text};
+use super::{Usage, install_label, name_cell, text};
 use super::{chevron, cursor_mark, provider_mark};
 use crate::fonts;
 use crate::scale::{self, px};
-use crate::settings::want_accounts;
+use crate::settings::{login, want_accounts, want_agents};
 use crate::strings::Str;
 use crate::theme::Colors;
 use crate::views::dock::ui::{button, say, say_with};
@@ -73,15 +73,59 @@ impl Usage {
             .line_height(relative(1.5))
             .text_color(c.ink)
             .child(self.heading(c, cx));
-        for provider in PROVIDERS {
-            body = body.child(self.section(provider, distro, c, cx));
+        let error = self
+            .error
+            .clone()
+            .or_else(|| self.catalog_error.clone())
+            .or_else(|| {
+                let store = self.store.read(cx);
+                store
+                    .base()
+                    .is_none()
+                    .then(|| store.notice().map(|notice| notice.text.clone()))
+                    .flatten()
+            });
+        if let Some(error) = error {
+            body = body.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .whitespace_normal()
+                            .text_color(c.err)
+                            .child(error),
+                    )
+                    .child(
+                        button("usage-retry", cx)
+                            .flex_none()
+                            .child(say(cx, Str::UpdateRetry))
+                            .on_click(cx.listener(|this, _, _, cx| this.retry(cx))),
+                    ),
+            );
+        } else if self.accounts.is_none() && self.cursor.is_none() {
+            let status = if self.pending > 0 {
+                Str::StatusBarLoading
+            } else {
+                Str::StatusBarUnavailable
+            };
+            body = body.child(div().text_color(c.ink_2).child(say(cx, status)));
+        }
+        let no_agents = self.store.read(cx).no_tools();
+        if self.accounts.is_some() && !no_agents {
+            for provider in PROVIDERS {
+                body = body.child(self.section(provider, distro, c, cx));
+            }
         }
         let cursor = self
             .cursor
             .iter()
             .flatten()
             .find(|entry| entry.distro.as_deref() == distro);
-        if let Some(entry) = cursor {
+        if let Some(entry) = cursor.filter(|_| !no_agents) {
             body = body.child(self.cursor_section(entry, c, cx));
         }
         body = body.child(self.foot(distro, c, cx));
@@ -162,7 +206,13 @@ impl Usage {
                     ),
             );
         }
-        if let Some(problem) = usage::problem(limits, cx) {
+        if login::needed(limits) {
+            grid = grid.child(
+                div()
+                    .text_color(c.err)
+                    .child(say(cx, Str::UsageLoginRequired)),
+            );
+        } else if let Some(problem) = usage::problem(limits, cx) {
             grid = grid.child(div().text_color(c.err).child(problem));
         }
         let reset = usage::reset_text(limits, cx);
@@ -170,6 +220,16 @@ impl Usage {
             grid = grid.child(div().text_color(c.ink_3).child(reset));
         }
         grid
+    }
+
+    fn login_button(
+        id: impl Into<ElementId>,
+        request: impl Fn(&App) -> login::Request + 'static,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        button(id, cx).child(say(cx, Str::AccountsLogin)).on_click(
+            cx.listener(move |this, _, window, cx| this.open_login(request(cx), window, cx)),
+        )
     }
 
     fn section(
@@ -222,6 +282,19 @@ impl Usage {
             .child(head);
         if let Some(account) = active {
             section = section.child(self.windows(&account.usage.limits, c, cx));
+            if login::needed(&account.usage.limits) {
+                let place = distro.map(str::to_owned);
+                let to = account.id.clone();
+                let name = account_name(account, cx);
+                section = section.child(div().flex().child(Self::login_button(
+                    ("usage-login", provider as usize),
+                    move |cx| {
+                        let target = to.clone().map_or(LoginTarget::System, LoginTarget::Account);
+                        login::Request::account(provider, place.as_deref(), target, &name, cx)
+                    },
+                    cx,
+                )));
+            }
         }
         if expanded {
             let own = self.own(provider, distro);
@@ -248,7 +321,10 @@ impl Usage {
     ) -> impl IntoElement {
         let current = active.is_some_and(|a| std::ptr::eq(a, account));
         let name = account_name(account, cx);
-        let sub = if current {
+        let needs_login = login::needed(&account.usage.limits);
+        let sub = if needs_login {
+            say(cx, Str::UsageLoginRequired).to_owned()
+        } else if current {
             say(cx, Str::AccountsCurrent).to_owned()
         } else if let Limits::Ready {
             session: Some(session),
@@ -256,8 +332,6 @@ impl Usage {
         } = &account.usage.limits
         {
             say_with(cx, Str::UsageUsed, &[("n", &session.used.to_string())])
-        } else if matches!(account.usage.limits, Limits::NeedsLogin) {
-            say(cx, Str::UsageLoginRequired).to_owned()
         } else {
             String::new()
         };
@@ -274,14 +348,21 @@ impl Usage {
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.choose(
-                    provider,
-                    place.clone(),
-                    to.clone(),
-                    picked.clone(),
-                    window,
-                    cx,
-                )
+                if needs_login {
+                    let target = to.clone().map_or(LoginTarget::System, LoginTarget::Account);
+                    let request =
+                        login::Request::account(provider, place.as_deref(), target, &picked, cx);
+                    this.open_login(request, window, cx);
+                } else {
+                    this.choose(
+                        provider,
+                        place.clone(),
+                        to.clone(),
+                        picked.clone(),
+                        window,
+                        cx,
+                    );
+                }
             }))
             .child(name_cell(name))
             .child(div().flex_1())
@@ -292,13 +373,13 @@ impl Usage {
         row
     }
 
-    fn cursor_section(&self, entry: &PlaceUsage, c: &Colors, cx: &App) -> Div {
+    fn cursor_section(&self, entry: &PlaceUsage, c: &Colors, cx: &mut Context<Self>) -> Div {
         let name = entry
             .usage
             .email
             .clone()
             .unwrap_or_else(|| usage::unnamed(true, cx));
-        div()
+        let mut section = div()
             .flex()
             .flex_col()
             .gap(px(6.0))
@@ -313,10 +394,30 @@ impl Usage {
                     .child(cursor_mark(c))
                     .child(name_cell(name).text_color(c.ink_2)),
             )
-            .child(self.windows(&entry.usage.limits, c, cx))
+            .child(self.windows(&entry.usage.limits, c, cx));
+        let label = self
+            .store
+            .read(cx)
+            .agent_catalog()
+            .into_iter()
+            .flatten()
+            .find(|agent| agent.profile == Profile::Cursor)
+            .map(|agent| agent.label.clone());
+        if login::needed(&entry.usage.limits)
+            && let Some(label) = label
+        {
+            let distro = entry.distro.clone();
+            section = section.child(div().flex().child(Self::login_button(
+                "usage-login-cursor",
+                move |cx| login::Request::cursor(distro.as_deref(), &label, cx),
+                cx,
+            )));
+        }
+        section
     }
 
     fn foot(&self, _: Option<&str>, c: &Colors, cx: &mut Context<Self>) -> Div {
+        let install = self.store.read(cx).no_tools();
         let read = usage::oldest_read(
             self.accounts.as_deref().unwrap_or_default(),
             self.cursor.as_deref().unwrap_or_default(),
@@ -339,12 +440,20 @@ impl Usage {
                     .px(px(8.0))
                     .border_color(gpui::transparent_black())
                     .bg(gpui::transparent_black())
-                    .on_click(cx.listener(|this, _, window, cx| {
+                    .on_click(cx.listener(move |this, _, window, cx| {
                         this.close(window, cx);
-                        want_accounts(cx);
+                        if install {
+                            want_agents(cx);
+                        } else {
+                            want_accounts(cx);
+                        }
                         window.dispatch_action(Box::new(crate::views::shell::OpenSettings), cx);
                     }))
-                    .child(say(cx, Str::StatusBarManage)),
+                    .child(if install {
+                        install_label(cx)
+                    } else {
+                        say(cx, Str::StatusBarManage)
+                    }),
             )
     }
 }

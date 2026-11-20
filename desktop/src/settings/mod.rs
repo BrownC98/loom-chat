@@ -11,7 +11,7 @@ use gpui::{AnyElement, App, Entity, Global, IntoElement, WeakEntity};
 
 pub use dialog::{Dialog, DialogEvent};
 pub use patch::{Writer, settings_patch};
-pub use tabs::{keep_focus, modal};
+pub use tabs::{keep_focus, login, modal};
 
 use crate::store::Store;
 use crate::theme::Theme;
@@ -80,6 +80,10 @@ pub fn want_accounts(cx: &mut App) {
 
 pub fn want_agents(cx: &mut App) {
     cx.set_global(Wanted(nav::Tab::Agents));
+}
+
+pub fn want_about(cx: &mut App) {
+    cx.set_global(Wanted(nav::Tab::About));
 }
 
 fn take_wanted(cx: &mut App) -> Option<nav::Tab> {

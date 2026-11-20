@@ -1,24 +1,32 @@
+use std::sync::Arc;
+
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    AnyElement, Context, Entity, EventEmitter, FontWeight, InteractiveElement, IntoElement,
-    MouseButton, MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Window,
-    div,
+    AnyElement, App, Context, Entity, EventEmitter, FontWeight, InteractiveElement, IntoElement,
+    MouseButton, MouseDownEvent, ParentElement, Render, StatefulInteractiveElement, Styled, Task,
+    Window, div,
 };
 
+use api::graph::errors::LaunchError;
 use api::graph::{NewNode, Place};
 use api::ids::AgentId;
-use api::profile::AgentView;
+use api::profile::{AgentView, Profile, Provider};
 use api::repos::PlaceView;
+use api::settings::accounts::{AccountView, PlaceUsage};
 use api::start::{ModelChoice, Start};
 
 use crate::fonts;
+use crate::link;
 use crate::scale::px;
+use crate::settings::{login, want_agents};
 use crate::store::Store;
 use crate::strings::{Lang, Str};
 use crate::theme::Theme;
 use crate::views::field::{self, Field, FieldEvent, Form};
-use crate::views::icons::{Lucide, icon};
+use crate::views::icons::{Lucide, agent_mark, icon};
 use crate::views::scrollbar::Bar;
+use crate::views::ui::{button, open_url};
+use crate::views::usage::{self, ACCOUNTS};
 use crate::views::worktree::Closed;
 
 const WIDTH: f32 = 340.0;
@@ -35,11 +43,17 @@ pub struct NewNodeView {
     place: Place,
     branch: String,
     at: PlaceView,
-    recent: Option<Option<AgentId>>,
-    agents: Option<Vec<AgentView>>,
+    recent: Option<AgentId>,
+    agents: Option<Arc<Vec<AgentView>>>,
+    accounts: Option<Vec<AccountView>>,
+    cursor: Option<Vec<PlaceUsage>>,
+    load_accounts: Option<Task<()>>,
+    scanning: bool,
     field: Entity<Field>,
     picked: Option<Option<AgentId>>,
     error: Option<String>,
+    sign_in: Option<(AgentId, login::Request)>,
+    login_dialog: Option<Entity<login::Dialog>>,
     busy: bool,
     reveal: bool,
     scroll: Bar,
@@ -103,7 +117,7 @@ impl NewNodeView {
             FieldEvent::Enter => {
                 let active = this.active(cx);
                 if let Some(choice) = active {
-                    this.create(choice, cx);
+                    this.launch(this.key(&choice), cx);
                 }
             }
             FieldEvent::Escape => cx.emit(Closed),
@@ -119,41 +133,77 @@ impl NewNodeView {
                 .iter()
                 .filter(|n| n.parent.is_none())
                 .max_by_key(|n| n.id.0)
-                .map(|n| n.agent.clone())
+                .and_then(|n| n.agent.clone())
         });
-        let task = store.update(cx, |store, cx| store.agents(cx));
-        cx.spawn(async move |this, cx| {
-            let loaded = task.await;
-            let _ = this.update(cx, |this, cx| {
-                match loaded {
-                    Ok(agents) => this.agents = Some(agents),
-                    Err(error) => {
-                        this.agents = Some(Vec::new());
-                        this.error = Some(error);
-                    }
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        Self {
+        let mut view = Self {
             store,
             place,
             branch,
             at,
             recent,
             agents: None,
+            accounts: None,
+            cursor: None,
+            load_accounts: None,
+            scanning: false,
             field,
             picked: None,
             error: None,
+            sign_in: None,
+            login_dialog: None,
             busy: false,
             reveal: false,
             scroll: Bar::new(),
+        };
+        view.scan(cx);
+        view
+    }
+
+    fn scan(&mut self, cx: &mut Context<Self>) {
+        if self.scanning || self.busy || self.login_dialog.is_some() {
+            return;
         }
+        self.scanning = true;
+        self.error = None;
+        let agents = self.store.update(cx, |store, cx| store.agents(cx));
+        let accounts = self
+            .store
+            .read(cx)
+            .call(cx, |base| link::read(base, ACCOUNTS));
+        let cursor = self
+            .store
+            .read(cx)
+            .call(cx, |base| link::read(base, login::CURSOR_USAGE));
+        self.load_accounts = Some(cx.spawn(async move |this, cx| {
+            let (accounts, cursor) = (accounts.await, cursor.await);
+            let _ = this.update(cx, |this, cx| {
+                this.accounts = accounts.ok();
+                this.cursor = cursor.ok();
+                cx.notify();
+            });
+        }));
+        cx.spawn(async move |this, cx| {
+            let agents = agents.await;
+            let _ = this.update(cx, |this, cx| {
+                this.scanning = false;
+                match agents {
+                    Ok(agents) => this.agents = Some(agents),
+                    Err(error) => this.error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     fn place_view(&self) -> PlaceView {
-        agent_place(&self.at, self.agents.as_deref().unwrap_or_default())
+        let agents = self
+            .agents
+            .as_deref()
+            .map(Vec::as_slice)
+            .unwrap_or_default();
+        agent_place(&self.at, agents)
     }
 
     fn choices(&self) -> Vec<Choice> {
@@ -161,10 +211,7 @@ impl NewNodeView {
             return Vec::new();
         };
         let at = self.place_view();
-        let mut all = vec![Choice {
-            agent: None,
-            installed: true,
-        }];
+        let mut all = Vec::new();
         for installed in [true, false] {
             all.extend(
                 agents
@@ -176,24 +223,29 @@ impl NewNodeView {
                         installed,
                     }),
             );
+            if installed {
+                all.push(Choice {
+                    agent: None,
+                    installed: true,
+                });
+            }
         }
         all
     }
 
     fn key(&self, choice: &Choice) -> Option<AgentId> {
-        choice
-            .agent
-            .and_then(|i| self.agents.as_ref().map(|a| a[i].id.clone()))
+        self.agent(choice).map(|agent| agent.id.clone())
+    }
+
+    fn agent(&self, choice: &Choice) -> Option<&AgentView> {
+        self.agents.as_ref()?.get(choice.agent?)
     }
 
     fn label(&self, choice: &Choice, lang: Lang) -> String {
-        match choice.agent {
-            Some(i) => self
-                .agents
-                .as_ref()
-                .map_or_else(String::new, |a| a[i].label.clone()),
-            None => Str::NewNodeShell.text(lang).to_owned(),
-        }
+        self.agent(choice).map_or_else(
+            || Str::NewNodeShell.text(lang).to_owned(),
+            |agent| agent.label.clone(),
+        )
     }
 
     fn shown(&self, lang: Lang, cx: &gpui::App) -> Vec<Choice> {
@@ -205,27 +257,19 @@ impl NewNodeView {
     }
 
     fn active_in(&self, shown: &[Choice]) -> Option<Choice> {
-        let selectable: Vec<&Choice> = shown.iter().filter(|c| c.installed).collect();
-        let all = self.choices();
-        let installed: Vec<&Choice> = all.iter().filter(|c| c.installed).collect();
-        let fallback = installed
-            .iter()
-            .find(|c| {
-                self.recent
-                    .as_ref()
-                    .is_some_and(|recent| self.key(c) == *recent)
-            })
-            .or_else(|| installed.iter().find(|c| c.agent.is_some()))
-            .or(installed.first());
-        let wanted = match &self.picked {
-            Some(key) => key.clone(),
-            None => fallback.and_then(|c| self.key(c)),
-        };
-        selectable
-            .iter()
-            .find(|c| self.key(c) == wanted)
-            .or(selectable.first())
-            .map(|c| (*c).clone())
+        let selectable = || shown.iter().filter(|choice| choice.installed);
+        if let Some(choice) = self
+            .picked
+            .as_ref()
+            .and_then(|wanted| selectable().find(|choice| self.key(choice) == *wanted))
+        {
+            return Some(choice.clone());
+        }
+        let installed = || selectable().filter(|choice| choice.agent.is_some());
+        installed()
+            .find(|choice| self.key(choice) == self.recent)
+            .or_else(|| installed().next())
+            .cloned()
     }
 
     fn active(&self, cx: &gpui::App) -> Option<Choice> {
@@ -242,23 +286,128 @@ impl NewNodeView {
         }
         let at = self
             .active_in(&shown)
-            .and_then(|a| selectable.iter().position(|c| self.key(c) == self.key(&a)))
-            .map_or(-1, |i| i as isize);
-        let next = selectable[(at + step).rem_euclid(selectable.len() as isize) as usize];
-        self.picked = Some(self.key(next));
+            .and_then(|a| selectable.iter().position(|c| self.key(c) == self.key(&a)));
+        let start = at.map_or(if step > 0 { -1 } else { 0 }, |i| i as isize);
+        let next = selectable[(start + step).rem_euclid(selectable.len() as isize) as usize];
+        self.pick(self.key(next), cx);
+    }
+
+    fn pick(&mut self, agent: Option<AgentId>, cx: &mut Context<Self>) {
+        if self.busy || self.login_dialog.is_some() {
+            return;
+        }
+        self.picked = Some(agent);
+        self.error = None;
+        self.sign_in = None;
         self.reveal = true;
         cx.notify();
     }
 
-    fn create(&mut self, choice: Choice, cx: &mut Context<Self>) {
-        if self.busy || !choice.installed {
+    fn account(&self, provider: Provider, distro: Option<&str>, cx: &App) -> Option<&AccountView> {
+        let own: Vec<_> = self
+            .accounts
+            .as_ref()?
+            .iter()
+            .filter(|a| a.provider == provider && a.distro.as_deref() == distro)
+            .collect();
+        let selected = self.store.read(cx).settings().account(provider, distro);
+        Some(own[usage::active_index(&own, selected)?])
+    }
+
+    fn account_line(&self, agent: &AgentView, multi: bool, cx: &App) -> Option<String> {
+        let lang = *cx.global::<Lang>();
+        let distro = match &self.at {
+            PlaceView::Pc => None,
+            PlaceView::Wsl { distro } => Some(distro.as_str()),
+            PlaceView::Ssh { host } => {
+                return agent
+                    .provider
+                    .map(|_| Str::NewNodeAccountSsh.with(lang, &[("host", host)]));
+            }
+        };
+        let (name, limits) = if agent.profile == Profile::Cursor {
+            let entry = self
+                .cursor
+                .as_ref()?
+                .iter()
+                .find(|entry| entry.distro.as_deref() == distro)?;
+            let name = entry
+                .usage
+                .email
+                .clone()
+                .unwrap_or_else(|| usage::unnamed(true, cx));
+            (name, &entry.usage.limits)
+        } else {
+            let account = self.account(agent.provider?, distro, cx)?;
+            (usage::account_name(account, cx), &account.usage.limits)
+        };
+        let usage = usage::problem(limits, cx).unwrap_or_else(|| {
+            usage::inline_marks(limits, cx)
+                .into_iter()
+                .map(|(label, used)| format!("{label} {used}%"))
+                .collect::<Vec<_>>()
+                .join(" · ")
+        });
+        let place = short_place(&self.at, lang);
+        let key = if multi {
+            Str::NewNodeAccountAt
+        } else {
+            Str::NewNodeAccount
+        };
+        let line = key.with(
+            lang,
+            &[("name", &name), ("place", &place), ("usage", &usage)],
+        );
+        Some(line.trim_end_matches(" · ").to_owned())
+    }
+
+    fn sign_in_request(
+        &self,
+        id: &AgentId,
+        distro: Option<&str>,
+        cx: &App,
+    ) -> Option<login::Request> {
+        if matches!(self.at, PlaceView::Ssh { .. }) {
+            return None;
+        }
+        let agent = self.agents.as_ref()?.iter().find(|agent| &agent.id == id)?;
+        (agent.profile == Profile::Cursor).then(|| login::Request::cursor(distro, &agent.label, cx))
+    }
+
+    fn open_login(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(base), Some((agent, request))) = (
+            self.store.read(cx).base().map(str::to_owned),
+            self.sign_in.clone(),
+        ) else {
+            return;
+        };
+        if self.login_dialog.is_some() {
             return;
         }
+        let dialog = login::Dialog::open(base, request, window, cx);
+        cx.subscribe(&dialog, move |this, _, outcome, cx| {
+            this.login_dialog = None;
+            if matches!(outcome, login::Finished::Succeeded) {
+                this.launch(Some(agent.clone()), cx);
+            }
+            cx.notify();
+        })
+        .detach();
+        self.login_dialog = Some(dialog);
+        cx.notify();
+    }
+
+    fn launch(&mut self, agent: Option<AgentId>, cx: &mut Context<Self>) {
+        if self.busy || self.scanning || self.login_dialog.is_some() {
+            return;
+        }
+        self.picked = Some(agent.clone());
         self.busy = true;
         self.error = None;
-        let start = match self.key(&choice) {
+        self.sign_in = None;
+        let start = match agent.as_ref() {
             Some(agent) => Start::Agent {
-                agent,
+                agent: agent.clone(),
                 brief: String::new(),
                 choice: ModelChoice::default(),
             },
@@ -281,7 +430,16 @@ impl NewNodeView {
                     cx.emit(Closed);
                 }
                 Err(error) => {
-                    this.error = Some(error);
+                    let lang = *cx.global::<Lang>();
+                    if let (Some(agent), Some(LaunchError::NotLoggedIn { distro, .. })) =
+                        (agent, error.launch_error())
+                        && let Some(request) = this.sign_in_request(&agent, distro.as_deref(), cx)
+                    {
+                        this.sign_in = Some((agent, request));
+                        this.error = Some(Str::UsageLoginRequired.text(lang).to_owned());
+                    } else {
+                        this.error = Some(error.text(lang));
+                    }
                     this.busy = false;
                     cx.notify();
                 }
@@ -304,6 +462,22 @@ impl Render for NewNodeView {
             || !matches!(at, PlaceView::Pc);
         let shown = self.shown(lang, cx);
         let active = self.active_in(&shown);
+        let agent = active.as_ref().and_then(|choice| self.agent(choice));
+        let account = agent.and_then(|agent| self.account_line(agent, multi, cx));
+        let bypass = |agent: &AgentView| {
+            agent.can_bypass
+                && !self
+                    .store
+                    .read(cx)
+                    .settings()
+                    .bypass_off
+                    .contains(&agent.id)
+        };
+        let show_bypass = agent.is_some_and(bypass);
+        let rescan = self
+            .agents
+            .as_ref()
+            .is_none_or(|agents| !agents.iter().any(|agent| usable(agent, &at)));
         let count = |installed: bool| {
             shown
                 .iter()
@@ -323,12 +497,15 @@ impl Render for NewNodeView {
         let mut rows: Vec<AnyElement> = Vec::new();
         let mut scroll_to = 0;
         if shown.is_empty() {
-            let text = if self.agents.is_none() {
-                Str::NewNodeLoading
+            let text = if self.scanning {
+                Str::StatusBarLoading.text(lang)
             } else {
-                Str::NewNodeNoMatch
+                match lang {
+                    Lang::Ko => "일치하는 AI 도구가 없습니다.",
+                    Lang::En => "No matching AI tools.",
+                }
             };
-            rows.push(heading(text.text(lang).to_owned()).into_any_element());
+            rows.push(heading(text.to_owned()).into_any_element());
         }
         for installed in [true, false] {
             let group: Vec<&Choice> = shown.iter().filter(|c| c.installed == installed).collect();
@@ -342,25 +519,25 @@ impl Render for NewNodeView {
                 (true, false) => Str::NewNodeInstalled.with(lang, &[("n", &n)]),
                 (false, _) => Str::NewNodeMissing.with(lang, &[("n", &count(false).to_string())]),
             };
-            rows.push(heading(title).into_any_element());
+            if count(installed) > 0 {
+                rows.push(heading(title).into_any_element());
+            }
             for choice in group {
+                let key = self.key(choice);
                 let selected = active
                     .as_ref()
-                    .is_some_and(|a| self.key(a) == self.key(choice) && a.installed);
+                    .is_some_and(|a| choice.installed && self.key(a) == key);
                 if selected {
                     scroll_to = rows.len();
                 }
-                let key = self.key(choice);
-                let recent =
-                    choice.installed && self.recent.as_ref().is_some_and(|recent| *recent == key);
+                let recent = choice.installed && key.is_some() && self.recent == key;
+                let row_agent = self.agent(choice);
+                let blocked = row_agent.is_some_and(|agent| blocked(agent, &at));
                 let tag = if !choice.installed {
-                    let agent = choice
-                        .agent
-                        .and_then(|i| self.agents.as_ref().map(|a| &a[i]));
-                    Some(if agent.is_some_and(|a| blocked(a, &at)) {
+                    Some(if blocked {
                         Str::NewNodeServerOnSsh.text(lang).to_owned()
                     } else if multi
-                        && agent.is_some_and(|a| a.places.iter().any(|p| p.path.is_some()))
+                        && row_agent.is_some_and(|a| a.places.iter().any(|p| p.path.is_some()))
                     {
                         Str::PlaceMissingAt.with(lang, &[("place", &tag_place(&at, lang))])
                     } else {
@@ -371,7 +548,11 @@ impl Render for NewNodeView {
                 } else {
                     None
                 };
-                let picked = choice.clone();
+                let picked = key.clone();
+                let installed = choice.installed;
+                let must_select = installed && !selected && row_agent.is_some_and(bypass);
+                let homepage = row_agent.map(|agent| agent.homepage.clone());
+                let label = self.label(choice, lang);
                 let ink = if choice.installed {
                     colors.ink
                 } else {
@@ -389,7 +570,7 @@ impl Render for NewNodeView {
                         .text_size(px(13.0))
                         .line_height(px(19.5))
                         .text_color(ink)
-                        .when(choice.installed, |row| {
+                        .when(!blocked, |row| {
                             row.cursor_pointer()
                                 .hover(move |style| style.bg(colors.surface_hover))
                         })
@@ -397,11 +578,32 @@ impl Render for NewNodeView {
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _: &MouseDownEvent, _, cx| {
-                                this.create(picked.clone(), cx);
+                                if must_select {
+                                    this.pick(picked.clone(), cx);
+                                } else if installed {
+                                    this.launch(picked.clone(), cx);
+                                } else if let Some(url) = homepage.as_deref().filter(|_| !blocked)
+                                    && open_url(url).is_err()
+                                {
+                                    this.error = Some(
+                                        match lang {
+                                            Lang::Ko => "설치 페이지를 열 수 없습니다.",
+                                            Lang::En => "Could not open the installation page.",
+                                        }
+                                        .to_owned(),
+                                    );
+                                    cx.notify();
+                                }
                                 cx.stop_propagation();
                             }),
                         )
-                        .child(self.label(choice, lang))
+                        .child(agent_mark(
+                            key.as_ref().map(|id| id.0.as_str()),
+                            &label,
+                            px(16.0),
+                            colors.ink_2,
+                        ))
+                        .child(label)
                         .when(recent, |row| {
                             row.child(
                                 div()
@@ -473,7 +675,10 @@ impl Render for NewNodeView {
                             .min_w_0()
                             .text_size(px(14.0))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(Str::GraphNewNode.text(lang))
+                            .child(match lang {
+                                Lang::Ko => "새 에이전트",
+                                Lang::En => "New agent",
+                            })
                             .child(
                                 div()
                                     .ml(px(6.0))
@@ -501,7 +706,10 @@ impl Render for NewNodeView {
                             .text_size(px(12.0))
                             .font_weight(FontWeight::SEMIBOLD)
                             .text_color(colors.ink_2)
-                            .child(Str::NewNodeProfile.text(lang)),
+                            .child(match lang {
+                                Lang::Ko => "AI 도구",
+                                Lang::En => "AI tool",
+                            }),
                     )
                     .child(self.field.clone()),
             )
@@ -524,6 +732,35 @@ impl Render for NewNodeView {
                     .bg(colors.bg)
                     .overflow_hidden(),
             )
+            .children((rescan && !self.scanning).then(|| {
+                div().flex().child(
+                    button("node-rescan", cx)
+                        .child(Str::SettingsRescan.text(lang))
+                        .on_click(cx.listener(|this, _, _, cx| this.scan(cx))),
+                )
+            }))
+            .children(account.map(|line| {
+                div()
+                    .text_size(px(12.0))
+                    .text_color(colors.ink_2)
+                    .child(line)
+            }))
+            .children(show_bypass.then(|| {
+                div()
+                    .id("node-bypass")
+                    .cursor_pointer()
+                    .text_size(px(12.0))
+                    .text_color(colors.accent)
+                    .hover(|style| style.underline())
+                    .on_click(cx.listener(|_, _, window, cx| {
+                        cx.emit(Closed);
+                        window.defer(cx, |window, cx| {
+                            want_agents(cx);
+                            window.dispatch_action(Box::new(crate::views::shell::OpenSettings), cx);
+                        });
+                    }))
+                    .child(Str::NewNodeBypass.text(lang))
+            }))
             .children(match (&at, self.busy) {
                 (PlaceView::Wsl { distro }, true) => Some(
                     div()
@@ -539,5 +776,16 @@ impl Render for NewNodeView {
                     .text_color(colors.err)
                     .child(error)
             }))
+            .children(self.sign_in.as_ref().map(|_| {
+                div().flex().child(
+                    button("node-login", cx)
+                        .child(match lang {
+                            Lang::Ko => "로그인하기",
+                            Lang::En => "Sign in",
+                        })
+                        .on_click(cx.listener(|this, _, window, cx| this.open_login(window, cx))),
+                )
+            }))
+            .children(self.login_dialog.clone())
     }
 }

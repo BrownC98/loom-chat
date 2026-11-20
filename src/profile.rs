@@ -372,6 +372,24 @@ pub fn catalog_commands() -> Vec<&'static str> {
         .collect()
 }
 
+pub(crate) fn single_login_cli(profile: Profile) -> Option<(&'static str, &'static str)> {
+    if !matches!(adapter(profile).facts().logins, Logins::One(_)) {
+        return None;
+    }
+    CATALOG
+        .iter()
+        .find(|agent| agent.profile == Some(profile))
+        .map(|agent| (agent.label.as_str(), agent.cmd.as_str()))
+}
+
+pub(crate) fn login_commands() -> impl Iterator<Item = &'static str> {
+    with_accounts().map(|account| account.cli.command).chain(
+        profiles()
+            .filter_map(single_login_cli)
+            .map(|(_, command)| command),
+    )
+}
+
 fn installed(agent: &Agent) -> Option<PathBuf> {
     std::iter::once(&agent.cmd)
         .chain(&agent.aliases)

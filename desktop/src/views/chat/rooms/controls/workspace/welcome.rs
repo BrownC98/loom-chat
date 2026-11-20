@@ -184,6 +184,7 @@ impl Welcome {
                     let task =
                         cx.update(|cx| store.update(cx, |store, cx| store.create_node(body, cx)));
                     task.await
+                        .map_err(|error| cx.update(|cx| error.text(*cx.global::<Lang>())))
                 }
                 Err(error) => Err(error),
             };

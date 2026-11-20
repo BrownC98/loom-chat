@@ -30,7 +30,7 @@ use super::widgets::btn;
 use super::workspace::pop;
 use composer::Composer;
 use data::ChatData;
-use rooms::{Rooms, RoomsEvent};
+use rooms::{Rooms, SelectRoom};
 use side::{SideEvent, SideSlot, SideTab};
 use stream::{Quote, Stream, StreamEvent};
 
@@ -162,12 +162,9 @@ impl Chat {
         cx.observe(&data, |_, _, cx| cx.notify()).detach();
         cx.observe(&graph, |_, _, cx| cx.notify()).detach();
         cx.observe(&rooms, |_, _, cx| cx.notify()).detach();
-        cx.subscribe_in(&rooms, window, |this, _, event, window, cx| match event {
-            RoomsEvent::Select(room) => {
-                this.close_sidebar_overlay(window, cx);
-                this.open_room(room, cx);
-            }
-            RoomsEvent::ScratchChanged => cx.notify(),
+        cx.subscribe_in(&rooms, window, |this, _, room: &SelectRoom, window, cx| {
+            this.close_sidebar_overlay(window, cx);
+            this.open_room(&room.0, cx);
         })
         .detach();
         cx.subscribe(&graph, |this, _, state: &LinkState, cx| {

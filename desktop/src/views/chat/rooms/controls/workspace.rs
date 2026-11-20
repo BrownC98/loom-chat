@@ -27,7 +27,7 @@ use super::{
     Index, Overlay, Panel, Removal, Rooms, below, calls, chevron, option, place_of, words, work_in,
     work_label,
 };
-use crate::views::chat::rooms::{RoomsEvent, badge};
+use crate::views::chat::rooms::badge;
 
 impl Rooms {
     pub(in crate::views::chat::rooms) fn workspace_controls(
@@ -162,7 +162,6 @@ impl Rooms {
         self.action_error = None;
         self.starting_scratch = true;
         cx.notify();
-        cx.emit(RoomsEvent::ScratchChanged);
         let from_picker = self.overlay.is_some();
         let store = self.store(cx);
         let task = scratch(&store, cx);
@@ -170,7 +169,6 @@ impl Rooms {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 this.starting_scratch = false;
-                cx.emit(RoomsEvent::ScratchChanged);
                 if result.is_ok() {
                     this.store(cx).update(cx, |store, cx| store.reload(cx));
                 }
@@ -194,7 +192,6 @@ impl Rooms {
                     Ok(_) => {}
                     Err(error) => {
                         this.action_error = Some(error);
-                        cx.notify();
                     }
                 }
             });

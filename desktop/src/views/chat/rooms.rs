@@ -33,12 +33,9 @@ const ROW_HEIGHT: f32 = 42.0;
 const SMALL: f32 = 12.0;
 const ROW_ACTIONS: &str = "chat-room-actions";
 
-pub(super) enum RoomsEvent {
-    Select(String),
-    ScratchChanged,
-}
+pub(super) struct SelectRoom(pub(super) String);
 
-impl EventEmitter<RoomsEvent> for Rooms {}
+impl EventEmitter<SelectRoom> for Rooms {}
 
 pub struct Rooms {
     data: Entity<ChatData>,
@@ -70,15 +67,12 @@ impl Rooms {
             }
         })
         .detach();
-        cx.observe(&data, |_, _, cx| cx.notify()).detach();
-        let graph = data.read(cx).graph().clone();
-        cx.observe(&graph, |_, _, cx| cx.notify()).detach();
         let new_room = cx.focus_handle().tab_stop(true);
         let create = cx.new(|cx| CreateRoom::new(data.clone(), cx));
         cx.subscribe(&create, |this, _, created: &create::Created, cx| {
             this.restore(cx);
             this.workspace = None;
-            cx.emit(RoomsEvent::Select(created.0.clone()));
+            cx.emit(SelectRoom(created.0.clone()));
         })
         .detach();
         Self {
@@ -555,7 +549,7 @@ impl Rooms {
             .cursor_pointer()
             .hover(move |row| row.bg(c.surface_hover))
             .capture_any_mouse_down(keep_ime_focus)
-            .on_click(cx.listener(move |_, _, _, cx| cx.emit(RoomsEvent::Select(id.clone()))))
+            .on_click(cx.listener(move |_, _, _, cx| cx.emit(SelectRoom(id.clone()))))
     }
 
     fn room_list(&self, rows: Vec<Row>, selection: Option<String>, cx: &Context<Self>) -> Div {

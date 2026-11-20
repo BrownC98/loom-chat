@@ -165,19 +165,42 @@ impl SideSlot {
                         .iter()
                         .any(|member| member.terminal().is_some())
             });
+        let missing_docs = self.tab() == Some(SideTab::Docs) && !self.has_docs(cx);
         self.room = room.map(|room| room.id.clone());
         self.member = None;
         self.clear_tab(cx);
-        if missing_terminal {
+        if missing_terminal || missing_docs {
             self.panel = Some(Panel::Members);
         } else if let Some(Panel::History(history)) = &mut self.panel {
             history.reset();
         }
     }
 
+    fn has_docs(&self, cx: &App) -> bool {
+        let data = self.data.read(cx);
+        data.room()
+            .is_some_and(|room| !panels::doc_ids(data, room, cx).is_empty())
+    }
+
+    fn shown_tabs(&self, selected: SideTab, cx: &App) -> Vec<SideTab> {
+        let docs = self.has_docs(cx);
+        SideTab::ALL
+            .into_iter()
+            .filter(|&tab| {
+                tab == selected
+                    || match tab {
+                        SideTab::Members | SideTab::Terminal => true,
+                        SideTab::Docs => docs,
+                        SideTab::History => false,
+                    }
+            })
+            .collect()
+    }
+
     fn tabs(&self, selected: SideTab, cx: &mut Context<Self>) -> Div {
         let c = ui::colors(cx);
-        let tabs = SideTab::ALL.into_iter().map(|tab| {
+        let shown = self.shown_tabs(selected, cx);
+        let tabs = shown.clone().into_iter().map(|tab| {
             let active = selected == tab;
             let color = if active { c.ink } else { c.ink_2 };
             let label = tab.label(cx);
@@ -188,13 +211,11 @@ impl SideSlot {
                 .aria_label(label)
                 .aria_selected(active)
                 .flex()
-                .flex_auto()
-                .min_w_0()
-                .justify_center()
+                .flex_none()
                 .items_center()
-                .gap(px(3.0))
+                .gap(px(5.0))
                 .h(px(36.0))
-                .px(px(2.0))
+                .px(px(7.0))
                 .border_b_2()
                 .border_color(if active {
                     c.accent.into()
@@ -213,7 +234,7 @@ impl SideSlot {
                 .hover(move |style| style.bg(c.surface_hover))
                 .tooltip(tip(label.to_owned()))
                 .child(icon(tab.icon(), px(13.0), color))
-                .child(div().truncate().child(label))
+                .child(label)
                 .on_click(cx.listener(move |this, _, _, cx| this.show(tab, cx)))
         });
         let close = ui::say(cx, Str::CommonClose);
@@ -222,7 +243,8 @@ impl SideSlot {
             .flex_none()
             .items_center()
             .gap(px(2.0))
-            .px(px(6.0))
+            .h(px(37.0))
+            .px(px(8.0))
             .border_b_1()
             .border_color(c.line)
             .child(
@@ -232,6 +254,7 @@ impl SideSlot {
                     .flex()
                     .flex_1()
                     .min_w_0()
+                    .overflow_hidden()
                     .gap(px(2.0))
                     .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                         let step = match event.keystroke.key.as_str() {
@@ -239,10 +262,13 @@ impl SideSlot {
                             "right" => 1,
                             _ => return,
                         };
-                        let count = SideTab::ALL.len() as isize;
-                        let index = (selected as isize + step).rem_euclid(count) as usize;
-                        this.show(SideTab::ALL[index], cx);
-                        window.focus(&this.tab_focus[index], cx);
+                        let Some(at) = shown.iter().position(|&tab| tab == selected) else {
+                            return;
+                        };
+                        let next =
+                            shown[(at as isize + step).rem_euclid(shown.len() as isize) as usize];
+                        this.show(next, cx);
+                        window.focus(&this.tab_focus[next as usize], cx);
                         cx.stop_propagation();
                     }))
                     .children(tabs),
@@ -256,7 +282,7 @@ impl SideSlot {
                     .flex_none()
                     .justify_center()
                     .tooltip(tip(close.to_owned()))
-                    .child(icon(Lucide::X, px(14.0), c.ink_2))
+                    .child(icon(Lucide::X, px(14.0), c.ink_3))
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(SideEvent::Close))),
             )
     }

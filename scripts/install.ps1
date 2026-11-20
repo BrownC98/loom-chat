@@ -26,8 +26,6 @@ function Install-File($from, $to) {
 
 Get-ChildItem -Path $dir -Filter '*.exe.*.old' -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
 Remove-Item $unpack -Recurse -Force -ErrorAction SilentlyContinue
-$with_linux = $linux_url -ne $url
-
 $with_desktop = $false
 if ($desktop_url -ne $url) {
   try {
@@ -50,8 +48,10 @@ if ($with_desktop) {
   Invoke-WebRequest -Uri $url -OutFile "$exe.new" -UseBasicParsing
 }
 $bundled_linux = Join-Path $unpack '*\loom-linux'
+$with_linux = $with_web -and $linux_url -ne $url
 if ($with_desktop -and (Test-Path $bundled_linux)) {
   Move-Item -Force $bundled_linux "$linux.new"
+  $with_linux = $true
 } elseif ($with_linux) {
   Invoke-WebRequest -Uri $linux_url -OutFile "$linux.new" -UseBasicParsing
 }

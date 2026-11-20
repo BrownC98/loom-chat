@@ -197,17 +197,18 @@ jobs:
         with:
           workspaces: desktop
           shared-key: native-desktop
-      - name: 데스크톱 빌드
-        run: cargo build --release
-        working-directory: desktop
-        env:
-          LOOM_VERSION: ${{ needs.installer.outputs.version }}
       - name: Linux loom 받기
         if: runner.os == 'Windows'
         uses: actions/download-artifact@v8.0.2
         with:
           name: loom-linux
           path: ${{ runner.temp }}/linux
+      - name: 데스크톱 빌드
+        run: cargo build --release
+        working-directory: desktop
+        env:
+          LOOM_VERSION: ${{ needs.installer.outputs.version }}
+          LOOM_EMBED_LINUX: ${{ runner.os == 'Windows' && format('{0}/linux/loom', runner.temp) || '' }}
       - name: 데스크톱 실행 파일을 Release에 올리기
         run: |
           version=v${{ needs.installer.outputs.version }}
@@ -228,7 +229,6 @@ jobs:
             iconutil -c icns "$iconset" -o "$dir/icon.icns"
             tar -czf "${{ matrix.asset }}" "$dir"
           else
-            cp "$RUNNER_TEMP/linux/loom" "$dir/loom-linux"
             7z a -tzip "${{ matrix.asset }}" "$dir"
           fi
           cp "desktop/target/release/${{ matrix.desktop }}" "$RUNNER_TEMP/${{ matrix.bare }}"

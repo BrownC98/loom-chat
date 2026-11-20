@@ -6,6 +6,7 @@ use gpui::{
 use crate::scale::px;
 use crate::strings::Str;
 use crate::views::dock::ui::{TEXT, button, colors, say};
+use crate::views::widgets::btn::filled;
 
 const WIDTH: f32 = 380.0;
 
@@ -53,9 +54,7 @@ pub fn confirm(
                                 .on_click(on_cancel),
                         )
                         .child(
-                            button("confirm-accept", cx)
-                                .bg(c.accent)
-                                .text_color(c.accent_ink)
+                            filled("confirm-accept", c.err, c.err_ink, cx)
                                 .child(accept.to_owned())
                                 .on_click(on_accept),
                         ),

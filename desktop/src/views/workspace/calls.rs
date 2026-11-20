@@ -6,7 +6,7 @@ use gpui::{Context, Entity};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use api::repos::{FolderList, Locations};
+use api::repos::{FolderList, Locations, RepoView};
 use api::settings::places::{DistroView, ReachView};
 
 use crate::link;
@@ -69,36 +69,29 @@ pub fn rename_worktree(base: &str, repo: u32, path: &str, name: &str) -> Result<
     )
 }
 
-pub fn add_repo(base: &str, path: &str) -> Result<u32, Failure> {
-    added(sent(base, "/api/repos", json!({ "path": path }))?)
+pub fn add_repo(base: &str, path: &str) -> Result<RepoView, Failure> {
+    sent(base, "/api/repos", json!({ "path": path }))
 }
 
-pub fn init_repo(base: &str, path: &str) -> Result<u32, Failure> {
-    added(sent(base, "/api/repos/init", json!({ "path": path }))?)
+pub fn init_repo(base: &str, path: &str) -> Result<RepoView, Failure> {
+    sent(base, "/api/repos/init", json!({ "path": path }))
 }
 
-pub fn clone_repo(base: &str, url: &str, parent: &str) -> Result<u32, Failure> {
-    added(link::post_within(
+pub fn clone_repo(base: &str, url: &str, parent: &str) -> Result<RepoView, Failure> {
+    link::post_within(
         base,
         "/api/repos/clone",
         body(json!({ "url": url, "parent": parent })),
         CLONE_LIMIT,
-    )?)
+    )
 }
 
-pub fn create_repo(base: &str, parent: &str, name: &str) -> Result<u32, Failure> {
-    added(sent(
+pub fn create_repo(base: &str, parent: &str, name: &str) -> Result<RepoView, Failure> {
+    sent(
         base,
         "/api/repos/create",
         json!({ "parent": parent, "name": name }),
-    )?)
-}
-
-fn added(repo: Value) -> Result<u32, Failure> {
-    repo.get("id")
-        .and_then(Value::as_u64)
-        .map(|id| id as u32)
-        .ok_or_else(|| Failure::Other("repo: no id".to_owned()))
+    )
 }
 
 pub fn folders(base: &str, path: Option<&str>) -> Result<FolderList, Failure> {

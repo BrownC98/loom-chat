@@ -2,7 +2,8 @@ mod actions;
 mod workspace;
 
 use api::graph::Place;
-use api::ids::NodeId;
+use api::graph::chat::ChatRoomKind;
+use api::ids::{NodeId, RepoId};
 use api::repos::{PlaceView, RepoView, Worktree};
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -20,7 +21,7 @@ use crate::views::new_node::NewNodeView;
 use crate::views::tooltip::tip;
 use crate::views::ui::{colors, say};
 use crate::views::widgets::btn;
-use crate::views::workspace::{AddRepo, calls, pop};
+use crate::views::workspace::{AddRepo, AddRepoEvent, calls, pop};
 use crate::views::worktree::{Closed, DeleteWorktreeView, Doomed, NewWorktreeView};
 
 use super::list::Index;
@@ -47,9 +48,9 @@ pub(super) enum Panel {
     New,
     AgentPlace,
     WorktreeRepo,
-    Agent(NodeId),
     Parent(NodeId),
-    Work(Place),
+    Room(String),
+    Confirm(Removal, String),
     Rename {
         target: Rename,
         field: Entity<Field>,
@@ -59,14 +60,26 @@ pub(super) enum Panel {
 }
 
 #[derive(Clone)]
+pub(super) enum Removal {
+    Agent(NodeId),
+    Workspace(RepoId),
+    Room(String),
+}
+
+#[derive(Clone)]
 pub(super) enum Rename {
     Agent(NodeId),
     Work(Place),
+    Room { id: String, members: Vec<NodeId> },
 }
 
 impl Rooms {
     fn store(&self, cx: &App) -> Entity<Store> {
         self.data.read(cx).graph().clone()
+    }
+
+    pub(in crate::views::chat) fn blocks_shortcuts(&self, cx: &App) -> bool {
+        self.overlay.is_some() || self.create.read(cx).is_open()
     }
 
     fn open_panel(
@@ -80,6 +93,7 @@ impl Rooms {
             self.return_focus = window.focused(cx);
         }
         self.action_error = None;
+        self.copied_address = false;
         self.overlay = Some(Overlay::Panel { at, panel });
         window.focus(&self.panel_focus, cx);
         cx.notify();
@@ -103,15 +117,26 @@ impl Rooms {
     ) where
         T: gpui::Render + gpui::EventEmitter<Closed>,
     {
-        if self.overlay.is_none() {
-            self.return_focus = previous;
-        }
         let closed = cx.subscribe_in(&view, window, |this, _, _: &Closed, window, cx| {
             this.close_overlay(window, cx);
         });
+        self.show_dialog(view.into(), at, previous, closed, cx);
+    }
+
+    fn show_dialog(
+        &mut self,
+        view: AnyView,
+        at: Option<Point<Pixels>>,
+        previous: Option<FocusHandle>,
+        closed: Subscription,
+        cx: &mut Context<Self>,
+    ) {
+        if self.overlay.is_none() {
+            self.return_focus = previous;
+        }
         self.overlay = Some(Overlay::Dialog {
             at,
-            view: view.into(),
+            view,
             _closed: closed,
         });
         cx.notify();
@@ -136,7 +161,17 @@ impl Rooms {
             .collect();
         let previous = window.focused(cx);
         let view = cx.new(|cx| AddRepo::new(store, hosts, at, window, cx));
-        self.dialog(view, None, previous, window, cx);
+        let closed = cx.subscribe_in(
+            &view,
+            window,
+            move |this, _, event: &AddRepoEvent, window, cx| {
+                this.close_overlay(window, cx);
+                if let AddRepoEvent::Added(repo) = event {
+                    this.agent_at_repo(repo, at, window, cx);
+                }
+            },
+        );
+        self.show_dialog(view.into(), None, previous, closed, cx);
     }
 
     fn open_agent(
@@ -230,21 +265,26 @@ impl Rooms {
                 PICKER_WIDTH,
                 self.worktree_repos(index, cx),
             ),
-            Panel::Agent(node) => (
-                words(cx, "에이전트 메뉴", "Agent menu"),
-                MENU_WIDTH,
-                self.agent_menu(index, *node, at, cx),
-            ),
             Panel::Parent(node) => (
-                words(cx, "부모 바꾸기", "Change parent"),
+                words(cx, "상위 에이전트 바꾸기", "Change parent"),
                 PICKER_WIDTH,
                 self.parent_menu(index, *node, cx),
             ),
-            Panel::Work(place) => (
-                words(cx, "워크트리 메뉴", "Worktree menu"),
-                MENU_WIDTH,
-                self.work_menu(place, at, cx),
-            ),
+            Panel::Room(id) => {
+                let room = index.rooms.iter().find(|room| room.id == *id)?;
+                let body = match &room.kind {
+                    ChatRoomKind::Agent { node } => self.agent_menu(index, *node, at, cx),
+                    ChatRoomKind::Custom => self.custom_menu(room, cx),
+                    ChatRoomKind::Work { place } => self.work_menu(index, place, at, cx),
+                    _ => div(),
+                };
+                (
+                    words(cx, "방 메뉴", "Room menu"),
+                    MENU_WIDTH,
+                    body.children(self.copy_option(room, cx)),
+                )
+            }
+            Panel::Confirm(removal, name) => self.removal_prompt(removal, name, cx),
             Panel::Rename { field, saving, .. } => (
                 say(cx, Str::RenameAction),
                 MENU_WIDTH,

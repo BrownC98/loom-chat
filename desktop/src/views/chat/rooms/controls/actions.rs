@@ -1,3 +1,4 @@
+use api::graph::chat::{ChatRoom, ChatRoomKind, SaveChatRoom};
 use api::graph::{Place, RelaunchOffer};
 use api::ids::NodeId;
 use api::repos::{RepoView, Worktree};
@@ -18,39 +19,44 @@ use crate::views::ui::{colors, say};
 use crate::views::widgets::btn;
 
 use super::{
-    Index, Overlay, Panel, Rename, Rooms, below, calls, note, option, words, work_in, work_label,
+    Index, MENU_WIDTH, Overlay, Panel, Removal, Rename, Rooms, below, calls, note, option, words,
+    work_in, work_label,
 };
 
 impl Rooms {
-    pub(in crate::views::chat) fn agent_actions(&self, node: NodeId, cx: &Context<Self>) -> Div {
-        div().flex_none().when(
-            self.store(cx)
-                .read(cx)
-                .snapshot()
-                .is_some_and(|s| s.nodes.iter().any(|live| live.id == node)),
-            |slot| {
-                slot.child(
-                    self.tool(
-                        ("chat-agent-menu", node.0),
-                        Lucide::Ellipsis,
-                        words(cx, "에이전트 메뉴", "Agent menu"),
-                        cx,
-                    )
-                    .on_key_down(cx.listener(move |this, event, window, cx| {
-                        this.agent_rename_key(node, event, window, cx);
-                    }))
-                    .on_click(cx.listener(
-                        move |this, event: &ClickEvent, window, cx| {
-                            this.open_panel(Panel::Agent(node), below(event), window, cx);
-                        },
-                    )),
-                )
-            },
+    pub(in crate::views::chat) fn room_actions(
+        &self,
+        room: &ChatRoom,
+        cx: &Context<Self>,
+    ) -> Option<gpui::Stateful<Div>> {
+        if room.archived
+            && !matches!(room.kind, ChatRoomKind::Agent { node }
+                if self.store(cx).read(cx).snapshot().is_some_and(|snapshot| snapshot.nodes.iter().any(|agent| agent.id == node)))
+        {
+            return None;
+        }
+        let id = room.id.clone();
+        let mut button = self.tool(
+            "chat-room-menu",
+            Lucide::Ellipsis,
+            words(cx, "방 메뉴", "Room menu"),
+            cx,
+        );
+        if let ChatRoomKind::Agent { node } = room.kind {
+            button = button.on_key_down(cx.listener(move |this, event, window, cx| {
+                this.agent_rename_key(node, event, window, cx);
+            }));
+        }
+        Some(
+            button.on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                this.open_panel(Panel::Room(id.clone()), below(event), window, cx);
+            })),
         )
     }
 
     pub(in crate::views::chat::rooms) fn work_actions(
         &self,
+        room: &ChatRoom,
         place: &Place,
         tree: &Worktree,
         repo: &RepoView,
@@ -68,27 +74,12 @@ impl Rooms {
             .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                 this.open_agent(work.clone(), label.clone(), below(event), window, cx);
             }));
-        let work = place.clone();
         div()
             .flex()
             .flex_none()
             .gap(px(2.0))
-            .child(add)
-            .when(repo.git && !tree.original, |tools| {
-                tools.child(
-                    self.tool(
-                        "chat-work-menu",
-                        Lucide::Ellipsis,
-                        words(cx, "워크트리 메뉴", "Worktree menu"),
-                        cx,
-                    )
-                    .on_click(cx.listener(
-                        move |this, event: &ClickEvent, window, cx| {
-                            this.open_panel(Panel::Work(work.clone()), below(event), window, cx);
-                        },
-                    )),
-                )
-            })
+            .child(super::super::reveal_action(add))
+            .children(self.room_actions(room, cx).map(super::super::reveal_action))
     }
 
     pub(in crate::views::chat) fn agent_rename_key(
@@ -147,7 +138,11 @@ impl Rooms {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let field = field::new(Str::RenameLabel, cx);
+        let label = match target {
+            Rename::Room { .. } => Str::RoomName,
+            _ => Str::RenameLabel,
+        };
+        let field = field::new(label, cx);
         field.update(cx, |field, cx| field.set_text(&name, cx));
         let keys =
             cx.subscribe_in(
@@ -202,7 +197,18 @@ impl Rooms {
             return;
         }
         *saving = true;
-        let target = target.clone();
+        let mut target = target.clone();
+        if let Rename::Room { id, members } = &mut target
+            && let Some(room) = self
+                .data
+                .read(cx)
+                .rooms()
+                .iter()
+                .find(|room| room.id == *id)
+        {
+            members.clone_from(&room.members);
+        }
+        let refresh_room = matches!(target, Rename::Room { .. });
         let field = field.clone();
         field.update(cx, |field, cx| field.set_locked(true, cx));
         let store = self.store(cx);
@@ -211,13 +217,22 @@ impl Rooms {
             Rename::Work(place) => {
                 calls::rename_worktree(base, place.repo.0, &place.worktree, &name)
             }
+            Rename::Room { id, members } => link::put(
+                base,
+                &format!("/api/chat/rooms/{}", link::escape(&id)),
+                &SaveChatRoom { name, members },
+            ),
         });
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             let _ = this.update_in(cx, |this, window, cx| {
                 if result.is_ok() {
-                    this.store(cx).update(cx, |store, cx| store.reload(cx));
+                    if refresh_room {
+                        this.data.update(cx, |data, cx| data.refresh(cx));
+                    } else {
+                        this.store(cx).update(cx, |store, cx| store.reload(cx));
+                    }
                 }
                 let Some(Overlay::Panel {
                     panel:
@@ -281,6 +296,7 @@ impl Rooms {
                 cx,
             );
         };
+        let name = node.name.clone();
         let marked = node.bookmark.is_some();
         let relaunch = node.relaunch;
         let c = colors(cx);
@@ -333,17 +349,19 @@ impl Rooms {
                     this.apply(move |base| link::set_bookmark(base, id.0, !marked), cx);
                 })),
             )
-            .child(
-                option(
-                    "chat-agent-parent",
-                    Lucide::CornerLeftUp,
-                    words(cx, "부모 바꾸기", "Change parent"),
-                    cx,
+            .when(index.nodes.len() > 1, |menu| {
+                menu.child(
+                    option(
+                        "chat-agent-parent",
+                        Lucide::CornerLeftUp,
+                        words(cx, "상위 에이전트 바꾸기", "Change parent"),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.open_panel(Panel::Parent(id), at, window, cx);
+                    })),
                 )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.open_panel(Panel::Parent(id), at, window, cx);
-                })),
-            )
+            })
             .child(
                 option(
                     "chat-agent-remove",
@@ -353,8 +371,12 @@ impl Rooms {
                 )
                 .text_color(c.err)
                 .on_click(cx.listener(move |this, _, window, cx| {
-                    this.close_overlay(window, cx);
-                    this.apply(move |base| cardlink::remove_node(base, id.0), cx);
+                    this.open_panel(
+                        Panel::Confirm(Removal::Agent(id), name.clone()),
+                        at,
+                        window,
+                        cx,
+                    );
                 })),
             )
     }
@@ -439,7 +461,16 @@ impl Rooms {
             )
     }
 
-    pub(super) fn work_menu(&self, place: &Place, at: Point<Pixels>, cx: &Context<Self>) -> Div {
+    pub(super) fn work_menu(
+        &self,
+        index: &Index<'_>,
+        place: &Place,
+        at: Point<Pixels>,
+        cx: &Context<Self>,
+    ) -> Div {
+        if !work_in(index.repos, place).is_some_and(|(repo, tree)| repo.git && !tree.original) {
+            return div();
+        }
         let work = place.clone();
         let delete = place.clone();
         let c = colors(cx);
@@ -470,6 +501,201 @@ impl Rooms {
                     this.open_delete_worktree(delete.clone(), at, window, cx)
                 })),
             )
+    }
+
+    pub(super) fn custom_menu(&self, room: &ChatRoom, cx: &Context<Self>) -> Div {
+        let c = colors(cx);
+        let rename = Rename::Room {
+            id: room.id.clone(),
+            members: room.members.clone(),
+        };
+        let original_name = room.name.clone();
+        let members = room.clone();
+        let id = room.id.clone();
+        let name = room.name.clone();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(2.0))
+            .child(
+                option(
+                    "chat-custom-rename",
+                    Lucide::Pencil,
+                    say(cx, Str::RenameAction),
+                    cx,
+                )
+                .on_click(cx.listener(
+                    move |this, event: &ClickEvent, window, cx| {
+                        this.open_rename(
+                            rename.clone(),
+                            original_name.clone(),
+                            below(event),
+                            window,
+                            cx,
+                        );
+                    },
+                )),
+            )
+            .child(
+                option(
+                    "chat-custom-members",
+                    Lucide::Users,
+                    words(cx, "구성원 편집", "Edit members"),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.close_overlay(window, cx);
+                    this.create
+                        .update(cx, |editor, cx| editor.edit_members(&members, window, cx));
+                })),
+            )
+            .child(
+                option(
+                    "chat-custom-delete",
+                    Lucide::Trash2,
+                    words(cx, "방 삭제", "Delete room"),
+                    cx,
+                )
+                .text_color(c.err)
+                .on_click(cx.listener(
+                    move |this, event: &ClickEvent, window, cx| {
+                        this.open_panel(
+                            Panel::Confirm(Removal::Room(id.clone()), name.clone()),
+                            below(event),
+                            window,
+                            cx,
+                        );
+                    },
+                )),
+            )
+    }
+
+    pub(super) fn removal_prompt(
+        &self,
+        removal: &Removal,
+        name: &str,
+        cx: &Context<Self>,
+    ) -> (&'static str, f32, Div) {
+        let (title, accept) = match removal {
+            Removal::Agent(_) => (
+                words(cx, "에이전트를 삭제할까요?", "Delete this agent?"),
+                say(cx, Str::NodeRemove),
+            ),
+            Removal::Workspace(_) => (
+                words(
+                    cx,
+                    "작업공간을 목록에서 뺄까요?",
+                    "Remove this workspace from the list?",
+                ),
+                words(cx, "작업공간 빼기", "Remove workspace"),
+            ),
+            Removal::Room(_) => (
+                words(cx, "이 방을 삭제할까요?", "Delete this room?"),
+                words(cx, "방 삭제", "Delete room"),
+            ),
+        };
+        let removal = removal.clone();
+        let c = colors(cx);
+        let body = div()
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(note(name.to_owned(), cx))
+            .when(matches!(removal, Removal::Room(_)), |body| {
+                body.child(note(
+                    words(
+                        cx,
+                        "대화 기록은 보관합니다.",
+                        "Chat history stays available.",
+                    ),
+                    cx,
+                ))
+            })
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_end()
+                    .gap(px(5.0))
+                    .child(
+                        btn::ghost("chat-remove-cancel", cx)
+                            .child(say(cx, Str::CommonCancel))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.close_overlay(window, cx)),
+                            ),
+                    )
+                    .child(
+                        btn::button("chat-remove-confirm", cx)
+                            .text_color(c.err)
+                            .child(accept)
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.close_overlay(window, cx);
+                                match &removal {
+                                    Removal::Agent(id) => {
+                                        let id = *id;
+                                        this.apply(
+                                            move |base| cardlink::remove_node(base, id.0),
+                                            cx,
+                                        );
+                                    }
+                                    Removal::Workspace(repo) => this.remove_workspace(*repo, cx),
+                                    Removal::Room(id) => this.delete_room(id.clone(), cx),
+                                }
+                            })),
+                    ),
+            );
+        (title, MENU_WIDTH, body)
+    }
+
+    fn delete_room(&mut self, id: String, cx: &mut Context<Self>) {
+        let path = format!("/api/chat/rooms/{}", link::escape(&id));
+        cardlink::run(
+            &self.store(cx),
+            cx,
+            move |base| link::delete(base, &path),
+            move |this, result, cx| {
+                match result {
+                    Ok(()) => this.data.update(cx, |data, cx| data.refresh(cx)),
+                    Err(error) => this.action_error = Some(error),
+                }
+                cx.notify();
+            },
+        )
+        .detach();
+    }
+
+    pub(super) fn copy_option(
+        &self,
+        room: &ChatRoom,
+        cx: &Context<Self>,
+    ) -> Option<gpui::Stateful<Div>> {
+        if room.archived {
+            return None;
+        }
+        let graph = self.store(cx);
+        let base = graph.read(cx).base()?;
+        let url = format!("{}{}", base.trim_end_matches('/'), room.outside);
+        Some(
+            option(
+                "chat-copy-outside",
+                if self.copied_address {
+                    Lucide::Check
+                } else {
+                    Lucide::Copy
+                },
+                if self.copied_address {
+                    say(cx, Str::RoomCopied)
+                } else {
+                    words(cx, "외부 주소 복사", "Copy outside address")
+                },
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(url.clone()));
+                this.copied_address = true;
+                cx.notify();
+            })),
+        )
     }
 
     pub(super) fn rename_form(

@@ -1,10 +1,11 @@
+use api::graph::chat::ChatRoomKind;
 use api::ids::NodeId;
 use gpui::{
     Context, Div, Entity, FontWeight, IntoElement, ParentElement, Render, Role,
     StatefulInteractiveElement, Styled, Subscription, Window, div,
 };
 
-use super::members::Member;
+use super::members::{Member, MemberKey};
 use super::{SideSlot, scroller, unavailable, words};
 use crate::scale::px;
 use crate::store::Store;
@@ -74,9 +75,18 @@ impl SideSlot {
                 .or_else(|| members.first()),
         };
         let initial = chosen.map(|member| member.key.clone());
-        let node = room
-            .filter(|room| !room.archived)
-            .and_then(|_| chosen.and_then(Member::terminal));
+        let live_terminal = chosen.and_then(Member::terminal);
+        let node = room.and_then(|room| {
+            if let ChatRoomKind::Agent { node } = room.kind
+                && self.member == Some(MemberKey::Local(node))
+            {
+                Some(node)
+            } else if room.archived {
+                None
+            } else {
+                live_terminal
+            }
+        });
         let c = ui::colors(cx);
         let entity = cx.entity().downgrade();
         let rows: Vec<_> = if self.choosing {
@@ -159,15 +169,17 @@ impl SideSlot {
                             cx.notify();
                         }))
                 }))
-                .children((members.len() == 1 && node.is_some()).then(|| {
-                    div().text_color(c.ink_2).text_size(px(SMALL)).child(words(
-                        cx,
-                        "직접 칠 수 있습니다",
-                        "Type in the terminal",
-                    ))
-                }))
+                .children(
+                    (members.len() == 1 && node.is_some() && live_terminal.is_some()).then(|| {
+                        div().text_color(c.ink_2).text_size(px(SMALL)).child(words(
+                            cx,
+                            "직접 칠 수 있습니다",
+                            "Type in the terminal",
+                        ))
+                    }),
+                )
         });
-        if self.member.is_none() {
+        if self.member.is_none() && node.is_some() {
             self.member = initial;
         }
         self.terminal

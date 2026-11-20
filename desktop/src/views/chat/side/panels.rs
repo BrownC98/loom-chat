@@ -187,27 +187,7 @@ impl SideSlot {
         };
         let data = self.data.read(cx);
         let graph = data.graph();
-        let members: HashSet<_> = room.members.iter().copied().collect();
-        let from_stream = data.items().iter().filter_map(|item| match &item.entry {
-            ChatEntry::Wait { node, wait, .. }
-                if node.id.is_some_and(|id| members.contains(&id)) =>
-            {
-                wait.wait.doc.as_ref()
-            }
-            _ => None,
-        });
-        let from_graph = graph
-            .read(cx)
-            .snapshot()
-            .into_iter()
-            .flat_map(|snapshot| &snapshot.nodes)
-            .filter(|node| members.contains(&node.id))
-            .flat_map(|node| &node.waits)
-            .filter_map(|wait| wait.wait.doc.as_ref());
-        let ids: HashSet<_> = from_stream
-            .chain(from_graph)
-            .map(|doc| doc.id.as_str())
-            .collect();
+        let ids = doc_ids(data, room, cx);
         let mut shown = docs
             .iter()
             .filter(|doc| ids.contains(doc.id.as_str()))
@@ -309,6 +289,29 @@ impl SideSlot {
             move |target, cx| follow_link(&follow, target, cx),
         )
     }
+}
+
+pub(super) fn doc_ids<'a>(data: &'a ChatData, room: &ChatRoom, cx: &'a App) -> HashSet<&'a str> {
+    let members: HashSet<_> = room.members.iter().copied().collect();
+    let from_stream = data.items().iter().filter_map(|item| match &item.entry {
+        ChatEntry::Wait { node, wait, .. } if node.id.is_some_and(|id| members.contains(&id)) => {
+            wait.wait.doc.as_ref()
+        }
+        _ => None,
+    });
+    let from_graph = data
+        .graph()
+        .read(cx)
+        .snapshot()
+        .into_iter()
+        .flat_map(|snapshot| &snapshot.nodes)
+        .filter(|node| members.contains(&node.id))
+        .flat_map(|node| &node.waits)
+        .filter_map(|wait| wait.wait.doc.as_ref());
+    from_stream
+        .chain(from_graph)
+        .map(|doc| doc.id.as_str())
+        .collect()
 }
 
 fn notice(text: Str, cx: &App) -> Div {

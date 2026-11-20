@@ -114,7 +114,7 @@ impl Usage {
             };
             body = body.child(div().text_color(c.ink_2).child(say(cx, status)));
         }
-        let no_agents = self.no_agents(cx);
+        let no_agents = self.store.read(cx).no_tools();
         if self.accounts.is_some() && !no_agents {
             for provider in PROVIDERS {
                 body = body.child(self.section(provider, distro, c, cx));
@@ -417,7 +417,7 @@ impl Usage {
     }
 
     fn foot(&self, _: Option<&str>, c: &Colors, cx: &mut Context<Self>) -> Div {
-        let install = self.no_agents(cx);
+        let install = self.store.read(cx).no_tools();
         let read = usage::oldest_read(
             self.accounts.as_deref().unwrap_or_default(),
             self.cursor.as_deref().unwrap_or_default(),

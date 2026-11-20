@@ -19,7 +19,10 @@ use crate::views::pictures;
 use crate::views::tooltip::tip;
 use crate::views::{status, ui, widgets::btn};
 
-pub(super) const ATTACH_INSET: f32 = 24.0;
+pub(super) const ATTACH_INSET: f32 = 22.0;
+const ROW_HEIGHT: f32 = 30.0;
+const ROW_ROUND: f32 = 8.0;
+const PILL_TEXT: f32 = 12.5;
 pub(super) fn mode_inset(cx: &gpui::App) -> f32 {
     match cx.global::<Lang>() {
         Lang::Ko => 110.0,
@@ -51,11 +54,11 @@ impl Composer {
             .flex()
             .items_center()
             .justify_center()
-            .size(px(24.0))
+            .size(px(22.0))
             .absolute()
             .top(px(3.0))
             .left(px(4.0))
-            .child(icon(Lucide::Paperclip, px(15.0), c.ink_2))
+            .child(icon(Lucide::Paperclip, px(16.0), c.ink_2))
             .cursor_pointer()
             .on_click({
                 let pictures = draft.pictures.clone();
@@ -125,17 +128,26 @@ impl Composer {
             .aria_keyshortcuts("Enter")
             .tooltip(tip(sender))
             .flex_none()
-            .h(px(30.0))
+            .justify_center()
+            .h(px(ROW_HEIGHT))
+            .min_w(px(ROW_HEIGHT))
+            .px(px(6.0))
+            .rounded(px(ROW_ROUND))
+            .text_size(px(PILL_TEXT))
+            .font_weight(FontWeight::SEMIBOLD)
             .when(ready, |button| {
                 button.on_click(cx.listener(|this, _, window, cx| {
                     this.submit(SendIntent::Request, window, cx);
                 }))
             })
-            .when(!ready, |button| btn::inert(button).opacity(0.55))
+            .when(!ready, |button| btn::inert(button).opacity(0.4))
             .when(plan.count() > 1 && plan.outside_rooms == 0, |button| {
-                button.child(recipient_count(plan.count(), lang))
+                button
+                    .pl(px(10.0))
+                    .pr(px(8.0))
+                    .child(recipient_count(plan.count(), lang))
             })
-            .child(icon(Lucide::ArrowUp, px(15.0), ink));
+            .child(icon(Lucide::ArrowUp, px(16.0), ink));
         let viewer = self.viewer.clone();
         let attachments = pictures::chips(
             &draft.pictures,
@@ -184,7 +196,7 @@ impl Composer {
                     .id("chat-composer-row")
                     .flex()
                     .items_end()
-                    .gap(px(7.0))
+                    .gap(px(6.0))
                     .drag_over::<ExternalPaths>(move |style, _, _, _| {
                         style.rounded(px(6.0)).bg(c.accent_wash)
                     })
@@ -199,16 +211,6 @@ impl Composer {
                     .child(self.recipient_button(draft, catalog, plan, cx))
                     .child(input)
                     .child(send),
-            )
-            .child(
-                div()
-                    .text_color(c.ink_2)
-                    .text_size(px(ui::SMALL))
-                    .child(local(
-                        cx,
-                        "Enter 보내기 · Shift+Enter 줄바꿈",
-                        "Enter to send · Shift+Enter for a new line",
-                    )),
             );
         if let Some(text) = draft.error.as_ref().map(DraftError::text).or(warning) {
             body = body.child(
@@ -406,11 +408,15 @@ impl Composer {
             .aria_expanded(self.picker.open)
             .tooltip(tip(title))
             .flex_none()
-            .max_w(px(124.0))
-            .h(px(30.0))
-            .when(!draft.selected().is_empty(), |button| {
-                button.bg(c.accent_wash)
-            })
+            .max_w(px(240.0))
+            .h(px(ROW_HEIGHT))
+            .pl(px(10.0))
+            .pr(px(6.0))
+            .gap(px(5.0))
+            .rounded(px(ROW_ROUND))
+            .text_size(px(PILL_TEXT))
+            .font_weight(FontWeight::SEMIBOLD)
+            .when(draft.selected().is_empty(), |button| button.border_dashed())
             .when(self.writable(cx), |button| {
                 button.on_click(cx.listener(|this, _, window, cx| {
                     if this.picker.open {
@@ -454,7 +460,8 @@ impl Composer {
             .aria_expanded(self.mode_menu)
             .border_color(line)
             .bg(fill)
-            .px(px(5.0))
+            .pl(px(8.0))
+            .pr(px(5.0))
             .py_0()
             .h(px(24.0))
             .min_h(px(24.0))

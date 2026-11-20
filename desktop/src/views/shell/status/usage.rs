@@ -183,14 +183,6 @@ impl Usage {
         cx.notify();
     }
 
-    fn no_agents(&self, cx: &App) -> bool {
-        self.store.read(cx).agent_catalog().is_some_and(|agents| {
-            agents
-                .iter()
-                .all(|agent| agent.places.iter().all(|at| at.path.is_none()))
-        })
-    }
-
     fn installed(&self, profile: Profile, distro: Option<&str>, cx: &App) -> bool {
         self.store
             .read(cx)
@@ -549,8 +541,18 @@ impl Render for Usage {
                     .map(IntoElement::into_any_element),
             );
         }
-        let no_agents = self.no_agents(cx);
-        let label = if no_agents {
+        let store = self.store.read(cx);
+        let no_agents = store.no_tools();
+        let label = if no_agents
+            && store
+                .snapshot()
+                .is_some_and(|snapshot| snapshot.nodes.is_empty())
+        {
+            Some(match cx.global::<Lang>() {
+                Lang::Ko => "설치된 AI 도구 없음",
+                Lang::En => "No AI tools installed",
+            })
+        } else if no_agents {
             Some(install_label(cx))
         } else if needs_login {
             Some(say(cx, Str::StatusBarConnectAccount))

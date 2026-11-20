@@ -10,10 +10,10 @@ use gpui::{
 };
 
 use super::super::{guides, keep_ime_focus, room_title};
-use super::{SideEvent, SideSlot, SideTab, room_waiting, words};
+use super::{SideEvent, SideSlot, room_waiting, words};
 use crate::scale::px;
 use crate::strings::Lang;
-use crate::theme::Colors;
+use crate::theme::{self, Colors};
 use crate::views::icons::{Lucide, icon};
 use crate::views::status;
 use crate::views::tooltip::tip;
@@ -25,7 +25,7 @@ mod hierarchy;
 use hierarchy::{Entry, Index};
 pub(super) use hierarchy::{Member, MemberKey};
 
-const ROW_HEIGHT: f32 = 44.0;
+const ROW_HEIGHT: f32 = 48.0;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum State {
@@ -184,49 +184,80 @@ impl Row {
         row
     }
 
+    fn lead(&self, c: &Colors) -> Div {
+        let lead = div()
+            .flex_none()
+            .size(px(20.0))
+            .rounded(px(6.0))
+            .flex()
+            .items_center()
+            .justify_center();
+        let Some(glyph) = self.glyph else {
+            let lanes = [c.lane_1, c.lane_2, c.lane_3, c.lane_4, c.lane_5];
+            let lane = lanes[self.name.bytes().map(usize::from).sum::<usize>() % lanes.len()];
+            let initial = self
+                .name
+                .chars()
+                .next()
+                .map(String::from)
+                .unwrap_or_default();
+            return lead
+                .bg(theme::mix(lane, 0.8, c.ink))
+                .text_size(px(11.0))
+                .font_weight(FontWeight::BOLD)
+                .text_color(c.bg)
+                .child(initial);
+        };
+        lead.child(icon(glyph, px(14.0), c.ink_2))
+    }
+
     fn render(&self, cx: &Context<SideSlot>) -> Div {
         let c = ui::colors(cx);
+        let line = [self.harness.as_deref(), Some(self.detail.as_str())]
+            .into_iter()
+            .flatten()
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" · ");
         let body = div()
             .id((gpui::ElementId::from("chat-member-room"), self.id.clone()))
             .flex_1()
             .min_w_0()
             .flex()
-            .flex_col()
-            .gap(px(2.0))
+            .items_center()
+            .gap(px(8.0))
+            .child(self.lead(&c))
             .child(
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
-                    .items_center()
-                    .gap(px(5.0))
-                    .children(self.state.map(|state| state.dot(&c)))
-                    .children(self.glyph.map(|glyph| icon(glyph, px(13.0), c.ink_2)))
+                    .flex_col()
+                    .gap(px(2.0))
                     .child(
                         div()
                             .min_w_0()
                             .truncate()
+                            .text_size(px(ui::TEXT))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(self.name.clone()),
                     )
-                    .children(self.harness.as_ref().map(|harness| {
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(SMALL))
-                            .text_color(c.ink_2)
-                            .child(harness.clone())
-                    })),
-            )
-            .when(!self.detail.is_empty(), |body| {
-                body.child(
-                    div()
-                        .id(format!("chat-hierarchy-detail-{}", self.id))
-                        .truncate()
-                        .text_size(px(SMALL))
-                        .text_color(c.ink_2)
-                        .tooltip(tip(self.detail.clone()))
-                        .child(self.detail.clone()),
-                )
-            });
+                    .when(!line.is_empty() || self.state.is_some(), |body| {
+                        body.child(
+                            div()
+                                .id(format!("chat-hierarchy-detail-{}", self.id))
+                                .min_w_0()
+                                .flex()
+                                .items_center()
+                                .gap(px(5.0))
+                                .text_size(px(SMALL))
+                                .text_color(c.ink_2)
+                                .tooltip(tip(line.clone()))
+                                .children(self.state.map(|state| state.dot(&c)))
+                                .child(div().min_w_0().truncate().child(line)),
+                        )
+                    }),
+            );
         let body = if let Some(room) = &self.room {
             let room = room.clone();
             btn::tabbable(body, cx)
@@ -250,6 +281,8 @@ impl Row {
             .flex()
             .items_center()
             .gap(px(4.0))
+            .border_b_1()
+            .border_color(c.line)
             .children(guides(&self.guides, ROW_HEIGHT, cx))
             .child(body)
             .when(self.member, |row| row.child(self.terminal_button(cx)))
@@ -259,13 +292,13 @@ impl Row {
         let c = ui::colors(cx);
         let id = format!("chat-member-terminal-{}", self.id);
         let Some(node) = self.terminal else {
-            return div().id(id).size(px(26.0)).flex_none();
+            return div().id(id).size(px(24.0)).flex_none();
         };
         let label = words(cx, "터미널 보기", "Show terminal");
         btn::ghost(id, cx)
             .role(Role::Button)
             .aria_label(format!("{} · {label}", self.name))
-            .size(px(26.0))
+            .size(px(24.0))
             .p_0()
             .flex_none()
             .justify_center()
@@ -414,70 +447,31 @@ impl SideSlot {
         };
         let data = self.data.read(cx);
         let index = Index::new(data, cx);
-        let entries = index.room_rows(room);
-        let summary = match room.kind {
-            ChatRoomKind::Pinned => {
-                let workspaces = entries
-                    .iter()
-                    .filter(|(entry, _)| matches!(entry, Entry::Workspace { .. }))
-                    .count();
-                let members = room.members.len();
-                match cx.global::<Lang>() {
-                    Lang::Ko => format!("작업공간 {workspaces} · 에이전트 {members}"),
-                    Lang::En => format!("{workspaces} workspaces · {members} agents"),
-                }
-            }
-            _ => {
-                let count = member_count(room.members.len(), cx);
-                let title = room_title(room, |repo| index.repos.get(&repo).copied(), cx);
-                let summary = format!("{title} · {count}");
-                let working = room
-                    .members
-                    .iter()
-                    .filter(|&&id| matches!(index.state(id), Some(Status::Working { .. })))
-                    .count();
-                if !room.archived && working > 0 {
-                    format!("{summary} · {}", counted_state(State::Working, working, cx))
-                } else {
-                    summary
-                }
-            }
-        };
-        let rows: Vec<_> = entries
+        let rows: Vec<_> = index
+            .room_rows(room)
             .into_iter()
             .map(|(entry, guides)| Row::from_entry(entry, guides, &index, room, cx))
             .collect();
+        let count = room.members.len();
         panel = panel.child(
             div()
                 .flex_none()
-                .px(px(12.0))
-                .py(px(8.0))
-                .flex()
-                .items_center()
-                .gap(px(8.0))
-                .border_b_1()
-                .border_color(c.line)
-                .child(
-                    div()
-                        .flex_none()
-                        .font_weight(FontWeight::SEMIBOLD)
-                        .child(SideTab::Members.label(cx)),
-                )
-                .child(
-                    div()
-                        .id("chat-hierarchy-summary")
-                        .min_w_0()
-                        .truncate()
-                        .text_size(px(SMALL))
-                        .text_color(c.ink_2)
-                        .tooltip(tip(summary.clone()))
-                        .child(summary),
-                ),
+                .px(px(18.0))
+                .pt(px(10.0))
+                .pb(px(4.0))
+                .text_size(px(SMALL))
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(c.ink_3)
+                .child(match cx.global::<Lang>() {
+                    Lang::Ko => format!("이 방의 구성원 {count}"),
+                    Lang::En => format!("Members in this room {count}"),
+                }),
         );
         if rows.is_empty() {
             panel = panel.child(
                 div()
-                    .p(px(12.0))
+                    .px(px(18.0))
+                    .py(px(12.0))
                     .text_color(c.ink_2)
                     .child(room_waiting(cx, Some(room))),
             );
@@ -494,7 +488,7 @@ impl SideSlot {
                 }),
             )
             .size_full()
-            .px(px(10.0))
+            .px(px(18.0))
             .track_scroll(self.member_scroll.handle());
             panel = panel.child(
                 self.member_scroll

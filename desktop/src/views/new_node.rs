@@ -51,7 +51,18 @@ fn blocked(agent: &AgentView, at: &PlaceView) -> bool {
     matches!(at, PlaceView::Ssh { .. }) && agent.serves
 }
 
-fn usable(agent: &AgentView, at: &PlaceView) -> bool {
+pub(crate) fn agent_place(at: &PlaceView, agents: &[AgentView]) -> PlaceView {
+    let known = agents
+        .first()
+        .is_some_and(|agent| agent.places.iter().any(|p| p.place == *at));
+    if matches!(at, PlaceView::Ssh { .. }) || known {
+        at.clone()
+    } else {
+        PlaceView::Pc
+    }
+}
+
+pub(crate) fn usable(agent: &AgentView, at: &PlaceView) -> bool {
     !blocked(agent, at)
         && agent
             .places
@@ -142,17 +153,7 @@ impl NewNodeView {
     }
 
     fn place_view(&self) -> PlaceView {
-        let places = self
-            .agents
-            .as_ref()
-            .and_then(|a| a.first())
-            .map(|a| a.places.iter().map(|p| p.place.clone()).collect::<Vec<_>>())
-            .unwrap_or_default();
-        if matches!(self.at, PlaceView::Ssh { .. }) || places.contains(&self.at) {
-            self.at.clone()
-        } else {
-            PlaceView::Pc
-        }
+        agent_place(&self.at, self.agents.as_deref().unwrap_or_default())
     }
 
     fn choices(&self) -> Vec<Choice> {

@@ -37,6 +37,8 @@ pub struct Store {
     settings_from: u64,
     notice: Option<Notice>,
     busy: HashSet<u32>,
+    detected: Option<Result<Vec<AgentView>, String>>,
+    detecting: bool,
 }
 
 pub struct Notice {
@@ -137,6 +139,8 @@ impl Store {
             settings_from: 0,
             notice,
             busy: HashSet::new(),
+            detected: None,
+            detecting: false,
         };
         if let Some(base) = store.base.clone() {
             store.watch_repos(base, window.window_handle(), cx);
@@ -405,6 +409,32 @@ impl Store {
 
     pub fn agents(&self, cx: &mut Context<Self>) -> Task<Result<Vec<AgentView>, String>> {
         self.call(cx, |base| link::read(base, "/api/agents"))
+    }
+
+    pub fn detected(&self) -> Option<&Result<Vec<AgentView>, String>> {
+        self.detected.as_ref()
+    }
+
+    pub fn detecting(&self) -> bool {
+        self.detecting
+    }
+
+    pub fn detect_agents(&mut self, cx: &mut Context<Self>) {
+        if self.detecting {
+            return;
+        }
+        self.detecting = true;
+        let task = self.agents(cx);
+        cx.spawn(async move |this, cx| {
+            let found = task.await;
+            let _ = this.update(cx, |store, cx| {
+                store.detected = Some(found);
+                store.detecting = false;
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     pub fn create_node(

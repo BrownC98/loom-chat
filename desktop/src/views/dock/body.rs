@@ -365,10 +365,18 @@ impl Selectable {
                 }
             })
             .on_mouse_up_out(MouseButton::Left, {
-                let selection = selection.clone();
-                move |_, _, cx| {
+                let (document, selection) = (document.clone(), selection.clone());
+                move |event, _, cx| {
                     if selection.read(cx).down {
-                        selection.update(cx, |selection, _| selection.down = false);
+                        selection.update(cx, |selection, cx| {
+                            selection.down = false;
+                            if let Some((_, offset)) = document.at(event.position)
+                                && selection.head != offset
+                            {
+                                selection.head = offset;
+                                cx.notify();
+                            }
+                        });
                     }
                 }
             })

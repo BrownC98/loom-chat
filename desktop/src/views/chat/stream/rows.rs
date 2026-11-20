@@ -231,7 +231,7 @@ impl Stream {
             .read(cx)
             .snapshot()
             .map_or(&[][..], |snapshot| snapshot.repos.as_slice());
-        let name = source_name(room, repos, data.rooms());
+        let name = source_name(room, repos, data.rooms(), cx);
         let id = room.id.clone();
         let c = ui::colors(cx);
         Some(
@@ -634,22 +634,20 @@ impl Stream {
     }
 }
 
-fn source_name(room: &ChatRoom, repos: &[RepoView], rooms: &[ChatRoom]) -> String {
+fn source_name(room: &ChatRoom, repos: &[RepoView], rooms: &[ChatRoom], cx: &App) -> String {
+    let repo_for = |id| repos.iter().find(|repo| repo.id == id);
+    let title = super::super::room_title(room, repo_for, cx);
     if let ChatRoomKind::Work { place } = &room.kind
-        && let Some(repo) = repos.iter().find(|repo| repo.id == place.repo)
-    {
-        if !repo.git {
-            return repo.name.clone();
-        }
-        if repos.len() > 1
+        && let Some(repo) = repo_for(place.repo)
+        && repo.git
+        && (repos.len() > 1
             || rooms.iter().any(|room| {
                 matches!(&room.kind, ChatRoomKind::Work { place: other } if other.repo != place.repo)
-            })
-        {
-            return format!("{} › {}", repo.name, room.name);
-        }
+            }))
+    {
+        return format!("{} › {title}", repo.name);
     }
-    room.name.clone()
+    title.to_owned()
 }
 
 pub(super) fn column() -> Div {

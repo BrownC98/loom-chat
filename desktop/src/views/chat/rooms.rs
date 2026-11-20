@@ -5,7 +5,6 @@ mod list;
 use std::collections::HashSet;
 use std::ops::Range;
 
-use api::graph::Status;
 use api::graph::chat::{ChatRoom, ChatRoomKind};
 use api::ids::RepoId;
 use gpui::prelude::FluentBuilder;
@@ -25,14 +24,14 @@ use crate::views::status;
 use crate::views::ui::{clock, colors, say, say_with};
 use crate::views::widgets::btn;
 
-use super::{data::ChatData, first_run, keep_ime_focus, room_title, words};
+use super::{data::ChatData, first_run, guides, keep_ime_focus, room_title, words};
 use controls::Overlay;
 use create::CreateRoom;
 use list::{Filter, Index, Row};
 
 const ROW_HEIGHT: f32 = 48.0;
 const SMALL: f32 = 12.0;
-const MAX_GUIDES: usize = 6;
+const ROW_ACTIONS: &str = "chat-room-actions";
 
 pub(super) enum RoomsEvent {
     Select(String),
@@ -57,13 +56,14 @@ pub struct Rooms {
     return_focus: Option<FocusHandle>,
     starting_scratch: bool,
     action_error: Option<String>,
+    copied_address: bool,
     bar: Bar<UniformListScrollHandle>,
 }
 
 impl Rooms {
     pub fn new(data: Entity<ChatData>, cx: &mut Context<Self>) -> Self {
         let search = field::boxed_label(Str::RoomFind, false, false, cx);
-        search.update(cx, |field, cx| field.set_inset(20.0, 0.0, cx));
+        search.update(cx, |field, cx| field.set_inset(20.0, 25.0, cx));
         cx.subscribe(&search, |_, _, event: &FieldEvent, cx| {
             if matches!(event, FieldEvent::Changed) {
                 cx.notify();
@@ -74,7 +74,7 @@ impl Rooms {
         let graph = data.read(cx).graph().clone();
         cx.observe(&graph, |_, _, cx| cx.notify()).detach();
         let new_room = cx.focus_handle().tab_stop(true);
-        let create = cx.new(|cx| CreateRoom::new(data.clone(), new_room.clone(), cx));
+        let create = cx.new(|cx| CreateRoom::new(data.clone(), cx));
         cx.subscribe(&create, |this, _, created: &create::Created, cx| {
             this.restore(cx);
             this.workspace = None;
@@ -98,6 +98,7 @@ impl Rooms {
             return_focus: None,
             starting_scratch: false,
             action_error: None,
+            copied_address: false,
             bar: Bar::over(UniformListScrollHandle::new()),
         }
     }
@@ -126,24 +127,22 @@ impl Rooms {
         }
     }
 
+    pub(super) fn focus_search(&self, window: &mut Window, cx: &mut Context<Self>) {
+        if !first_run(self.data.read(cx), cx) {
+            window.focus(&self.search.read(cx).handle(), cx);
+        }
+    }
+
     fn controls(&self, index: &Index<'_>, cx: &Context<Self>) -> Div {
         let c = colors(cx);
         let filters = Filter::ALL.into_iter().enumerate().map(|(i, filter)| {
-            let count = if filter == Filter::MyTurn && self.workspace.is_none() {
-                index
-                    .rooms
-                    .iter()
-                    .find(|room| matches!(room.kind, ChatRoomKind::Pinned))
-                    .map_or(0, |room| room.questions as usize)
-            } else {
-                index
-                    .rooms
-                    .iter()
-                    .filter(|room| !matches!(room.kind, ChatRoomKind::Pinned))
-                    .filter(|room| index.in_workspace(room, self.workspace))
-                    .filter(|room| filter.shows(room, index))
-                    .count()
-            };
+            let count = index
+                .rooms
+                .iter()
+                .filter(|room| !matches!(room.kind, ChatRoomKind::Pinned))
+                .filter(|room| index.in_workspace(room, self.workspace))
+                .filter(|room| filter.shows(room, index))
+                .count();
             let current = filter == self.filter;
             btn::tabbable(div().id(("room-filter", i)), cx)
                 .role(Role::Button)
@@ -233,8 +232,9 @@ impl Rooms {
         room: &ChatRoom,
         selected: bool,
         pinned: bool,
+        index: &Index<'_>,
         cx: &Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> Div {
         let c = colors(cx);
         let (glyph, ink) = if pinned {
             (Lucide::Mail, c.accent)
@@ -261,13 +261,9 @@ impl Rooms {
         let mut sub = subtitle(cx)
             .pl(px(18.0))
             .children(details.map(|text| div().flex_1().min_w_0().truncate().child(text)));
-        if room.questions > 0 {
+        if pinned && room.questions > 0 {
             sub = sub.child(badge(
-                if pinned {
-                    format!("{} {}", say(cx, Str::EventsTypeAsk), room.questions)
-                } else {
-                    words(cx, "내 차례", "My turn").to_owned()
-                },
+                format!("{} {}", say(cx, Str::EventsTypeAsk), room.questions),
                 c.warn,
                 c.warn_ink,
             ));
@@ -280,33 +276,43 @@ impl Rooms {
             ));
         }
         if !pinned {
-            sub = sub
+            sub = room_badges(sub, room, Filter::MyTurn.shows(room, index), cx)
                 .when(room.archived, |sub| {
                     sub.child(words(cx, "끝남", "Archived"))
-                })
-                .when(room.unread > 0, |sub| {
-                    sub.child(badge(room.unread.to_string(), c.notice, c.notice_ink))
                 });
         }
-        self.select_button(room, cx)
-            .px(px(7.0))
-            .py(px(4.0))
-            .when(pinned, |row| row.h(px(ROW_HEIGHT)))
-            .when(selected, |row| row.bg(c.accent_wash))
-            .when(pinned, |row| {
-                row.border_1()
-                    .border_color(if selected { c.accent } else { c.line_strong })
-            })
-            .when(pinned && !selected, |row| row.bg(c.surface))
-            .child(first)
-            .child(sub)
+        div().child(
+            div()
+                .id((ElementId::from("chat-standard-row"), room.id.clone()))
+                .group(ROW_ACTIONS)
+                .flex()
+                .h(px(ROW_HEIGHT))
+                .items_center()
+                .rounded(px(6.0))
+                .when(selected, |row| row.bg(c.accent_wash))
+                .when(pinned, |row| {
+                    row.border_1()
+                        .border_color(if selected { c.accent } else { c.line_strong })
+                })
+                .when(pinned && !selected, |row| row.bg(c.surface))
+                .child(
+                    self.select_button(room, cx)
+                        .px(px(7.0))
+                        .py(px(4.0))
+                        .child(first)
+                        .child(sub),
+                )
+                .when(!pinned, |row| {
+                    row.children(self.room_actions(room, cx).map(reveal_action))
+                }),
+        )
     }
 
     fn work_row(
         &self,
         room: &ChatRoom,
         index: &Index<'_>,
-        depth: usize,
+        path: &[bool],
         folded: bool,
         selected: bool,
         cx: &Context<Self>,
@@ -349,12 +355,7 @@ impl Rooms {
                 }
                 cx.notify();
             }));
-        let urgent = room.questions > 0
-            || room.members.iter().any(|&id| {
-                index
-                    .node(id)
-                    .is_some_and(|node| matches!(node.status, Status::Human))
-            });
+        let urgent = Filter::MyTurn.shows(room, index);
         let problem = room.members.iter().any(|&id| {
             index
                 .node(id)
@@ -372,13 +373,11 @@ impl Rooms {
         } else {
             c.ink_3
         };
-        let label = room_title(room, |_| repo, cx);
+        let label = index.work_title(room, cx);
         let members = room.members.len();
-        let detail = match (cx.global::<Lang>(), repo.filter(|repo| repo.git)) {
-            (Lang::Ko, Some(repo)) => format!("{} · {members}명", repo.name),
-            (Lang::En, Some(repo)) => format!("{} · Members: {members}", repo.name),
-            (Lang::Ko, None) => format!("구성원 {members}명"),
-            (Lang::En, None) => format!("Members: {members}"),
+        let detail = match cx.global::<Lang>() {
+            Lang::Ko => format!("구성원 {members}명"),
+            Lang::En => format!("Members: {members}"),
         };
         let head = div()
             .flex()
@@ -386,7 +385,7 @@ impl Rooms {
             .gap(px(4.0))
             .child(dot(state))
             .child(icon(glyph, px(13.0), c.ink_2))
-            .child(name(label))
+            .child(name(&label))
             .children(room.last_activity.map(|time| stamp(time, cx)));
         let info = subtitle(cx)
             .child(
@@ -395,13 +394,6 @@ impl Rooms {
                     .truncate()
                     .child(room.last_preview.clone().unwrap_or(detail)),
             )
-            .when(urgent, |row| {
-                row.child(badge(
-                    words(cx, "내 차례", "My turn").to_owned(),
-                    c.warn,
-                    c.warn_ink,
-                ))
-            })
             .when(!urgent && problem, |row| {
                 row.child(badge(
                     words(cx, "문제", "Problem").to_owned(),
@@ -409,9 +401,11 @@ impl Rooms {
                     c.err_ink,
                 ))
             });
+        let info = room_badges(info, room, urgent, cx);
         div().h_full().child(
             div()
                 .id((ElementId::from("chat-work-row"), room.id.clone()))
+                .group(ROW_ACTIONS)
                 .h_full()
                 .flex()
                 .items_center()
@@ -419,12 +413,12 @@ impl Rooms {
                 .pr(px(3.0))
                 .gap(px(3.0))
                 .when(selected, |row| row.bg(c.accent_wash))
-                .child(guides(depth, cx))
+                .children(guides(path, ROW_HEIGHT, cx))
                 .when(!self.flat, |row| row.child(toggle))
                 .child(self.select_button(room, cx).child(head).child(info))
                 .children(
                     repo.zip(tree)
-                        .map(|(repo, tree)| self.work_actions(place, tree, repo, cx)),
+                        .map(|(repo, tree)| self.work_actions(room, place, tree, repo, cx)),
                 ),
         )
     }
@@ -433,7 +427,7 @@ impl Rooms {
         &self,
         room: &ChatRoom,
         index: &Index<'_>,
-        depth: usize,
+        path: &[bool],
         selected: bool,
         cx: &Context<Self>,
     ) -> Div {
@@ -443,13 +437,9 @@ impl Rooms {
         let c = colors(cx);
         let live = index.node(node);
         let lang = *cx.global::<Lang>();
-        let (label, tone) = if room.questions > 0
-            || live.is_some_and(|node| matches!(node.status, Status::Human))
-        {
-            (
-                words(cx, "내 답을 기다림", "Waiting for your reply").to_owned(),
-                c.warn,
-            )
+        let urgent = Filter::MyTurn.shows(room, index);
+        let (label, tone) = if urgent {
+            (None, c.warn)
         } else if let Some(chip) = live.and_then(|node| status::chip(&node.status, lang)) {
             let color = match chip.tone {
                 status::Tone::Problem => c.err,
@@ -457,9 +447,9 @@ impl Rooms {
                 status::Tone::Result => c.ok,
                 _ => c.ink_3,
             };
-            (chip.text, color)
+            (Some(chip.text), color)
         } else {
-            (words(cx, "끝남", "Archived").to_owned(), c.ink_3)
+            (Some(words(cx, "끝남", "Archived").to_owned()), c.ink_3)
         };
         let role = live.map(|node| {
             node.role.as_deref().unwrap_or_else(|| {
@@ -489,17 +479,25 @@ impl Rooms {
         let info = if let Some(preview) = &room.last_preview {
             subtitle(cx)
                 .child(div().flex_1().min_w_0().truncate().child(preview.clone()))
-                .child(div().max_w(gpui::relative(0.45)).truncate().child(label))
+                .children(
+                    label.map(|label| div().max_w(gpui::relative(0.45)).truncate().child(label)),
+                )
         } else {
-            subtitle(cx).child(div().truncate().child(match role {
-                Some(role) => format!("{role} · {label}"),
-                None => label,
-            }))
+            let text = match (role, label) {
+                (Some(role), Some(label)) => format!("{role} · {label}"),
+                (Some(role), None) => role.to_owned(),
+                (None, label) => label.unwrap_or_default(),
+            };
+            subtitle(cx).child(div().truncate().child(text))
         };
-        let select = self.select_button(room, cx).child(first).child(info);
+        let select = self
+            .select_button(room, cx)
+            .child(first)
+            .child(room_badges(info, room, urgent, cx));
         div().h_full().child(
             div()
                 .id((ElementId::from("chat-agent-row"), room.id.clone()))
+                .group(ROW_ACTIONS)
                 .h_full()
                 .flex()
                 .items_center()
@@ -512,11 +510,9 @@ impl Rooms {
                         this.agent_rename_key(node, event, window, cx);
                     }))
                 })
-                .child(guides(depth, cx))
+                .children(guides(path, ROW_HEIGHT, cx))
                 .child(select)
-                .when(live.is_some(), |row| {
-                    row.child(self.agent_actions(node, cx))
-                }),
+                .children(self.room_actions(room, cx).map(reveal_action)),
         )
     }
 
@@ -549,14 +545,14 @@ impl Rooms {
                     .map(|slot| {
                         let body = match &rows[slot] {
                             Row::Room(slot) => index.rooms.get(*slot).map(|room| {
-                                div().child(this.room_row(room, selected(room), false, cx))
+                                div().child(this.room_row(room, selected(room), false, &index, cx))
                             }),
                             Row::Work(slot, depth) => index.rooms.get(*slot).map(|room| {
                                 let folded = this.folded.contains(&room.id);
-                                this.work_row(room, &index, *depth, folded, selected(room), cx)
+                                this.work_row(room, &index, depth, folded, selected(room), cx)
                             }),
                             Row::Agent(slot, depth) => index.rooms.get(*slot).map(|room| {
-                                this.agent_row(room, &index, *depth, selected(room), cx)
+                                this.agent_row(room, &index, depth, selected(room), cx)
                             }),
                             Row::Custom => Some(this.custom_heading(cx)),
                             Row::Worktrees => {
@@ -627,7 +623,7 @@ impl Render for Rooms {
             .find(|room| matches!(room.kind, ChatRoomKind::Pinned));
         self.reveal_selection(data.room(), &index);
         let query = self.search.read(cx).text().trim().to_lowercase();
-        let (mut rows, hidden) = self.list_rows(&index, &query);
+        let (mut rows, hidden) = self.list_rows(&index, &query, cx);
         let empty = rows.is_empty();
         if hidden > 0 {
             rows.push(Row::Hidden(hidden));
@@ -639,6 +635,7 @@ impl Render for Rooms {
                 room,
                 selection.as_deref() == Some(room.id.as_str()),
                 true,
+                &index,
                 cx,
             )
         });
@@ -672,22 +669,43 @@ impl Render for Rooms {
                     .child(words(cx, "방 목록", "Rooms"))
                     .child(self.new_control(cx)),
             )
-            .child(
-                div()
-                    .relative()
-                    .mx(px(12.0))
-                    .flex_none()
-                    .overflow_hidden()
-                    .whitespace_nowrap()
-                    .child(self.search.clone())
-                    .child(div().absolute().left(px(8.0)).top(px(8.0)).child(icon(
-                        Lucide::Search,
-                        px(13.0),
-                        c.ink_2,
-                    ))),
-            )
+            .when(!first, |root| {
+                root.child(
+                    div()
+                        .relative()
+                        .mx(px(12.0))
+                        .flex_none()
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .child(self.search.clone())
+                        .child(div().absolute().left(px(8.0)).top(px(8.0)).child(icon(
+                            Lucide::Search,
+                            px(13.0),
+                            c.ink_2,
+                        )))
+                        .when(!self.search.read(cx).text().is_empty(), |field| {
+                            field.child(
+                                self.tool(
+                                    "chat-clear-search",
+                                    Lucide::X,
+                                    words(cx, "검색어 지우기", "Clear search"),
+                                    cx,
+                                )
+                                .absolute()
+                                .top(px(3.0))
+                                .right(px(3.0))
+                                .on_click(cx.listener(
+                                    |this, _, window, cx| {
+                                        this.search.update(cx, |field, cx| field.set_text("", cx));
+                                        this.focus_search(window, cx);
+                                    },
+                                )),
+                            )
+                        }),
+                )
+            })
             .children(pin_row.map(|row| div().mx(px(8.0)).mt(px(8.0)).flex_none().child(row)))
-            .children(pinned.map(|_| controls))
+            .when(!first && pinned.is_some(), |root| root.child(controls))
             .child(
                 div()
                     .flex()
@@ -695,22 +713,6 @@ impl Render for Rooms {
                     .flex_1()
                     .min_h_0()
                     .overflow_hidden()
-                    .children(data.error().map(|error| {
-                        div()
-                            .mx(px(8.0))
-                            .flex_none()
-                            .p(px(6.0))
-                            .text_size(px(SMALL))
-                            .text_color(c.err)
-                            .child(error.to_owned())
-                            .child(
-                                btn::button("retry-chat-rooms", cx)
-                                    .child(say(cx, Str::StatusBarRefresh))
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.data.update(cx, |data, cx| data.refresh(cx));
-                                    })),
-                            )
-                    }))
                     .children(
                         self.action_error
                             .as_ref()
@@ -730,7 +732,7 @@ impl Render for Rooms {
                                 .flex_none(),
                         )
                     })
-                    .when(first, |body| {
+                    .when(first && empty, |body| {
                         body.child(
                             div()
                                 .mx(px(12.0))
@@ -802,20 +804,21 @@ fn subtitle(cx: &App) -> Div {
         .text_color(colors(cx).ink_2)
 }
 
-fn guides(depth: usize, cx: &App) -> Div {
-    let line = colors(cx).line_strong;
-    let depth = depth.min(MAX_GUIDES);
-    div()
-        .h_full()
-        .flex()
-        .flex_none()
-        .children((0..depth).map(|level| {
-            div().w(px(10.0)).border_l_1().border_color(line).when_else(
-                level + 1 == depth,
-                |guide| guide.h(px(ROW_HEIGHT / 2.0)).border_b_1(),
-                |guide| guide.h_full(),
-            )
-        }))
+fn reveal_action(button: Stateful<Div>) -> Stateful<Div> {
+    button
+        .opacity(0.0)
+        .group_hover(ROW_ACTIONS, |style| style.opacity(1.0))
+        .focus(|style| style.opacity(1.0))
+}
+
+fn room_badges(row: Div, room: &ChatRoom, urgent: bool, cx: &App) -> Div {
+    let c = colors(cx);
+    row.when(urgent, |row| {
+        row.child(badge(Filter::MyTurn.label(cx).into(), c.warn, c.warn_ink))
+    })
+    .when(room.unread > 0, |row| {
+        row.child(badge(room.unread.to_string(), c.notice, c.notice_ink))
+    })
 }
 
 fn heading(title: &'static str, cx: &App) -> Div {

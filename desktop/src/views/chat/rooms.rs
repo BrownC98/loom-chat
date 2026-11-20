@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use api::graph::Status;
-use api::graph::chat::{ChatEntry, ChatRoom, ChatRoomKind};
+use api::graph::chat::{ChatRoom, ChatRoomKind};
 use api::ids::RepoId;
 use gpui::prelude::FluentBuilder;
 use gpui::{
@@ -26,7 +26,7 @@ use crate::views::ui::{clock, colors, say, say_with};
 use crate::views::widgets::btn;
 
 use super::{data::ChatData, first_run, keep_ime_focus, room_title, words};
-use controls::{Overlay, tool};
+use controls::Overlay;
 use create::CreateRoom;
 use list::{Filter, Index, Row};
 
@@ -248,16 +248,16 @@ impl Rooms {
             .child(icon(glyph, px(14.0), ink))
             .child(name(room_title(room, |_| None, cx)))
             .children(room.last_activity.map(|time| stamp(time, cx)));
-        let details = if pinned {
-            let workspaces = say(cx, Str::GraphScopeAll);
-            let agents = room.members.len();
-            Some(match cx.global::<Lang>() {
-                Lang::Ko => format!("{workspaces} · 에이전트 {agents}"),
-                Lang::En => format!("{workspaces} · Agents: {agents}"),
+        let details = room.last_preview.clone().or_else(|| {
+            pinned.then(|| {
+                let workspaces = say(cx, Str::GraphScopeAll);
+                let agents = room.members.len();
+                match cx.global::<Lang>() {
+                    Lang::Ko => format!("{workspaces} · 에이전트 {agents}"),
+                    Lang::En => format!("{workspaces} · Agents: {agents}"),
+                }
             })
-        } else {
-            selected.then(|| last_line(self.data.read(cx))).flatten()
-        };
+        });
         let mut sub = subtitle(cx)
             .pl(px(18.0))
             .children(details.map(|text| div().flex_1().min_w_0().truncate().child(text)));
@@ -332,22 +332,23 @@ impl Rooms {
         } else {
             words(cx, "하위 방 접기", "Collapse rooms")
         };
-        let toggle = tool(
-            "chat-work-fold",
-            if folded {
-                Lucide::ChevronRight
-            } else {
-                Lucide::ChevronDown
-            },
-            gesture,
-            cx,
-        )
-        .on_click(cx.listener(move |this, _, _, cx| {
-            if !this.folded.remove(&id) {
-                this.folded.insert(id.clone());
-            }
-            cx.notify();
-        }));
+        let toggle = self
+            .tool(
+                "chat-work-fold",
+                if folded {
+                    Lucide::ChevronRight
+                } else {
+                    Lucide::ChevronDown
+                },
+                gesture,
+                cx,
+            )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !this.folded.remove(&id) {
+                    this.folded.insert(id.clone());
+                }
+                cx.notify();
+            }));
         let urgent = room.questions > 0
             || room.members.iter().any(|&id| {
                 index
@@ -388,7 +389,12 @@ impl Rooms {
             .child(name(label))
             .children(room.last_activity.map(|time| stamp(time, cx)));
         let info = subtitle(cx)
-            .child(div().min_w_0().truncate().child(detail))
+            .child(
+                div()
+                    .min_w_0()
+                    .truncate()
+                    .child(room.last_preview.clone().unwrap_or(detail)),
+            )
             .when(urgent, |row| {
                 row.child(badge(
                     words(cx, "내 차례", "My turn").to_owned(),
@@ -480,10 +486,16 @@ impl Rooms {
                 row.child(icon(Lucide::Bookmark, px(11.0), c.ink_2))
             })
             .children(time.map(|time| stamp(time, cx)));
-        let info = subtitle(cx).child(div().truncate().child(match role {
-            Some(role) => format!("{role} · {label}"),
-            None => label,
-        }));
+        let info = if let Some(preview) = &room.last_preview {
+            subtitle(cx)
+                .child(div().flex_1().min_w_0().truncate().child(preview.clone()))
+                .child(div().max_w(gpui::relative(0.45)).truncate().child(label))
+        } else {
+            subtitle(cx).child(div().truncate().child(match role {
+                Some(role) => format!("{role} · {label}"),
+                None => label,
+            }))
+        };
         let select = self.select_button(room, cx).child(first).child(info);
         div().h_full().child(
             div()
@@ -817,18 +829,6 @@ fn heading(title: &'static str, cx: &App) -> Div {
         .text_size(px(SMALL))
         .text_color(colors(cx).ink_2)
         .child(title)
-}
-
-fn last_line(data: &ChatData) -> Option<String> {
-    data.items().iter().rev().find_map(|item| {
-        let (name, text) = match &item.entry {
-            ChatEntry::Message { message } => (&message.from.name, super::message_text(message)),
-            ChatEntry::Wait { node, wait, .. } => (&node.name, wait.summary.as_str()),
-            _ => return None,
-        };
-        let first_line = text.lines().find(|line| !line.trim().is_empty())?;
-        Some(format!("{name}: {first_line}"))
-    })
 }
 
 fn chevron(open: bool, ink: Rgba) -> gpui::Svg {

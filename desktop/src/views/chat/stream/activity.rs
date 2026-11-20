@@ -8,6 +8,7 @@ use super::rows::{column, flow, meta, timestamp};
 use super::{Stream, tr};
 use crate::scale::px;
 use crate::strings::Lang;
+use crate::views::icons::{Lucide, icon};
 use crate::views::prose::prose;
 use crate::views::ui;
 
@@ -71,7 +72,7 @@ fn steps<'a>(indices: &[usize], items: &'a [Arc<ChatItem>]) -> Vec<Step<'a>> {
     let mut pending: HashMap<Option<&str>, VecDeque<usize>> = HashMap::new();
     for &index in indices {
         let row = &items[index];
-        let ChatEntry::Transcript { item } = &row.entry else {
+        let ChatEntry::Transcript { item, .. } = &row.entry else {
             continue;
         };
         match item {
@@ -120,12 +121,12 @@ impl Step<'_> {
             Some(ChatTranscriptItem::ToolResult {
                 summary, failed, ..
             }) => {
-                let (label, color) = match failed {
-                    Some(true) => (tr(cx, "실패", "Failed"), c.err),
-                    Some(false) => (tr(cx, "성공", "Succeeded"), c.ok),
-                    None => (tr(cx, "결과", "Result"), c.ink_2),
+                let (glyph, label, color) = match failed {
+                    Some(true) => (Lucide::X, tr(cx, "실패", "Failed"), c.err),
+                    Some(false) => (Lucide::Check, tr(cx, "성공", "Succeeded"), c.ok),
+                    None => (Lucide::Terminal, tr(cx, "결과", "Result"), c.ink_2),
                 };
-                Some((label, color, summary.as_deref()))
+                Some((glyph, label, color, summary.as_deref()))
             }
             _ => None,
         };
@@ -134,13 +135,18 @@ impl Step<'_> {
             .child(
                 flow()
                     .child(meta(label, cx))
-                    .children(result.map(|(label, color, _)| meta(label, cx).text_color(color)))
+                    .children(result.map(|(glyph, label, color, _)| {
+                        flow()
+                            .gap(px(3.0))
+                            .child(icon(glyph, px(12.0), color))
+                            .child(meta(label, cx).text_color(color))
+                    }))
                     .child(timestamp(self.cursor, cx)),
             )
             .children(text.map(|text| prose(text.to_owned())))
             .children(
                 result
-                    .and_then(|(_, _, summary)| summary)
+                    .and_then(|(_, _, _, summary)| summary)
                     .filter(|&summary| Some(summary) != text)
                     .map(|summary| prose(summary.to_owned())),
             )

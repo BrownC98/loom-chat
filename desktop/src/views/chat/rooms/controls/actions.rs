@@ -18,8 +18,7 @@ use crate::views::ui::{colors, say};
 use crate::views::widgets::btn;
 
 use super::{
-    Index, Overlay, Panel, Rename, Rooms, below, calls, note, option, tool, words, work_in,
-    work_label,
+    Index, Overlay, Panel, Rename, Rooms, below, calls, note, option, words, work_in, work_label,
 };
 
 impl Rooms {
@@ -31,7 +30,7 @@ impl Rooms {
                 .is_some_and(|s| s.nodes.iter().any(|live| live.id == node)),
             |slot| {
                 slot.child(
-                    tool(
+                    self.tool(
                         ("chat-agent-menu", node.0),
                         Lucide::Ellipsis,
                         words(cx, "에이전트 메뉴", "Agent menu"),
@@ -59,15 +58,16 @@ impl Rooms {
     ) -> Div {
         let label = work_label(repo, tree);
         let work = place.clone();
-        let add = tool(
-            "chat-work-add",
-            Lucide::Plus,
-            words(cx, "새 에이전트", "New agent"),
-            cx,
-        )
-        .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
-            this.open_agent(work.clone(), label.clone(), below(event), window, cx);
-        }));
+        let add = self
+            .tool(
+                "chat-work-add",
+                Lucide::Plus,
+                words(cx, "새 에이전트", "New agent"),
+                cx,
+            )
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                this.open_agent(work.clone(), label.clone(), below(event), window, cx);
+            }));
         let work = place.clone();
         div()
             .flex()
@@ -76,7 +76,7 @@ impl Rooms {
             .child(add)
             .when(repo.git && !tree.original, |tools| {
                 tools.child(
-                    tool(
+                    self.tool(
                         "chat-work-menu",
                         Lucide::Ellipsis,
                         words(cx, "워크트리 메뉴", "Worktree menu"),

@@ -20,7 +20,7 @@ use crate::views::ui::{SMALL, TEXT, colors, say};
 use crate::views::widgets::btn;
 
 use super::{
-    Index, Overlay, Panel, Rooms, below, calls, chevron, option, place_of, tool, words, work_in,
+    Index, Overlay, Panel, Rooms, below, calls, chevron, option, place_of, words, work_in,
     work_label,
 };
 use crate::views::chat::rooms::{RoomsEvent, badge};
@@ -66,7 +66,7 @@ impl Rooms {
                     })),
             )
             .child(
-                tool(
+                self.tool(
                     "chat-settings",
                     Lucide::Settings,
                     say(cx, Str::SettingsTitle),

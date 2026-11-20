@@ -172,6 +172,9 @@ pub enum ChatEntry {
     },
     Transcript {
         item: ChatTranscriptItem,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(type = "number", optional)]
+        activity_turn: Option<i64>,
     },
 }
 
@@ -206,6 +209,15 @@ pub enum ChatTranscriptItem {
     },
 }
 
+impl ChatTranscriptItem {
+    pub fn is_activity(&self) -> bool {
+        matches!(
+            self,
+            Self::ToolCall { .. } | Self::ToolResult { .. } | Self::Thinking { .. }
+        )
+    }
+}
+
 #[derive(Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export)]
@@ -235,6 +247,22 @@ pub enum ChatOrigin {
     Agent,
     Loom,
     Outside,
+}
+
+impl ChatOrigin {
+    pub fn visible_text(self, text: &str) -> &str {
+        const INTRO: &str = "An agent outside loom that calls itself ";
+        const SUFFIX: &str = "\nReply in the room with loom answer <this message id> \"<reply>\".";
+        if self == Self::Outside
+            && text.starts_with(INTRO)
+            && let Some((_, body)) = text.split_once('\n')
+            && let Some(body) = body.strip_suffix(SUFFIX)
+        {
+            body
+        } else {
+            text
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, TS)]

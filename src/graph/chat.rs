@@ -751,19 +751,27 @@ fn room_view(db: &Connection, key: &hmac::Key, room: Room) -> Result<ChatRoom, R
             "{sql}, latest AS (
                 SELECT source, id FROM timeline WHERE source IN (0, 1)
                 ORDER BY at DESC, source DESC, id DESC LIMIT 1
+            ), totals AS (
+                SELECT max(at), coalesce(sum(unread), 0), coalesce(sum(question), 0),
+                    coalesce(sum(done), 0) FROM timeline
             )
-            SELECT max(at), coalesce(sum(unread), 0), coalesce(sum(question), 0),
-                coalesce(sum(done), 0), (
-                    SELECT coalesce(m.body, t.text) FROM latest
-                    LEFT JOIN messages m ON latest.source = 0 AND m.id = latest.id
-                    LEFT JOIN doc_talk t ON latest.source = 1 AND t.id = latest.id
-                ) FROM timeline"
+            SELECT totals.*, coalesce(m.body, t.text),
+                coalesce(m.sender_node_id IS NULL AND m.sender_name LIKE '%{OUTSIDE_SUFFIX}', 0)
+            FROM totals LEFT JOIN latest ON 1
+            LEFT JOIN messages m ON latest.source = 0 AND m.id = latest.id
+            LEFT JOIN doc_talk t ON latest.source = 1 AND t.id = latest.id"
         ),
         params![room.id, timeline_scope(&room)],
         |row| {
             let text = row.get_ref(4)?.as_str_or_null()?;
+            let outside = row.get::<_, bool>(5)?;
             let preview = text.and_then(|text| {
-                let mut chars = visible_message(text)
+                let text = if outside {
+                    ChatOrigin::Outside.visible_text(text)
+                } else {
+                    text
+                };
+                let mut chars = text
                     .split_whitespace()
                     .enumerate()
                     .flat_map(|(index, word)| {
@@ -994,11 +1002,7 @@ fn read_message(db: &Connection, room: &str, id: i64) -> rusqlite::Result<ChatMe
                 _ => None,
             };
             let text: String = row.get(4)?;
-            let blocks = message_blocks(if origin == ChatOrigin::Outside {
-                visible_message(&text)
-            } else {
-                &text
-            });
+            let blocks = message_blocks(origin.visible_text(&text));
             Ok(ChatMessage {
                 id: row.get(0)?,
                 group: row.get(1)?,
@@ -1071,18 +1075,6 @@ fn read_message(db: &Connection, room: &str, id: i64) -> rusqlite::Result<ChatMe
 
 fn display_outside(name: &str) -> String {
     doc_talk::outside_name(name).unwrap_or_else(|_| "외부 에이전트".to_owned())
-}
-
-fn visible_message(text: &str) -> &str {
-    const INTRO: &str = "An agent outside loom that calls itself ";
-    const SUFFIX: &str = "\nReply in the room with loom answer <this message id> \"<reply>\".";
-    if text.starts_with(INTRO)
-        && let Some((_, body)) = text.split_once('\n')
-        && let Some(body) = body.strip_suffix(SUFFIX)
-    {
-        return body;
-    }
-    text
 }
 
 fn message_blocks(text: &str) -> Option<Vec<Block>> {

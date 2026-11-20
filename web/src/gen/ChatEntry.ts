@@ -6,4 +6,4 @@ import type { Entry } from "./Entry";
 import type { ScreenWait } from "./ScreenWait";
 import type { Who } from "./Who";
 
-export type ChatEntry = { "kind": "message", message: ChatMessage, } | { "kind": "wait", node: Who, wait: ScreenWait, closed: Closed | null, } | { "kind": "notice", event: Entry, } | { "kind": "transcript", item: ChatTranscriptItem, };
+export type ChatEntry = { "kind": "message", message: ChatMessage, } | { "kind": "wait", node: Who, wait: ScreenWait, closed: Closed | null, } | { "kind": "notice", event: Entry, } | { "kind": "transcript", item: ChatTranscriptItem, activityTurn?: number, };

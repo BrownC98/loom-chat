@@ -12,7 +12,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::{
     App, Context, Div, Entity, EventEmitter, InteractiveElement, IntoElement, KeyDownEvent,
     ListAlignment, ListOffset, ListState, ParentElement, Render, StatefulInteractiveElement,
-    Styled, Subscription, Task, Window, div, list,
+    Styled, Subscription, Task, Window, canvas, div, list,
 };
 
 use super::data::ChatData;
@@ -37,6 +37,7 @@ const RESULT_TIME: Duration = Duration::from_millis(2500);
 pub(super) enum StreamEvent {
     FollowUp { node: NodeId, wait: WaitId },
     OpenRoom(String),
+    VisibleWaits(Vec<WaitId>),
 }
 
 pub(super) struct Quote(pub(super) Arc<ChatItem>);
@@ -125,10 +126,10 @@ impl Rows {
         if !ordered.is_sorted_by_key(|(_, entry)| entry.cursor) {
             ordered.sort_unstable_by_key(|(_, entry)| entry.cursor);
         }
-        let mut in_activity = false;
+        let mut in_activity = None;
         for (index, entry) in ordered {
             if rows::turn_boundary(entry) {
-                in_activity = false;
+                in_activity = None;
                 continue;
             }
             if rows::hidden(entry) {
@@ -143,16 +144,15 @@ impl Rows {
             if filter != Filter::All && filter != kind {
                 continue;
             }
-            let activity = matches!(
-                &entry.entry,
+            let activity = match &entry.entry {
                 ChatEntry::Transcript {
-                    item: ChatTranscriptItem::Thinking { .. }
-                        | ChatTranscriptItem::ToolCall { .. }
-                        | ChatTranscriptItem::ToolResult { .. },
-                }
-            );
-            if in_activity
-                && activity
+                    item,
+                    activity_turn,
+                } if item.is_activity() => Some(*activity_turn),
+                _ => None,
+            };
+            if activity.is_some()
+                && in_activity == activity
                 && let Some(Row {
                     content: RowContent::Activity(steps),
                     ..
@@ -169,7 +169,7 @@ impl Rows {
             }
             rows.visible.push(Row {
                 cursor: entry.cursor,
-                content: if activity {
+                content: if activity.is_some() {
                     RowContent::Activity(vec![index])
                 } else {
                     RowContent::Item(index)
@@ -309,6 +309,7 @@ impl Stream {
                                 | ChatEntry::Transcript {
                                     item: ChatTranscriptItem::Assistant { .. }
                                         | ChatTranscriptItem::User { .. },
+                                    ..
                                 }
                         )
                 })
@@ -483,6 +484,25 @@ impl Stream {
         )
     }
 
+    fn visible_waits(&self, cx: &App) -> Vec<WaitId> {
+        let items = self.data.read(cx).items();
+        self.rows
+            .pending
+            .iter()
+            .filter(|&&row| {
+                self.list.item_is_above_viewport(row) == Some(false)
+                    && self.list.item_is_below_viewport(row) == Some(false)
+            })
+            .filter_map(|&row| {
+                let item = self.rows.visible.get(row)?.item()?;
+                match &items.get(item)?.entry {
+                    ChatEntry::Wait { wait, .. } => Some(wait.wait.id),
+                    _ => None,
+                }
+            })
+            .collect()
+    }
+
     fn toolbar(&self, cx: &mut Context<Self>) -> Option<Div> {
         let data = self.data.read(cx);
         let room = data.room()?;
@@ -585,6 +605,7 @@ impl Render for Stream {
             self.new_messages = 0;
         }
         let toolbar = self.toolbar(cx);
+        let stream = cx.entity().downgrade();
         let data = self.data.read(cx);
         let c = ui::colors(cx);
         let content = if self.rows.visible.is_empty() {
@@ -690,6 +711,22 @@ impl Render for Stream {
                     .flex_1()
                     .min_h_0()
                     .child(content)
+                    .child(
+                        canvas(
+                            move |_, _, cx| {
+                                cx.defer(move |cx| {
+                                    let _ = stream.update(cx, |stream, cx| {
+                                        cx.emit(StreamEvent::VisibleWaits(
+                                            stream.visible_waits(cx),
+                                        ));
+                                    });
+                                });
+                            },
+                            |_, (), _, _| (),
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
                     .children(jump_to_new),
             )
             .children(self.working(cx))

@@ -32,14 +32,14 @@ const BUBBLE_WIDTH: f32 = 720.0;
 const BUBBLE_SHARE: f32 = 0.72;
 
 pub(super) fn turn_boundary(item: &ChatItem) -> bool {
-    matches!(&item.entry, ChatEntry::Transcript { item: ChatTranscriptItem::Status { text } }
+    matches!(&item.entry, ChatEntry::Transcript { item: ChatTranscriptItem::Status { text }, .. }
         if matches!(text.trim(), "턴을 시작했습니다." | "턴이 끝났습니다."))
 }
 
 pub(super) fn hidden(item: &ChatItem) -> bool {
     match &item.entry {
         ChatEntry::Message { message } => {
-            super::super::message_text(message).trim().is_empty()
+            message.origin.visible_text(&message.text).trim().is_empty()
                 || (message.origin == ChatOrigin::Human
                     && matches!(
                         message.what,
@@ -48,7 +48,7 @@ pub(super) fn hidden(item: &ChatItem) -> bool {
                         })
                     ))
         }
-        ChatEntry::Transcript { item } => match item {
+        ChatEntry::Transcript { item, .. } => match item {
             ChatTranscriptItem::Assistant { text, .. } | ChatTranscriptItem::User { text } => {
                 text.trim().is_empty()
             }
@@ -83,9 +83,11 @@ fn sender<'a>(item: &'a ChatItem, room: Option<&'a ChatRoom>) -> Option<Sender<'
         }),
         ChatEntry::Transcript {
             item: ChatTranscriptItem::User { .. },
+            ..
         } => Some(Sender::Human),
         ChatEntry::Transcript {
             item: ChatTranscriptItem::Assistant { .. },
+            ..
         } => {
             let room = room?;
             match room.kind {
@@ -157,9 +159,9 @@ impl Stream {
                     let (label, detail) = notice(event, cx);
                     self.folded(cursor, label, detail, cx)
                 }
-                ChatEntry::Transcript { item: transcript } => {
-                    self.transcript(&item, transcript, grouped, window, cx)
-                }
+                ChatEntry::Transcript {
+                    item: transcript, ..
+                } => self.transcript(&item, transcript, grouped, window, cx),
             }
         });
         div()
@@ -309,7 +311,7 @@ impl Stream {
             Some(recipient) => format!("{display} → {recipient}"),
             None => display.to_owned(),
         };
-        let text = super::super::message_text(message);
+        let text = message.origin.visible_text(&message.text);
         if fold == Some(false) {
             let preview = text.lines().map(str::trim).find(|line| !line.is_empty());
             let label =
@@ -367,7 +369,13 @@ impl Stream {
                 .children(message.reply_to.map(|id| meta(format!("#{id}"), cx)))
                 .children(source)
         });
-        let body = self.bubble(item, text, &[], window, cx);
+        let body = self.bubble(
+            item,
+            text,
+            message.blocks.as_deref().unwrap_or_default(),
+            window,
+            cx,
+        );
         let body = body.relative().children(
             (header.is_none() && receipts.is_none()).then(|| hover_time(item.cursor, mine, cx)),
         );
@@ -500,7 +508,13 @@ impl Stream {
                         .map(|room| room.name.clone())
                         .unwrap_or_else(|| tr(cx, "에이전트", "Agent").to_owned())
                 };
-                let body = self.bubble(row, text, &[], window, cx);
+                let content = match item {
+                    ChatTranscriptItem::Assistant { blocks, .. } => {
+                        blocks.as_deref().unwrap_or_default()
+                    }
+                    _ => &[],
+                };
+                let body = self.bubble(row, text, content, window, cx);
                 column()
                     .when(mine, |column| column.items_end())
                     .children((!grouped).then(|| {

@@ -4,7 +4,7 @@ mod rooms;
 mod side;
 mod stream;
 
-use api::graph::chat::{ChatMessage, ChatOrigin, ChatRoom, ChatRoomKind, ChatTranscript};
+use api::graph::chat::{ChatRoom, ChatRoomKind, ChatTranscript};
 use api::graph::{Place, ProcessState, Status};
 use api::ids::{NodeId, RepoId};
 use api::repos::RepoView;
@@ -84,22 +84,6 @@ fn first_run(data: &ChatData, cx: &App) -> bool {
         .is_some_and(|snapshot| snapshot.repos.is_empty() && snapshot.nodes.is_empty())
 }
 
-fn message_text(message: &ChatMessage) -> &str {
-    const OUTSIDE_INTRO: &str = "An agent outside loom that calls itself ";
-    const REPLY_INSTRUCTION: &str =
-        "\nReply in the room with loom answer <this message id> \"<reply>\".";
-    let text = &message.text;
-    if message.origin == ChatOrigin::Outside
-        && text.starts_with(OUTSIDE_INTRO)
-        && let Some((_, body)) = text.split_once('\n')
-        && let Some(body) = body.strip_suffix(REPLY_INSTRUCTION)
-    {
-        body
-    } else {
-        text
-    }
-}
-
 struct StatusOverlay {
     view: Entity<StatusView>,
     at: Point<Pixels>,
@@ -142,6 +126,9 @@ impl Chat {
                 c.follow_up(*node, *wait, window, cx);
             }),
             StreamEvent::OpenRoom(room) => this.open_room(room, cx),
+            StreamEvent::VisibleWaits(ids) => this.composer.update(cx, |composer, cx| {
+                composer.set_visible_waits(ids, cx);
+            }),
         })
         .detach();
         cx.subscribe_in(&stream, window, |this, _, quote: &Quote, window, cx| {

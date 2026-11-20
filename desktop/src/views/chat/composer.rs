@@ -129,7 +129,7 @@ pub struct Composer {
     picker: Picker,
     alerts: Alerts,
     viewer: Entity<Viewer>,
-    pub(super) visible_waits: Vec<WaitId>,
+    visible_waits: Vec<WaitId>,
     trigger: FocusHandle,
     cancel: FocusHandle,
     mode_trigger: FocusHandle,
@@ -290,6 +290,14 @@ impl Composer {
         }
     }
 
+    pub(super) fn set_visible_waits(&mut self, ids: &[WaitId], cx: &mut Context<Self>) {
+        if self.visible_waits != ids {
+            self.visible_waits.clear();
+            self.visible_waits.extend_from_slice(ids);
+            cx.notify();
+        }
+    }
+
     fn draft(&self) -> Option<&Draft> {
         self.drafts.get(self.active.as_ref()?)
     }
@@ -341,14 +349,17 @@ impl Composer {
         let data = self.data.read(cx);
         let room = data.room().expect("writable room");
         let (name, text) = match &item.entry {
-            ChatEntry::Message { message } => {
-                (message.from.name.as_str(), super::message_text(message))
-            }
+            ChatEntry::Message { message } => (
+                message.from.name.as_str(),
+                message.origin.visible_text(&message.text),
+            ),
             ChatEntry::Transcript {
                 item: ChatTranscriptItem::User { text },
+                ..
             } => (local(cx, "나", "Me"), text.as_str()),
             ChatEntry::Transcript {
                 item: ChatTranscriptItem::Assistant { text, .. },
+                ..
             } => (room.name.as_str(), text.as_str()),
             _ => return,
         };

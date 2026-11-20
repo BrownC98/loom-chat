@@ -276,6 +276,7 @@ fn read_transcript(
     let mut at_ms = 0;
     let mut previous_line = 0;
     let mut part = 0;
+    let mut activity_turn = None;
     loop {
         if Instant::now() >= deadline {
             return Err(TRANSCRIPT_TIMED_OUT);
@@ -332,6 +333,15 @@ fn read_transcript(
                 id: item.line as i64,
                 part,
             };
+            if matches!(
+                item.kind,
+                transcript::Kind::Status(
+                    transcript::Status::TurnStarted | transcript::Status::TurnEnded
+                )
+            ) {
+                activity_turn = Some(cursor.id);
+                continue;
+            }
             if before.is_some_and(|before| cursor >= before)
                 || (found.len() > limit
                     && found
@@ -349,7 +359,18 @@ fn read_transcript(
             let Some(item) = transcript_item(item.kind) else {
                 continue;
             };
-            found.insert(cursor, ChatEntry::Transcript { item });
+            let turn = if item.is_activity() {
+                activity_turn
+            } else {
+                None
+            };
+            found.insert(
+                cursor,
+                ChatEntry::Transcript {
+                    item,
+                    activity_turn: turn,
+                },
+            );
             if found.len() > limit + 1 {
                 found.pop_first();
             }

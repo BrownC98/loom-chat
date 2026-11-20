@@ -405,7 +405,6 @@ impl Composer {
                 .when(total < 2, |button| btn::inert(button).opacity(0.55))
                 .child(icon(glyph, px(13.0), colors.ink_2))
         };
-        let title = format!("{} · {name}", wait.wait.id);
         div()
             .flex()
             .items_center()
@@ -413,13 +412,14 @@ impl Composer {
             .child(
                 btn::button("chat-alert-fold", cx)
                     .role(Role::Button)
-                    .aria_label(format!("{label} · {title}"))
+                    .aria_label(format!("{label} · {name}"))
                     .aria_expanded(self.alerts.expanded)
                     .aria_keyshortcuts(
                         "Alt+Up Alt+Down Alt+1 Alt+2 Alt+3 Alt+4 Alt+5 Alt+6 Alt+7 Alt+8 Alt+9",
                     )
                     .tooltip(tip(format!(
-                        "{label} · {}",
+                        "{} · {label} · {}",
+                        wait.wait.id,
                         local(
                             cx,
                             "Alt+↑↓ 알림 이동 · Alt+1~9 선택",
@@ -441,7 +441,7 @@ impl Composer {
                             .max_w(px(230.0))
                             .truncate()
                             .font_weight(FontWeight::SEMIBOLD)
-                            .child(title),
+                            .child(name),
                     )
                     .child(
                         div()

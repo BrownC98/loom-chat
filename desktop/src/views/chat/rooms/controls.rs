@@ -4,6 +4,7 @@ mod workspace;
 use api::graph::Place;
 use api::ids::NodeId;
 use api::repos::{PlaceView, RepoView, Worktree};
+use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyView, App, AppContext, ClickEvent, Context, Div, ElementId, Entity, FocusHandle, FontWeight,
     InteractiveElement, KeyDownEvent, ParentElement, Pixels, Point, Role, Stateful,
@@ -349,24 +350,29 @@ fn option(id: impl Into<ElementId>, glyph: Lucide, label: &str, cx: &App) -> Sta
         .child(div().flex_1().min_w_0().truncate().child(label.to_owned()))
 }
 
-pub(super) fn tool(
-    id: impl Into<ElementId>,
-    glyph: Lucide,
-    label: &'static str,
-    cx: &App,
-) -> Stateful<Div> {
-    let c = colors(cx);
-    btn::tabbable(div().id(id), cx)
-        .role(Role::Button)
-        .aria_label(label)
-        .tooltip(tip(label.to_owned()))
-        .flex_none()
-        .size(px(23.0))
-        .rounded(px(5.0))
-        .flex()
-        .items_center()
-        .justify_center()
-        .cursor_pointer()
-        .hover(move |button| button.bg(c.surface_hover))
-        .child(icon(glyph, px(14.0), c.ink_2))
+impl Rooms {
+    pub(super) fn tool(
+        &self,
+        id: impl Into<ElementId>,
+        glyph: Lucide,
+        label: &'static str,
+        cx: &App,
+    ) -> Stateful<Div> {
+        let c = colors(cx);
+        btn::tabbable(div().id(id), cx)
+            .role(Role::Button)
+            .aria_label(label)
+            .when(self.overlay.is_none(), |button| {
+                button.tooltip(tip(label.to_owned()))
+            })
+            .flex_none()
+            .size(px(23.0))
+            .rounded(px(5.0))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .hover(move |button| button.bg(c.surface_hover))
+            .child(icon(glyph, px(14.0), c.ink_2))
+    }
 }

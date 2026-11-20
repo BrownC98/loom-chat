@@ -172,7 +172,7 @@ impl Draw<'_> {
                 .text_size(px(self.size + (4.0 - f32::from(*level)).clamp(0.0, 3.0)))
                 .children(self.text(parts, ""))
                 .into_any_element(),
-            Block::Code { text, .. } => self.code(text, None),
+            Block::Code { text, language } => self.code(text, language.as_deref()),
             Block::List { start, items } => self.list(*start, items),
             Block::Quote { blocks } => self
                 .stack(blocks, GAP)
@@ -364,7 +364,11 @@ impl RenderOnce for CodeCopy {
                 px(12.0),
                 c.ink_2,
             ))
-            .children(active.then(|| Str::RoomCopied.text(*cx.global::<Lang>())))
+            .child(if active {
+                Str::RoomCopied.text(*cx.global::<Lang>())
+            } else {
+                label
+            })
             .on_click(move |_, _, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.text.clone()));
                 copied.update(cx, |copied, cx| {

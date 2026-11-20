@@ -12,8 +12,8 @@ use gpui::prelude::FluentBuilder;
 use gpui::{
     Animation, AnimationExt, App, AppContext, Context, Div, Entity, EventEmitter,
     InteractiveElement, IntoElement, KeyDownEvent, ListAlignment, ListOffset, ListState,
-    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, div,
-    list,
+    ParentElement, Render, StatefulInteractiveElement, Styled, Subscription, Task, Window, canvas,
+    div, list,
 };
 
 use super::data::ChatData;
@@ -206,19 +206,6 @@ pub(super) struct Stream {
 impl Stream {
     pub(super) fn new(data: Entity<ChatData>, cx: &mut Context<Self>) -> Self {
         let list = ListState::new(0, ListAlignment::Bottom, px(OVERDRAW));
-        let view = cx.entity().downgrade();
-        list.set_scroll_handler(move |event, _, cx| {
-            let view = view.clone();
-            let load_older = event.is_scrolled && event.visible_range.start <= 1;
-            cx.defer(move |cx| {
-                let _ = view.update(cx, |stream, cx| {
-                    if load_older {
-                        stream.load_older(cx);
-                    }
-                    cx.notify();
-                });
-            });
-        });
         let graph = data.read(cx).graph().clone();
         let answers = cx.new(|cx| Answers::new(graph.clone(), cx));
         let subs = [
@@ -649,6 +636,36 @@ impl Render for Stream {
                 .flex_1()
                 .min_h_0()
         };
+        let older = data
+            .before()
+            .filter(|_| !data.loading_older() && data.error().is_none())
+            .map(|before| {
+                let list = self.list.clone();
+                let view = cx.weak_entity();
+                let room = self.room.clone();
+                canvas(
+                    |_, _, _| (),
+                    move |_, (), _, cx| {
+                        if list.is_scrollbar_dragging()
+                            || list.scroll_px_offset_for_scrollbar().y.abs() > px(0.5)
+                        {
+                            return;
+                        }
+                        let (view, room) = (view.clone(), room.clone());
+                        cx.defer(move |cx| {
+                            let _ = view.update(cx, |stream, cx| {
+                                if stream.room == room
+                                    && stream.data.read(cx).before() == Some(before)
+                                {
+                                    stream.load_older(cx);
+                                }
+                            });
+                        });
+                    },
+                )
+                .absolute()
+                .size_full()
+            });
         let jump_to_new = (!self.at_bottom() && !self.rows.visible.is_empty()).then(|| {
             let label = tr(cx, "맨 아래로", "Jump to bottom");
             let text = (self.new_messages > 0).then(|| match *cx.global::<Lang>() {
@@ -729,6 +746,7 @@ impl Render for Stream {
                     .flex_1()
                     .min_h_0()
                     .child(content)
+                    .children(older)
                     .children(jump_to_new),
             )
             .children(self.working(cx))

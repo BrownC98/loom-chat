@@ -8,7 +8,7 @@ use api::ids::{NodeId, WaitId};
 use gpui::prelude::FluentBuilder;
 use gpui::{
     AnyElement, App, AppContext, Context, Div, Entity, ExternalPaths, Image, InteractiveElement,
-    IntoElement, MouseButton, ObjectFit, ParentElement, Stateful, StatefulInteractiveElement,
+    IntoElement, MouseButton, ObjectFit, ParentElement, Role, Stateful, StatefulInteractiveElement,
     Styled, StyledImage, Subscription, Task, Window, div, img,
 };
 
@@ -27,6 +27,7 @@ use crate::views::icons::{Lucide, icon};
 use crate::views::pictures::{self, Pictures, PicturesEvent};
 use crate::views::tooltip::tip;
 use crate::views::viewer::Viewer;
+use crate::views::widgets::btn;
 
 const SHOT_HEIGHT: f32 = 44.0;
 const SHOT_WIDTH: f32 = 64.0;
@@ -763,6 +764,7 @@ fn wait_content(
         return body;
     }
     if wait.wait.answerable && !done && !wait.wait.choices.is_empty() {
+        let busy = answers.read(cx).store.read(cx).is_busy(id);
         body = body.child(div().flex().flex_wrap().gap(px(GAP * z)).children(
             wait.wait.choices.iter().enumerate().map(|(index, choice)| {
                 let key = choice.key;
@@ -772,13 +774,17 @@ fn wait_content(
                 } else {
                     Look::Plain
                 };
-                let button = div()
-                    .id(("choice", id as usize * 256 + key as usize % 256))
-                    .cursor_pointer()
-                    .hover({
-                        let hover = c.surface_hover;
-                        move |style| style.bg(hover)
-                    });
+                let button = btn::tabbable(
+                    div().id(("choice", id as usize * 256 + key as usize % 256)),
+                    cx,
+                )
+                .role(Role::Button)
+                .when(busy, |button| btn::inert(button).opacity(0.6))
+                .cursor_pointer()
+                .hover({
+                    let hover = c.surface_hover;
+                    move |style| style.bg(hover)
+                });
                 entry::choice_face(
                     button,
                     Choice {
@@ -804,11 +810,9 @@ fn wait_content(
         let busy = answers.read(cx).store.read(cx).is_busy(id);
         body = body.child(
             div().flex().child(
-                crate::views::widgets::btn::button("alert-confirm", cx)
+                btn::button("alert-confirm", cx)
                     .child(ui::say(cx, Str::InboxConfirm))
-                    .when(busy, |button| {
-                        crate::views::widgets::btn::inert(button).opacity(0.55)
-                    })
+                    .when(busy, |button| btn::inert(button).opacity(0.55))
                     .when(!busy, |button| {
                         button.on_click(move |_, _, cx| {
                             owner.update(cx, |answers, cx| answers.confirm(WaitId(id), cx))
@@ -823,27 +827,6 @@ fn wait_content(
     )
 }
 
-fn act(
-    id: (&'static str, usize),
-    label: &str,
-    recommended: bool,
-    z: f32,
-    cx: &App,
-) -> Stateful<Div> {
-    let c = ui::colors(cx);
-    let color = entry::tone_of(WaitTone::Ask, &c);
-    let button = crate::views::ui::button_at(id, z, cx)
-        .flex_none()
-        .whitespace_nowrap()
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
-    let button = if recommended {
-        button.border_color(color).bg(mix(color, 0.1, c.surface))
-    } else {
-        button
-    };
-    button.child(label.to_owned())
-}
-
 fn screen_keys(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &App) -> Option<Div> {
     if wait.wait.prompt.is_some() || wait.wait.screen.is_empty() {
         return None;
@@ -855,14 +838,16 @@ fn screen_keys(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &App) -
         .enumerate()
         .map(|(index, (label, press))| {
             let (owner, screen, press) = (answers.clone(), wait.wait.screen.clone(), press.clone());
-            act(
-                ("screen-key", id as usize * 16 + index),
-                label,
-                false,
-                z,
+            btn::tabbable(
+                crate::views::ui::button_at(("screen-key", id as usize * 16 + index), z, cx),
                 cx,
             )
+            .role(Role::Button)
+            .flex_none()
+            .whitespace_nowrap()
             .font_family(crate::fonts::TERMINAL_FAMILY)
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .child(*label)
             .on_click(move |_, _, cx| {
                 let keys = PressKeys {
                     screen: screen.clone(),
@@ -878,7 +863,8 @@ fn screen_keys(answers: &Entity<Answers>, wait: &ScreenWait, z: f32, cx: &App) -
         };
         let (owner, screen) = (answers.clone(), wait.wait.screen.clone());
         let hover = c.surface_hover;
-        line.id(("screen-option", id as usize * 64 + index))
+        btn::tabbable(line.id(("screen-option", id as usize * 64 + index)), cx)
+            .role(Role::Button)
             .cursor_pointer()
             .hover(move |style| style.bg(hover))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -1093,10 +1079,10 @@ fn prompt_actions(
                     .into_any_element();
                 }
                 let owner = answers.clone();
-                let button = div()
-                    .id(("option", id as usize * 256 + index))
+                let button = btn::tabbable(div().id(("option", id as usize * 256 + index)), cx)
+                    .role(Role::Button)
                     .cursor_pointer()
-                    .when(busy, |button| button.opacity(0.6))
+                    .when(busy, |button| btn::inert(button).opacity(0.6))
                     .hover({
                         let hover = c.surface_hover;
                         move |style| style.bg(hover)

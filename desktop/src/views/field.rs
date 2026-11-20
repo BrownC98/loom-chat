@@ -256,7 +256,7 @@ impl Field {
 
     pub(super) fn mention_start(&self) -> Option<usize> {
         let cursor = self.cursor();
-        if !self.selected.is_empty() || self.composing() {
+        if !self.selected.is_empty() || self.composing() || !self.redo.is_empty() {
             return None;
         }
         let start = cursor.checked_sub(1)?;

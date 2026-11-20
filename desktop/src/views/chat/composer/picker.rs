@@ -96,13 +96,26 @@ impl Listing {
         }
     }
 
-    fn highlighted(&self, catalog: &Catalog, selected: Option<&Target>) -> Option<Target> {
+    fn highlighted(&self, catalog: &Catalog, highlighted: Option<&Target>) -> Option<Target> {
         let mut targets = self.rows.iter().filter_map(|row| row.target(catalog));
+        if let Some(highlighted) = highlighted {
+            return targets.find(|target| target == highlighted);
+        }
         let first = targets.next()?;
-        selected
-            .filter(|&current| current == &first || targets.any(|target| &target == current))
-            .cloned()
-            .or(Some(first))
+        targets.next().is_none().then_some(first)
+    }
+}
+
+enum Highlight {
+    Navigated(Target),
+    Toggled(Target),
+}
+
+impl Highlight {
+    fn target(&self) -> &Target {
+        match self {
+            Self::Navigated(target) | Self::Toggled(target) => target,
+        }
     }
 }
 
@@ -113,7 +126,7 @@ pub(super) struct Picker {
     focus: FocusHandle,
     list_focus: FocusHandle,
     filter: Filter,
-    highlight: Option<Target>,
+    highlight: Option<Highlight>,
     scroll: UniformListScrollHandle,
     focus_out: Option<Subscription>,
     _query: Subscription,
@@ -303,11 +316,16 @@ impl Composer {
                 }
             }
             "enter" if in_list || in_query => {
-                if let Some(target) = self.highlighted_target(cx) {
+                let use_selection = matches!(self.picker.highlight, Some(Highlight::Toggled(_)))
+                    || (self.picker.highlight.is_none()
+                        && query.is_blank()
+                        && self.picker.mention.is_none()
+                        && self
+                            .draft()
+                            .is_some_and(|draft| !draft.selected().is_empty()));
+                if !use_selection && let Some(target) = self.highlighted_target(cx) {
                     self.choose_recipient(target, window, cx);
-                } else if !self.picker.query.read(cx).is_blank() || self.picker.mention.is_some() {
-                    return;
-                } else {
+                } else if use_selection || (query.is_blank() && self.picker.mention.is_none()) {
                     self.close_picker(window, cx);
                     self.focus_input(window, cx);
                 }
@@ -317,7 +335,7 @@ impl Composer {
                     if self.picker.mention.is_some() {
                         self.choose_recipient(target, window, cx);
                     } else {
-                        self.picker.highlight = Some(target.clone());
+                        self.picker.highlight = Some(Highlight::Toggled(target.clone()));
                         self.toggle(target, cx);
                     }
                 }
@@ -348,12 +366,13 @@ impl Composer {
             .picker
             .highlight
             .as_ref()
-            .and_then(|target| rows.iter().position(|(_, row)| row == target))
-            .unwrap_or_default()
-            .saturating_add_signed(by)
-            .min(rows.len() - 1);
+            .and_then(|highlighted| rows.iter().position(|(_, row)| row == highlighted.target()))
+            .map_or_else(
+                || if by < 0 { rows.len() - 1 } else { 0 },
+                |index| index.saturating_add_signed(by).min(rows.len() - 1),
+            );
         let (index, target) = &rows[at];
-        self.picker.highlight = Some(target.clone());
+        self.picker.highlight = Some(Highlight::Navigated(target.clone()));
         self.picker
             .scroll
             .scroll_to_item(*index, ScrollStrategy::Nearest);
@@ -365,9 +384,10 @@ impl Composer {
         let data = self.data.read(cx);
         let (room, recipients) = data.room().zip(data.recipients())?;
         let catalog = Catalog::new(recipients);
-        self.picker
-            .listing(room, &catalog, cx)
-            .highlighted(&catalog, self.picker.highlight.as_ref())
+        self.picker.listing(room, &catalog, cx).highlighted(
+            &catalog,
+            self.picker.highlight.as_ref().map(Highlight::target),
+        )
     }
 
     fn choose_recipient(&mut self, target: Target, window: &mut Window, cx: &mut Context<Self>) {
@@ -462,8 +482,12 @@ impl Composer {
                 },
             ))
         } else {
-            let highlighted = catalog
-                .and_then(|catalog| listing.highlighted(catalog, self.picker.highlight.as_ref()));
+            let highlighted = catalog.and_then(|catalog| {
+                listing.highlighted(
+                    catalog,
+                    self.picker.highlight.as_ref().map(Highlight::target),
+                )
+            });
             let rows = listing.rows;
             let list = uniform_list(
                 "chat-recipient-list",
@@ -695,7 +719,7 @@ impl Composer {
                 if this.picker.mention.is_some() {
                     this.choose_recipient(target.clone(), window, cx);
                 } else {
-                    this.picker.highlight = Some(target.clone());
+                    this.picker.highlight = Some(Highlight::Toggled(target.clone()));
                     this.toggle(target.clone(), cx);
                     window.focus(&this.picker.list_focus, cx);
                 }

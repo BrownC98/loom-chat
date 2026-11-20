@@ -1,15 +1,29 @@
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 
+use flate2::{Compression, write::GzEncoder};
 use schemars::schema::{RootSchema, Schema};
 use serde_json::Value;
 use typify::{TypeSpace, TypeSpaceSettings};
 
+#[path = "src/distro/linux_binary.rs"]
+mod linux_binary;
+
 const SCHEMA_DIR: &str = "src/profile/codex/schema";
+const EMBED_LINUX: &str = "LOOM_EMBED_LINUX";
 
 fn main() {
     println!("cargo::rerun-if-changed={SCHEMA_DIR}");
     println!("cargo::rerun-if-changed=src/db/changes");
+    println!("cargo::rerun-if-env-changed={EMBED_LINUX}");
+    println!("cargo::rustc-check-cfg=cfg(loom_embed_linux)");
+    let out = PathBuf::from(std::env::var_os("OUT_DIR").expect("cargo가 OUT_DIR을 준다"));
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && let Some(source) = std::env::var_os(EMBED_LINUX)
+    {
+        embed_linux(&out, Path::new(&source)).expect("WSL용 실행 파일을 내장한다");
+    }
     let mut definitions: BTreeMap<String, Value> = BTreeMap::new();
     let mut files: Vec<_> = std::fs::read_dir(SCHEMA_DIR)
         .expect("스키마 폴더가 있다")
@@ -56,7 +70,22 @@ fn main() {
             ..Default::default()
         })
         .expect("typify가 스키마를 받는다");
-    let out = Path::new(&std::env::var("OUT_DIR").expect("cargo가 OUT_DIR을 준다"))
-        .join("codex_protocol.rs");
-    std::fs::write(out, space.to_stream().to_string()).expect("생성한 타입을 쓴다");
+    std::fs::write(out.join("codex_protocol.rs"), space.to_stream().to_string())
+        .expect("생성한 타입을 쓴다");
+}
+
+fn embed_linux(out: &Path, source: &Path) -> io::Result<()> {
+    println!("cargo::rerun-if-changed={}", source.display());
+    let bytes = std::fs::read(source)?;
+    let name = linux_binary::hashed_name(bytes.as_slice())?;
+    let mut gzip = GzEncoder::new(
+        std::fs::File::create(out.join("loom-linux.gz"))?,
+        Compression::default(),
+    );
+    gzip.write_all(&bytes)?;
+    gzip.finish()?;
+    println!("cargo::rustc-cfg=loom_embed_linux");
+    println!("cargo::rustc-env=LOOM_EMBED_LINUX_NAME={name}");
+    println!("cargo::rustc-env=LOOM_EMBED_LINUX_LEN={}", bytes.len());
+    Ok(())
 }

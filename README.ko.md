@@ -99,7 +99,7 @@ Windows 셸에서 `loom-desktop.exe`를 바로 부르면 명령이 끝나기 전
 
 **업데이트.** 설정 › 정보에서 **업데이트 확인**, 이어서 **업데이트**를 누릅니다. `loom-desktop`이 데몬을 돌리면 그 실행 파일을 바꾸고 데몬을 다시 띄웁니다. 새 판의 창을 보려면 창 프로그램을 끝내고 다시 엽니다.
 
-**WSL.** Windows 설치 명령은 `loom-desktop-windows-x64.zip`에 든 `loom-linux`를 쓴다. ZIP에 그 파일이 없으면 따로 받는다. 손으로 설치할 때는 `loom-linux`를 `loom-desktop.exe` 옆에 둔다. 이전 ZIP에 그 파일이 없으면 같은 릴리스의 `loom-web-linux-x64`를 받아 그 자리에 `loom-linux`로 둔다. WSL 설치 명령은 Windows 설치가 고른 실행 파일을 `~/loom/bin/loom`에 연결한다.
+**WSL.** Windows의 `loom-desktop.exe`에 압축한 `loom-linux`가 들어 있습니다. WSL을 쓸 때도 데스크톱 실행 파일 하나면 됩니다. WSL 설치 명령은 Windows 설치가 고른 실행 파일을 `~/loom/bin/loom`에 연결합니다.
 
 **한계.** 릴리스에는 Windows x64와 macOS Apple Silicon용 loom desktop만 있습니다. Linux는 브라우저 판을 씁니다. v0.1.2825보다 옛 릴리스에는 없습니다. 그때 설치 한 줄은 브라우저 판(Windows) 또는 앱만(macOS) 설치합니다.
 

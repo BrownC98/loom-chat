@@ -3273,6 +3273,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "clap",
+ "flate2",
  "futures-util",
  "getrandom 0.4.3",
  "if-addrs",

@@ -1,4 +1,5 @@
 use std::ffi::OsString;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use portable_pty::CommandBuilder;
@@ -905,27 +906,57 @@ fn interop_names<K: AsRef<str>, V>(env: &[(K, V)]) -> String {
         .join(":")
 }
 
-pub fn install_linux(dir: &Path, source: &Path) -> std::io::Result<Option<PathBuf>> {
+#[cfg(not(loom_embed_linux))]
+pub fn install_linux(dir: &Path, source: &Path) -> io::Result<Option<PathBuf>> {
     let name = match distro::linux_name(source) {
         Ok(name) => name,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(e) => return Err(e),
     };
+    let len = std::fs::metadata(source)?.len();
+    install_linux_file(dir, &name, len, |partial| {
+        std::fs::copy(source, partial)?;
+        Ok(())
+    })
+    .map(Some)
+}
+
+#[cfg(loom_embed_linux)]
+pub fn install_linux(dir: &Path, _: &Path) -> io::Result<Option<PathBuf>> {
+    const NAME: &str = env!("LOOM_EMBED_LINUX_NAME");
+    const LEN: u64 = match u64::from_str_radix(env!("LOOM_EMBED_LINUX_LEN"), 10) {
+        Ok(len) => len,
+        Err(_) => panic!("내장한 WSL용 실행 파일의 길이가 정수가 아니다"),
+    };
+    const GZIP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/loom-linux.gz"));
+    install_linux_file(dir, NAME, LEN, |partial| {
+        let mut decoder = flate2::read::GzDecoder::new(GZIP);
+        io::copy(&mut decoder, &mut std::fs::File::create(partial)?)?;
+        Ok(())
+    })
+    .map(Some)
+}
+
+fn install_linux_file(
+    dir: &Path,
+    name: &str,
+    len: u64,
+    write: impl FnOnce(&Path) -> io::Result<()>,
+) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join(name);
-    let len = std::fs::metadata(source)?.len();
-    if std::fs::metadata(&path).is_ok_and(|m| m.len() == len) {
-        return Ok(Some(path));
+    if std::fs::metadata(&path).is_ok_and(|m| m.is_file() && m.len() == len) {
+        return Ok(path);
     }
     let partial = path.with_extension("partial");
-    std::fs::copy(source, &partial)?;
+    write(&partial)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&partial, std::fs::Permissions::from_mode(0o755))?;
     }
     std::fs::rename(&partial, &path)?;
-    Ok(Some(path))
+    Ok(path)
 }
 
 pub fn prune_linux(keep: &Path) {

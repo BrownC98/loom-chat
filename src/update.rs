@@ -62,7 +62,9 @@ impl Install {
                     asset: desktop.asset,
                     besides: besides
                         .iter()
-                        .filter(|beside| exe.with_file_name(beside.file).is_file())
+                        .filter(|beside| {
+                            !cfg!(loom_embed_linux) && exe.with_file_name(beside.file).is_file()
+                        })
                         .collect(),
                 },
                 None => Install::Unsupported,

@@ -59,6 +59,7 @@ jobs:
           if-no-files-found: error
 
   build:
+    needs: linux
     strategy:
       matrix:
         include:
@@ -96,8 +97,16 @@ jobs:
       - name: 배치 고정값 시험
         if: runner.os == 'Windows'
         run: cargo test
+      - name: Linux loom 받기
+        if: runner.os == 'Windows'
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: loom-linux
+          path: ${{ runner.temp }}
       - name: 빌드
         run: LOOM_VERSION="$(sh ../scripts/version.sh)" cargo build --release
+        env:
+          LOOM_EMBED_LINUX: ${{ runner.os == 'Windows' && format('{0}/loom-linux', runner.temp) || '' }}
       - uses: actions/upload-artifact@v7.0.2
         with:
           name: ${{ matrix.artifact }}

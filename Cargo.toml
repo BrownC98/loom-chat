@@ -65,6 +65,7 @@ yaml-rust2 = "0.13.0"
 libc = "0.2.191"
 
 [target.'cfg(windows)'.dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 rust-embed = { version = "8.13.0", features = ["debug-embed"] }
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Globalization", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_Console", "Win32_System_IO", "Win32_System_Pipes", "Win32_System_Threading"] }
 
@@ -86,8 +87,10 @@ tree-sitter-xml = "0.7.0"
 tree-sitter-yaml = "0.7.2"
 
 [build-dependencies]
+flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 serde_json.workspace = true
 schemars = "0.8.22"
+sha2 = "0.11.1"
 typify = { version = "0.8.0", default-features = false }
 
 [lints]

@@ -14,8 +14,10 @@ use crate::protocol::DISTRO_HOST;
 use crate::ssh::{self, Failure, MacRelease, Remote};
 use crate::{process_tree, tunnel};
 
-pub const LINUX_LOOM: &str = "loom-linux";
-const LINUX_HASH_HEX: usize = 12;
+mod linux_binary;
+
+pub use linux_binary::LINUX_LOOM;
+
 const LINUX_MISSING: &str = "loom-linux is not next to the Windows executable";
 const SSH_FILE: &str = "ssh-";
 const MAGIC: &[u8] = b"loom-distro";
@@ -431,18 +433,7 @@ fn file_name(host: &Host) -> String {
 }
 
 pub fn linux_name(file: &Path) -> io::Result<String> {
-    use sha2::Digest;
-    let mut hash = sha2::Sha256::new();
-    let mut from = std::fs::File::open(file)?;
-    let mut buf = vec![0u8; 1 << 16];
-    loop {
-        match from.read(&mut buf)? {
-            0 => break,
-            n => hash.update(&buf[..n]),
-        }
-    }
-    let hex: String = hash.finalize().iter().map(|b| format!("{b:02x}")).collect();
-    Ok(format!("{LINUX_LOOM}-{}", &hex[..LINUX_HASH_HEX]))
+    linux_binary::hashed_name(std::fs::File::open(file)?)
 }
 
 impl Held {

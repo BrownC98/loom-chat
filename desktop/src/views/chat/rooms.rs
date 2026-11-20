@@ -139,6 +139,10 @@ impl Rooms {
                 .rooms
                 .iter()
                 .filter(|room| !matches!(room.kind, ChatRoomKind::Pinned))
+                .filter(|room| {
+                    self.flat
+                        || !matches!(room.kind, ChatRoomKind::Agent { node } if index.work(node).is_some())
+                })
                 .filter(|room| index.in_workspace(room, self.workspace))
                 .filter(|room| filter.shows(room, index))
                 .count();
@@ -462,6 +466,12 @@ impl Rooms {
                 }
             })
         });
+        let nested = !self.flat && index.work(node).is_some();
+        let summary = match (role, label.as_deref()) {
+            (Some(role), Some(label)) => format!("{role} · {label}"),
+            (Some(role), None) => role.to_owned(),
+            (None, label) => label.unwrap_or_default().to_owned(),
+        };
         let time = room
             .last_activity
             .or_else(|| live.map(|node| node.since).filter(|since| *since > 0));
@@ -475,25 +485,39 @@ impl Rooms {
             .when(live.is_some_and(|node| node.bookmark.is_some()), |row| {
                 row.child(icon(Lucide::Bookmark, px(11.0), c.ink_2))
             })
-            .children(time.map(|time| stamp(time, cx)));
-        let info = if let Some(preview) = &room.last_preview {
-            subtitle(cx)
-                .child(div().flex_1().min_w_0().truncate().child(preview.clone()))
-                .children(
-                    label.map(|label| div().max_w(gpui::relative(0.45)).truncate().child(label)),
+            .when(nested, |row| {
+                row.child(
+                    div()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(px(SMALL))
+                        .text_color(c.ink_2)
+                        .child(summary.clone()),
                 )
+            })
+            .children(time.map(|time| stamp(time, cx)));
+        let info = if nested {
+            None
+        } else if let Some(preview) = &room.last_preview {
+            Some(
+                subtitle(cx)
+                    .child(div().flex_1().min_w_0().truncate().child(preview.clone()))
+                    .children(
+                        label
+                            .map(|label| div().max_w(gpui::relative(0.45)).truncate().child(label)),
+                    ),
+            )
         } else {
-            let text = match (role, label) {
-                (Some(role), Some(label)) => format!("{role} · {label}"),
-                (Some(role), None) => role.to_owned(),
-                (None, label) => label.unwrap_or_default(),
-            };
-            subtitle(cx).child(div().truncate().child(text))
+            Some(subtitle(cx).child(div().truncate().child(summary)))
         };
         let select = self
             .select_button(room, cx)
-            .child(first)
-            .child(room_badges(info, room, urgent, cx));
+            .child(if nested {
+                room_badges(first, room, urgent, cx)
+            } else {
+                first
+            })
+            .children(info.map(|info| room_badges(info, room, urgent, cx)));
         div().h_full().child(
             div()
                 .id((ElementId::from("chat-agent-row"), room.id.clone()))

@@ -448,6 +448,10 @@ impl Store {
         self.agents.as_ref().map(|agents| agents.as_slice())
     }
 
+    pub(crate) fn agent_catalog_snapshot(&self) -> Option<Arc<Vec<AgentView>>> {
+        self.agents.clone()
+    }
+
     pub fn agents(&self, cx: &mut Context<Self>) -> Task<Result<Arc<Vec<AgentView>>, String>> {
         let order = link::order();
         let scan = self.call(cx, |base| {

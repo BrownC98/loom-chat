@@ -1,13 +1,14 @@
 use api::profile::{AgentAt, AgentView, Profile};
 use gpui::{
-    App, FontWeight, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement,
-    Styled, Window, div,
+    App, Entity, FontWeight, InteractiveElement, IntoElement, ParentElement,
+    StatefulInteractiveElement, Styled, Window, div,
 };
 
 use crate::fonts;
 use crate::scale::px;
 use crate::settings::widgets::{field_reset, tabbable};
 use crate::settings::{Ctx, Section};
+use crate::store::Store;
 use crate::strings::Str;
 use crate::views::dock::ui::{SMALL, TEXT, colors, open_url, say, say_with};
 use crate::views::icons::{Lucide, agent_mark, icon};
@@ -17,26 +18,58 @@ pub(super) mod parts;
 mod roles;
 mod skills;
 
-use parts::{Remote, Shared, badge, ghost_small, hint, place_label, row, rows};
+use parts::{Bound, Shared, badge, ghost_small, hint, place_label, row, rows};
 
-const AGENTS: &str = "/api/agents";
 const COLUMNS: u16 = 3;
 const MARK: f32 = 14.0;
 
 #[derive(Default)]
+enum Scan {
+    #[default]
+    Idle,
+    Pending,
+    Failed(String),
+}
+
+#[derive(Default)]
 pub struct State {
-    agents: Remote<Vec<AgentView>>,
+    scan: Shared<Scan>,
     more: Shared<Option<bool>>,
     limits: limits::State,
     roles: roles::State,
 }
 
+fn rescan(store: &Entity<Store>, scan: Bound<Scan>, cx: &mut App) {
+    if !scan.alive() || scan.read(|state| matches!(state, Scan::Pending)) {
+        return;
+    }
+    scan.change(cx, |state| *state = Scan::Pending);
+    let task = store.update(cx, |store, cx| store.agents(cx));
+    cx.spawn(async move |cx| {
+        let result = match task.await {
+            Ok(_) => Scan::Idle,
+            Err(error) => Scan::Failed(error),
+        };
+        cx.update(|cx| scan.change(cx, |state| *state = result));
+    })
+    .detach();
+}
+
 pub fn sections(state: &mut State, ctx: &Ctx, window: &mut Window, cx: &mut App) -> Vec<Section> {
-    let _ = state.agents.ensure(AGENTS, ctx, cx);
-    let loaded = state.agents.value();
-    let agents: &[AgentView] = loaded.as_deref().map_or(&[], Vec::as_slice);
+    let store = ctx.store.read(cx);
+    let loaded = store.agent_catalog_snapshot();
+    if loaded.is_none()
+        && store.base().is_some()
+        && state.scan.read(|scan| matches!(scan, Scan::Idle))
+    {
+        let store = ctx.store.clone();
+        let scan = state.scan.bind(ctx);
+        cx.defer(move |cx| rescan(&store, scan, cx));
+    }
+    let loaded = loaded.as_deref().map(Vec::as_slice);
+    let agents = loaded.unwrap_or_default();
     vec![
-        installed(state, agents, ctx, cx),
+        installed(state, loaded, ctx, cx),
         missing(state, agents, ctx, cx),
         skills::section(ctx, cx),
         roles::section(&mut state.roles, agents, ctx, window, cx),
@@ -123,24 +156,26 @@ fn heading(agents: &[AgentView], multi: bool, cx: &App) -> String {
     )
 }
 
-fn installed(state: &State, agents: &[AgentView], ctx: &Ctx, cx: &mut App) -> Section {
+fn installed(state: &State, loaded: Option<&[AgentView]>, ctx: &Ctx, cx: &App) -> Section {
+    let agents = loaded.unwrap_or_default();
     let multi = agents
         .first()
         .is_some_and(|agent| at_places(agent).count() > 1);
     let head = heading(agents, multi, cx);
     let mut section = Section::new(Some(&head), ctx);
-    let reload = state.agents.reloader(AGENTS, ctx, cx);
+    let store = ctx.store.clone();
+    let scan = state.scan.bind(ctx);
     let rescan_label = section.text(say(cx, Str::SettingsRescan), cx);
     let rescan = ghost_small("agents-rescan", cx)
         .child(icon(Lucide::RotateCw, px(14.0), colors(cx).ink_2))
         .child(rescan_label)
-        .on_click(move |_, _, cx| reload.run(cx));
+        .on_click(move |_, _, cx| rescan(&store, scan.clone(), cx));
     let found: Vec<&AgentView> = agents.iter().filter(|agent| is_installed(agent)).collect();
-    let body: gpui::AnyElement = if state.agents.value().is_none() {
-        let text = state
-            .agents
-            .error()
-            .unwrap_or_else(|| say(cx, Str::StatusBarLoading).to_owned());
+    let body: gpui::AnyElement = if loaded.is_none() {
+        let text = state.scan.read(|scan| match scan {
+            Scan::Failed(error) => error.clone(),
+            _ => say(cx, Str::StatusBarLoading).to_owned(),
+        });
         let styled = section.text(&text, cx);
         hint(styled, cx).into_any_element()
     } else if found.is_empty() {

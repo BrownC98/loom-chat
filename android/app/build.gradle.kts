@@ -6,7 +6,7 @@ android {
     namespace = "io.github.brownc98.loom"
     compileSdk = 36
     defaultConfig {
-        applicationId = "io.github.brownc98.loom"
+        applicationId = "io.github.brownc98.loomchat"
         minSdk = 26
         targetSdk = 36
         versionName = providers.gradleProperty("loomVersion").getOrElse("0.0.0")

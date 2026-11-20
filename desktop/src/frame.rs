@@ -3,11 +3,13 @@ use gpui::{App, Bounds, SharedString, WindowBounds, WindowOptions, size};
 use crate::link::VERSION;
 use crate::scale::fixed as px;
 
+pub const NAME: &str = "loom-chat";
+
 const SIZE: (f32, f32) = (1280.0, 800.0);
 const MIN: (f32, f32) = (900.0, 600.0);
 
 pub fn name() -> SharedString {
-    format!("loom {VERSION}").into()
+    format!("{NAME} {VERSION}").into()
 }
 
 pub fn options(cx: &App) -> WindowOptions {

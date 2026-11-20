@@ -16,7 +16,7 @@ internal object Prefs {
 }
 
 internal object Door {
-    const val DEVICE_COOKIE = "loom_device"
+    const val DEVICE_COOKIE = "loom_chat_device"
 
     fun list(text: String?): List<String> = text?.split(',')?.filter { it.isNotEmpty() } ?: emptyList()
 

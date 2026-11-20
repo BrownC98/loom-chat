@@ -131,13 +131,13 @@ enum Cli {
     },
     /// 데몬이 있으면 붙고 없으면 띄운다. 도는 데몬이 옛 판이면 이 판으로 바꾼다. 주소를 `loom: <주소>`로 출력한다. 데스크톱 앱이 부른다.
     Start {
-        /// 데몬 주소. 없으면 지난 데몬의 포트, 처음이면 7420이다.
+        /// 데몬 주소. 없으면 지난 데몬의 포트, 처음이면 7425이다.
         #[arg(long)]
         listen: Option<SocketAddr>,
     },
     /// `start` 뒤 화면을 기본 브라우저로 연다. 바탕 화면 아이콘이 부른다.
     Open {
-        /// 데몬 주소. 없으면 지난 데몬의 포트, 처음이면 7420이다.
+        /// 데몬 주소. 없으면 지난 데몬의 포트, 처음이면 7425이다.
         #[arg(long)]
         listen: Option<SocketAddr>,
     },
@@ -147,9 +147,9 @@ enum Cli {
         #[arg(long)]
         listen: Option<SocketAddr>,
     },
-    /// 옛 WSL 데몬의 저장소·노드·설정을 이 Windows 데몬으로 옮기고 에이전트 노드를 같은 세션으로 다시 띄운다. `scripts/host.sh`가 부른다.
+    /// 옛 WSL 데몬의 저장소·노드·설정을 이 Windows 데몬으로 옮기고 에이전트 노드를 같은 세션으로 다시 띄운다. `scripts/install.sh`가 부른다.
     Carry {
-        /// 옛 데몬의 데이터 폴더(WSL `~/.loom`).
+        /// 옛 데몬의 데이터 폴더(WSL `~/.loom-chat`).
         from: PathBuf,
     },
     /// 자식 노드를 만든다. 지시문은 `--file`로 받는다.
@@ -194,7 +194,7 @@ enum Cli {
     },
     /// loom 밖의 에이전트(예: Aside)가 노드의 채팅방으로 노드와 주고받는다. 노드 토큰 없이 이 PC의 데몬에 붙는다.
     ///
-    /// `loom`을 띄우지 못하는 에이전트(Aside의 셸)는 HTTP로 같은 일을 한다. 데몬 주소는 기본 `http://127.0.0.1:7420`이다.
+    /// `loom`을 띄우지 못하는 에이전트(Aside의 셸)는 HTTP로 같은 일을 한다. 데몬 주소는 기본 `http://127.0.0.1:7425`이다.
     /// `nodes`는 `GET /api/nodes`다. `send`는 `POST /api/rooms/<노드>/outside`에 `{"from":"<이름>","text":"<말>"}`를 보내고 줄 번호를 받는다.
     /// `read`는 `GET /api/rooms/<노드>/talk`의 `lines`에서 `said.reply_to`가 그 줄 번호인 줄을 찾는다.
     Room {

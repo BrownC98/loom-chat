@@ -53,7 +53,11 @@ fn main() {
                 WINDOW,
                 WebviewUrl::External(url),
             ))
-            .title(format!("loom {}", app.package_info().version))
+            .title(format!(
+                "{} {}",
+                app.package_info().name,
+                app.package_info().version
+            ))
             .inner_size(1280.0, 800.0)
             .disable_drag_drop_handler()
             .build()?;

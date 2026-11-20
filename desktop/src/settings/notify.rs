@@ -9,13 +9,12 @@ use crate::store::Store;
 use crate::views::dock::questions::kind_label;
 use crate::views::dock::ui::say;
 
-const IDENTITY: &str = "loom.desktop";
-const NAME: &str = "loom";
+const IDENTITY: &str = "loom-chat.desktop";
 
 pub const SUPPORTED: bool = !cfg!(target_os = "macos");
 
 pub fn identify(cx: &App) {
-    cx.set_app_identity(IDENTITY, NAME);
+    cx.set_app_identity(IDENTITY, crate::frame::NAME);
 }
 
 pub fn watch(store: &Entity<Store>, window: &mut Window, cx: &mut App) {

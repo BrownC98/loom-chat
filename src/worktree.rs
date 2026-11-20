@@ -12,7 +12,7 @@ use crate::distro::Ran;
 use crate::git;
 use crate::place::{self, Files, Machine, SshPath};
 
-const LOOM_DIR: &str = "loom";
+const LOOM_DIR: &str = "loom-chat";
 const WORKSPACES_DIR: &str = "workspaces";
 const GIT_ENTRY: &str = ".git";
 
@@ -340,8 +340,10 @@ pub async fn listed(files: Files<'_>, repo: &Path) -> Result<Vec<Worktree>, Stri
             ..w
         })
         .filter(|w| {
-            Path::new(&w.path).parent().and_then(Path::file_name)
-                != Some(std::ffi::OsStr::new(merge::BATCHES))
+            Path::new(&w.path)
+                .parent()
+                .and_then(Path::file_name)
+                .is_none_or(|name| name != merge::BATCHES && name != "loom-batches")
         })
         .collect())
 }
@@ -659,22 +661,25 @@ pub fn setup_script(files: Files, worktree: &Path) -> Option<String> {
 }
 
 pub fn default_workspace() -> std::io::Result<PathBuf> {
-    workspace_in(&loom_home()?)
+    workspace_in(&account_home()?)
 }
 
 pub fn workspace_under(home: &str) -> String {
     format!("{home}/{LOOM_DIR}/{WORKSPACES_DIR}")
 }
 
-pub fn workspace_in(loom: &Path) -> std::io::Result<PathBuf> {
-    let dir = loom.join(WORKSPACES_DIR);
+pub fn workspace_in(home: &Path) -> std::io::Result<PathBuf> {
+    let dir = home.join(LOOM_DIR).join(WORKSPACES_DIR);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
+fn account_home() -> std::io::Result<PathBuf> {
+    std::env::home_dir().ok_or_else(|| std::io::Error::other("홈 폴더를 찾지 못했다"))
+}
+
 pub fn loom_home() -> std::io::Result<PathBuf> {
-    let home =
-        std::env::home_dir().ok_or_else(|| std::io::Error::other("홈 폴더를 찾지 못했다"))?;
+    let home = account_home()?;
     let dir = home.join(LOOM_DIR);
     std::fs::create_dir_all(&dir)?;
     Ok(dir)

@@ -8,7 +8,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <application
-        android:label="loom"
+        android:label="loom-chat"
         android:icon="@mipmap/ic_launcher"
         android:allowBackup="false"
         android:theme="@style/Loom">

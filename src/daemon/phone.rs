@@ -256,7 +256,7 @@ pub fn unpaired() -> Response {
     (StatusCode::UNAUTHORIZED, Html(UNPAIRED_PAGE)).into_response()
 }
 
-const UNPAIRED_PAGE: &str = r#"<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>loom</title>
+const UNPAIRED_PAGE: &str = r#"<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>loom-chat</title>
 <link rel="manifest" href="/manifest.webmanifest"><link rel="apple-touch-icon" href="/icon.png">
 <style>:root{color-scheme:light dark}body{margin:0;padding:64px 20px 20px;font:15px/1.5 system-ui,sans-serif;background:light-dark(#f5f5f5,#1f1f1f);color:light-dark(#171717,#fafafa)}
 section{display:grid;gap:12px;max-width:420px;margin:0 auto;padding:18px;border:1px solid light-dark(#e5e5e5,#454545);border-radius:12px;background:light-dark(#fff,#262626)}

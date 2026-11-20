@@ -11,7 +11,7 @@ use crate::{db, open};
 
 const READY_FOR: Duration = Duration::from_secs(30);
 const PROBE_FOR: Duration = Duration::from_secs(1);
-pub const DEFAULT_LISTEN: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 7420));
+pub const DEFAULT_LISTEN: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 7425));
 const ANY_PORT: u16 = 0;
 const READY_PREFIX: &str = "loom: ";
 

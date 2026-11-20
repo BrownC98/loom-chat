@@ -609,7 +609,7 @@ pub fn replace(path: &Path, bytes: &[u8]) -> io::Result<()> {
     };
     std::fs::create_dir_all(parent)?;
     let draft = path.with_file_name(format!(
-        "{}.{}.{}.loom",
+        "{}.{}.{}.loom-chat",
         name.to_string_lossy(),
         std::process::id(),
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)

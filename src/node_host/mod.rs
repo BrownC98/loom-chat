@@ -632,6 +632,9 @@ fn ended(reader: &mut TcpStream) -> Option<Vec<Frame>> {
 fn start_host(exe: &std::path::Path, spec: &host::Spec) -> Result<SocketAddr, String> {
     let mut host = std::process::Command::new(exe);
     host.arg("pty-host");
+    if let Some(endpoint) = spec.endpoint() {
+        host.env(crate::tunnel::ENDPOINT_ENV, endpoint);
+    }
     let spec = serde_json::to_vec(spec).map_err(|e| e.to_string())?;
     match process_tree::announced(host, &spec) {
         Ok(address) if address.is_empty() => {

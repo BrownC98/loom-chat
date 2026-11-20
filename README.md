@@ -27,10 +27,10 @@ Get the files from the [latest release](https://github.com/BrownC98/loom-chat/re
 
 ### Windows
 
-Run `loom_<version>_x64-setup.exe`. The loom window opens.
+Run `loom-chat_<version>_x64-setup.exe`. The loom window opens.
 
-- loom also works in a browser: **loom (browser)** in the Start menu opens the same loom in your default browser.
-- Without the setup program: run this line in PowerShell. It puts `loom-desktop.exe` in `%LOCALAPPDATA%\loom\bin`, puts a **loom** icon on the desktop, and opens the window. Run it again to update. If the release has no desktop program (older releases), it installs the browser version, and the icon opens loom in the browser.
+- loom also works in a browser: **loom-chat (browser)** in the Start menu opens the same loom in your default browser.
+- Without the setup program: run this line in PowerShell. It puts `loom-desktop.exe` in `%LOCALAPPDATA%\loom-chat\bin`, puts a **loom-chat** icon on the desktop, and opens the window. Run it again to update. If the release has no desktop program (older releases), it installs the browser version, and the icon opens loom in the browser.
 
   ```powershell
   irm https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.ps1 | iex
@@ -40,14 +40,14 @@ Run `loom_<version>_x64-setup.exe`. The loom window opens.
 
 ### macOS (Apple Silicon)
 
-Run this line in Terminal. It downloads the loom app, puts it in the Applications folder and opens it. Run it again to update. If the release has the native desktop program, the line also puts `loom-desktop.app` (the native loom window from the same release) in the Applications folder and opens that one.
+Run this line in Terminal. It downloads the loom app, puts it in the Applications folder and opens it. Run it again to update. If the release has the native desktop program, the line also puts `loom-chat-desktop.app` (the native loom window from the same release) in the Applications folder and opens that one.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
-- Without Terminal: open `loom_<version>_aarch64.dmg` and drag loom to the Applications folder. The app has no Apple signature, so macOS says that the downloaded app "is damaged". Before you open it the first time, run `xattr -cr /Applications/loom.app` in Terminal.
-- `~/Applications/loom (browser).command` opens the same loom in your browser.
+- Without Terminal: open `loom-chat_<version>_aarch64.dmg` and drag loom to the Applications folder. The app has no Apple signature, so macOS says that the downloaded app "is damaged". Before you open it the first time, run `xattr -cr /Applications/loom-chat.app` in Terminal.
+- `~/Applications/loom-chat (browser).command` opens the same loom in your browser.
 - To remove loom, move it from the Applications folder to the Trash.
 
 ### Linux (x86-64)
@@ -58,11 +58,11 @@ loom on Linux runs in your browser. Run this line in a terminal:
 curl -fsSL https://raw.githubusercontent.com/BrownC98/loom-chat/main/scripts/install.sh | sh
 ```
 
-It puts the `loom` command in `~/loom/bin`, adds **loom** to the app menu and the desktop, and opens loom in the browser. After that, click the **loom** icon. Run the line again to update.
+It puts the `loom` command in `~/loom-chat/bin`, adds **loom-chat** to the app menu and the desktop, and opens loom in the browser. After that, click the **loom-chat** icon. Run the line again to update.
 
 ### WSL
 
-Run the Linux line above in a WSL terminal. In WSL, it runs the Windows line above: it installs loom for Windows (the native window, or the browser version for an older release) and puts a **loom** icon on the Windows desktop. The `loom` command in WSL calls that Windows loom.
+Run the Linux line above in a WSL terminal. In WSL, it runs the Windows line above: it installs loom for Windows (the native window, or the browser version for an older release) and puts a **loom-chat** icon on the Windows desktop. The `loom` command in WSL calls that Windows loom.
 
 One Windows loom runs agents on Windows and in WSL. To work on a repository in WSL, add its folder from `\\wsl.localhost\<distro>\…`. The nodes of that repository run in that distro, with the agent CLIs and the git of that distro. The Windows app does the same.
 
@@ -72,12 +72,12 @@ loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead o
 
 | | loom app | loom desktop | Browser version |
 |---|---|---|---|
-| Release files | `loom_<version>_x64-setup.exe`, `loom_<version>_aarch64.dmg` | `loom-desktop-windows-x64.zip`, `loom-desktop-macos-arm64.tar.gz` | `loom-web-*` |
+| Release files | `loom-chat_<version>_x64-setup.exe`, `loom-chat_<version>_aarch64.dmg` | `loom-desktop-windows-x64.zip`, `loom-desktop-macos-arm64.tar.gz` | `loom-web-*` |
 | Window | Web view (Tauri) | Native (GPUI) | Your browser |
 | Systems | Windows, macOS | Windows x64, macOS Apple Silicon | Windows, macOS, Linux |
 | Update | Update card in the screen | **Update** in Settings › About | Update card in the screen |
 
-**Install with one line (recommended).** The Windows and macOS lines above install loom desktop when the release has it. Windows: `%LOCALAPPDATA%\loom\bin\loom-desktop.exe` and a **loom** icon on the desktop. macOS: `loom-desktop.app` in the Applications folder.
+**Install with one line (recommended).** The Windows and macOS lines above install loom desktop when the release has it. Windows: `%LOCALAPPDATA%\loom-chat\bin\loom-desktop.exe` and a **loom-chat** icon on the desktop. macOS: `loom-chat-desktop.app` in the Applications folder.
 
 **Install by hand:**
 
@@ -91,15 +91,15 @@ loom desktop (`loom-desktop`) is a native loom window, drawn with GPUI instead o
 
 **Close and stop.** When you close the window, the daemon and the agents continue. Run the desktop executable with `stop` to stop the daemon.
 
-- Windows (one line): `& "$env:LOCALAPPDATA\loom\bin\loom-desktop.exe" stop | Out-Host`
-- macOS (one line): `/Applications/loom-desktop.app/Contents/MacOS/loom-desktop stop` (or `~/Applications/…`)
+- Windows (one line): `& "$env:LOCALAPPDATA\loom-chat\bin\loom-desktop.exe" stop | Out-Host`
+- macOS (one line): `/Applications/loom-chat-desktop.app/Contents/MacOS/loom-desktop stop` (or `~/Applications/…`)
 - Hand install: `<folder>/loom-desktop stop`
 
-At a Windows command prompt, a direct call to `loom-desktop.exe` can return before the command exits. To wait and get the exit code, pipe to `Out-Host` in PowerShell or use `start "" /wait "%LOCALAPPDATA%\loom\bin\loom-desktop.exe" stop` in Command Prompt.
+At a Windows command prompt, a direct call to `loom-desktop.exe` can return before the command exits. To wait and get the exit code, pipe to `Out-Host` in PowerShell or use `start "" /wait "%LOCALAPPDATA%\loom-chat\bin\loom-desktop.exe" stop` in Command Prompt.
 
 **Update.** Open Settings › About and click **Check for updates**, then **Update**. When `loom-desktop` runs the daemon, the update replaces that executable and restarts the daemon. Quit the window and open it again to use the new version.
 
-**WSL.** Windows `loom-desktop.exe` contains a compressed copy of `loom-linux`. You can run the desktop executable on its own for WSL use. Run the WSL install line to point the `~/loom/bin/loom` wrapper to the executable that the Windows installer selects.
+**WSL.** Windows `loom-desktop.exe` contains a compressed copy of `loom-linux`. You can run the desktop executable on its own for WSL use. Run the WSL install line to point the `~/loom-chat/bin/loom` wrapper to the executable that the Windows installer selects.
 
 **Limits.** The release has loom desktop only for Windows x64 and macOS Apple Silicon. On Linux, use the browser version. Releases before v0.1.2825 do not have it; for those, the install lines install the browser version (Windows) or only the app (macOS).
 
@@ -114,10 +114,10 @@ The phone must be on the same Wi‑Fi as the computer. To use it outside, turn o
 
 ### Stop, update and data
 
-- **Stop:** run `loom stop`, or click **Stop loom** in Settings. The agents continue to run, and loom connects to them again when it starts.
+- **Stop:** click **Stop loom** in Settings, or run the installed loom-chat executable with `stop`. On Linux and WSL, run `~/loom-chat/bin/loom stop`. The agents continue to run, and loom connects to them again when it starts.
 - **Update:** when a new version is out, a card shows at the bottom right. Click **Update**. Running agents continue their work.
-- **Data:** `~/.loom` (`%APPDATA%\loom` on Windows) holds the database, logs and built-in skills.
-- **Address:** the screen listens only on this computer (`127.0.0.1:7420`). It has one user and no sign-in, so do not open it to other computers with `--listen`. After you connect a phone, loom also listens on a separate HTTPS port that accepts only the connected devices.
+- **Data:** `~/.loom-chat` (`%APPDATA%\loom-chat` on Windows) holds the database, logs and built-in skills. loom-chat can run alongside upstream loom on the same computer.
+- **Address:** the screen listens only on this computer (`127.0.0.1:7425`). It has one user and no sign-in, so do not open it to other computers with `--listen`. After you connect a phone, loom also listens on a separate HTTPS port that accepts only the connected devices.
 
 ## Features
 

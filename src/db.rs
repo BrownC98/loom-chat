@@ -432,6 +432,8 @@ struct Changes;
 
 const NAME_TIME: &str = "yyyymmdd-hhmm-";
 
+pub(crate) const UNIX_DATA_DIR: &str = ".loom-chat";
+
 pub fn default_path() -> std::io::Result<PathBuf> {
     let dir = data_dir()?;
     std::fs::create_dir_all(&dir)?;
@@ -442,14 +444,14 @@ pub fn default_path() -> std::io::Result<PathBuf> {
 pub fn data_dir() -> std::io::Result<PathBuf> {
     let appdata =
         std::env::var_os("APPDATA").ok_or_else(|| std::io::Error::other("APPDATA가 없다"))?;
-    Ok(PathBuf::from(appdata).join("loom"))
+    Ok(PathBuf::from(appdata).join("loom-chat"))
 }
 
 #[cfg(not(windows))]
 pub fn data_dir() -> std::io::Result<PathBuf> {
     let home =
         std::env::home_dir().ok_or_else(|| std::io::Error::other("홈 폴더를 찾지 못했다"))?;
-    Ok(home.join(".loom"))
+    Ok(home.join(UNIX_DATA_DIR))
 }
 
 #[derive(Clone)]

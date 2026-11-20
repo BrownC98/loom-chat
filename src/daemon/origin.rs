@@ -13,7 +13,7 @@ const TAILSCALE_LOGIN: &str = "tailscale-user-login";
 const FORWARDED_HOST: &str = "x-forwarded-host";
 const FORWARDED_FOR: &str = "x-forwarded-for";
 const TAILNET_SUFFIX: &str = ".ts.net";
-pub const DEVICE_COOKIE: &str = "loom_device";
+pub const DEVICE_COOKIE: &str = "loom_chat_device";
 const UNPAIRED_PATHS: &[&str] = &["/manifest.webmanifest", "/icon.png", phone::JSQR_PATH];
 const NOT_FROM_PAGE: &str = "Only the loom page and apps change loom here. To write to a node from another program, use POST /api/rooms/<node>/outside with {\"from\":\"<name>\",\"text\":\"…\"}.";
 

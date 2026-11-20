@@ -5,7 +5,7 @@ $url = if ($env:LOOM_DOWNLOAD_URL) { $env:LOOM_DOWNLOAD_URL } else { 'https://gi
 $linux_url = $url -replace 'loom-web-windows-x64\.exe$', 'loom-web-linux-x64'
 $desktop_url = $url -replace 'loom-web-windows-x64\.exe$', 'loom-desktop-windows-x64.zip'
 $raw = 'https://raw.githubusercontent.com/BrownC98/loom-chat/main'
-$home_dir = Join-Path $env:LOCALAPPDATA 'loom'
+$home_dir = Join-Path $env:LOCALAPPDATA 'loom-chat'
 $dir = Join-Path $home_dir 'bin'
 $exe = Join-Path $dir 'loom.exe'
 $app = Join-Path $dir 'loom-desktop.exe'
@@ -76,7 +76,7 @@ $icon = Join-Path $home_dir 'icon.ico'
 try { Invoke-WebRequest -Uri "$raw/app/icons/icon.ico" -OutFile $icon -UseBasicParsing } catch { $icon = $null }
 
 $desktop = if ($env:LOOM_DESKTOP) { $env:LOOM_DESKTOP } else { [Environment]::GetFolderPath('Desktop') }
-$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop 'loom.lnk'))
+$shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $desktop 'loom-chat.lnk'))
 if ($with_desktop) {
   $shortcut.TargetPath = $app
   $shortcut.Arguments = ''
@@ -86,9 +86,9 @@ if ($with_desktop) {
   $shortcut.Arguments = 'open'
   $shortcut.WindowStyle = 7
 }
-$shortcut.Description = 'loom'
+$shortcut.Description = 'loom-chat'
 if ($icon) { $shortcut.IconLocation = $icon }
 $shortcut.Save()
-Write-Output "바탕 화면에 loom 아이콘을 만들었습니다: $(Join-Path $desktop 'loom.lnk')"
+Write-Output "바탕 화면에 loom-chat 아이콘을 만들었습니다: $(Join-Path $desktop 'loom-chat.lnk')"
 
 if ($with_desktop) { Start-Process $app } else { & $exe open }

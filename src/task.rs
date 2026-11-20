@@ -32,7 +32,7 @@ pub fn base(repo: &Path, name: &str) -> String {
     format!("{repo}-{name}")
 }
 
-pub const ROOT: [&str; 2] = [".cache", "loom"];
+pub const ROOT: [&str; 2] = [".cache", "loom-chat"];
 
 const OWNER: &str = ".loom-owner";
 

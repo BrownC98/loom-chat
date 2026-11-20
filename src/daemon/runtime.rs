@@ -803,7 +803,7 @@ impl App {
             .collect();
         match inside {
             Some(inside) => Some(format!("{}/{hash}.sock", inside.run_dir())),
-            None if cfg!(windows) => Some(format!(r"\\.\pipe\loom-{hash}")),
+            None if cfg!(windows) => Some(format!(r"\\.\pipe\loom-chat-{hash}")),
             None => Some(
                 self.run_dir
                     .join(format!("{hash}.sock"))

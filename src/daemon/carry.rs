@@ -48,16 +48,15 @@ async fn carry(
 impl App {
     async fn carry(self: &Arc<Self>, from: &str) -> Result<Carried, String> {
         let at = wsl::location(from).ok_or_else(|| format!("{from} is not a WSL folder"))?;
-        let home = at
-            .path
-            .rsplit_once('/')
-            .map(|(home, _)| home.to_owned())
-            .ok_or_else(|| format!("{from} has no parent folder"))?;
+        let data = at.path.trim_end_matches('/');
+        if data.rsplit('/').next() != Some(db::UNIX_DATA_DIR) {
+            return Err(format!("{from} is not a loom-chat data folder"));
+        }
         let distro = self
             .host(Host::Distro(at.distro.clone()))
             .map_err(|e| e.to_string())?;
-        let copy = std::env::temp_dir().join(format!("loom-carry-{}", std::process::id()));
-        std::fs::create_dir_all(&copy).map_err(|e| e.to_string())?;
+        let copy = std::env::temp_dir().join(format!("loom-chat-carry-{}", std::process::id()));
+        std::fs::create_dir(&copy).map_err(|e| e.to_string())?;
         let copied = self.carry_from_copy(Path::new(from), &copy, &at);
         let _ = std::fs::remove_dir_all(&copy);
         copied?;
@@ -75,7 +74,7 @@ impl App {
             relaunched: Vec::new(),
             ended: Vec::new(),
         };
-        if let Err(e) = wsl::end_hosts(&distro, &home).await {
+        if let Err(e) = wsl::end_hosts(&distro, data).await {
             for node in active {
                 let _ = self.graph.lost(node.id);
                 carried
@@ -113,12 +112,13 @@ impl App {
 
     fn carry_from_copy(&self, from: &Path, copy: &Path, at: &WslPath) -> Result<(), String> {
         let file = copy.join("loom.db");
-        for name in ["loom.db", "loom.db-wal"] {
-            let source = from.join(name);
-            if source.exists() {
-                std::fs::copy(&source, copy.join(name))
-                    .map_err(|e| format!("{}: {e}", source.display()))?;
-            }
+        let source = from.join("loom.db");
+        std::fs::copy(&source, &file).map_err(|e| format!("{}: {e}", source.display()))?;
+        let wal = from.join("loom.db-wal");
+        match std::fs::copy(&wal, copy.join("loom.db-wal")) {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(format!("{}: {e}", wal.display())),
         }
         let old = db::open(&file).map_err(|e| e.to_string())?;
         Settings::new(old, crate::profile::check_choice)
